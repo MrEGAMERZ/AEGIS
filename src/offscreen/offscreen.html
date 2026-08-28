@@ -1,10 +1,29 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Aegis Offscreen Document</title>
+  <title>SIH26171 Offscreen Document</title>
 </head>
 <body>
   <canvas id="mask-canvas" style="display:none;"></canvas>
+
+  <!--
+    ORT loaded as a classic script (UMD/IIFE global) — exposes window.ort.
+    No type="module" needed; it sets a global.
+  -->
+  <script src="../vendor/ort.min.js"></script>
+
+  <!--
+    Transformers.js v4 is ESM-only (no UMD build).
+    transformers-global.js is a thin type="module" shim that imports the ESM
+    and attaches it to globalThis.transformers.
+
+    NOTE: The inference.worker.js uses ES module imports directly
+    (Worker created with { type: 'module' }) — it does NOT use importScripts().
+    These tags serve offscreen.js's own direct access only.
+  -->
+  <script type="module" src="../vendor/transformers-global.js"></script>
+
+  <!-- offscreen.js must be type="module" for ES module imports -->
   <script src="offscreen.js" type="module"></script>
 </body>
 </html>

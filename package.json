@@ -8,8 +8,8 @@
     "lint": "eslint src/",
     "typecheck": "echo 'No TypeScript yet'"
   },
-  "devDependencies": {},
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "onnxruntime-web": "^1.21.0"
   }
 }

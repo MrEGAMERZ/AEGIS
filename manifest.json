@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/chrome-manifest.json",
   "manifest_version": 3,
-  "name": "Aegis — Privacy-Preserving Browser Agent",
+  "name": "SIH26171 — Privacy-Preserving Browser Agent",
   "version": "0.1.0",
   "description": "On-device visual perception for lightweight browser agents. Intercepts screen content, redacts sensitive elements locally, and sends only sanitized data to a cloud VLM.",
 
@@ -45,7 +45,14 @@
 
   "web_accessible_resources": [
     {
-      "resources": ["src/offscreen/offscreen.html"],
+      "resources": [
+        "src/offscreen/offscreen.html",
+        "src/inference/inference.worker.js",
+        "src/vendor/ort.min.js",
+        "src/vendor/transformers.min.js",
+        "src/vendor/transformers-global.js",
+        "src/vendor/*.wasm"
+      ],
       "matches": ["<all_urls>"]
     }
   ]

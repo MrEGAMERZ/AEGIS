@@ -5,39 +5,94 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      width: 320px;
+      width: 340px;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       font-size: 13px;
       color: #e0e0e0;
       background: #1a1a2e;
-      padding: 16px;
+      padding: 14px;
     }
-    h1 {
-      font-size: 15px;
-      font-weight: 600;
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       margin-bottom: 12px;
-      color: #00d4ff;
     }
-    .section {
-      margin-bottom: 16px;
+    h1 { font-size: 14px; font-weight: 700; color: #00d4ff; }
+    .model-status {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 10px;
+      background: #16213e;
+      border: 1px solid #333;
+      color: #888;
     }
-    .section-title {
-      font-size: 11px;
+    .model-status.ready  { border-color: #00c853; color: #00c853; }
+    .model-status.failed { border-color: #ff1744; color: #ff1744; }
+    .model-status.loading { border-color: #ffc800; color: #ffc800; }
+
+    /* ── Privacy Receipt ── */
+    .receipt {
+      background: #0f1629;
+      border: 1px solid #1e3060;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 12px;
+      display: none;
+    }
+    .receipt.visible { display: block; }
+    .receipt-title {
+      font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      color: #888;
-      margin-bottom: 8px;
+      color: #00d4ff;
+      margin-bottom: 6px;
+    }
+    .receipt-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #aaa;
+      margin-bottom: 2px;
+    }
+    .receipt-row span:last-child { color: #e0e0e0; font-weight: 600; }
+    .receipt-badges {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+      flex-wrap: wrap;
+    }
+    .badge {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 10px;
+      background: #16213e;
+      border: 1px solid #2a4080;
+      color: #ccc;
+    }
+    .badge.warn { border-color: #ff8c00; color: #ff8c00; }
+
+    /* ── Sections ── */
+    .section { margin-bottom: 12px; }
+    .section-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #666;
+      margin-bottom: 7px;
     }
     label {
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-bottom: 6px;
+      margin-bottom: 5px;
       cursor: pointer;
+      color: #ccc;
+      font-size: 12px;
     }
-    input[type="checkbox"] {
-      accent-color: #00d4ff;
-    }
+    input[type="checkbox"] { accent-color: #00d4ff; }
     input[type="text"], input[type="url"] {
       width: 100%;
       padding: 6px 8px;
@@ -46,40 +101,39 @@
       border-radius: 4px;
       color: #e0e0e0;
       font-size: 12px;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
-    input:focus {
-      outline: none;
-      border-color: #00d4ff;
-    }
+    input:focus { outline: none; border-color: #00d4ff; }
+
+    /* ── Buttons ── */
+    .btn-row { display: flex; gap: 8px; margin-top: 4px; }
     button {
-      width: 100%;
-      padding: 10px;
-      background: #00d4ff;
-      color: #1a1a2e;
+      flex: 1;
+      padding: 9px;
       border: none;
       border-radius: 6px;
       font-weight: 600;
-      font-size: 13px;
-      cursor: pointer;
-      margin-top: 8px;
-    }
-    button:hover { background: #00b8d9; }
-    button:disabled { background: #444; color: #888; cursor: not-allowed; }
-    .status {
-      margin-top: 12px;
-      padding: 8px;
-      border-radius: 4px;
       font-size: 12px;
-      display: none;
+      cursor: pointer;
     }
-    .status.active { display: block; background: #16213e; border: 1px solid #333; }
-    .status.success { border-color: #00c853; }
-    .status.error { border-color: #ff1744; }
+    #run-btn {
+      background: #00d4ff;
+      color: #1a1a2e;
+    }
+    #run-btn:hover { background: #00b8d9; }
+    #scan-btn {
+      background: #1e3060;
+      color: #00d4ff;
+      border: 1px solid #00d4ff44;
+    }
+    #scan-btn:hover { background: #243870; }
+    button:disabled { background: #333 !important; color: #666 !important; cursor: not-allowed; border-color: transparent !important; }
+
+    /* ── Task input ── */
     .task-input {
       width: 100%;
-      min-height: 60px;
-      padding: 8px;
+      min-height: 55px;
+      padding: 7px;
       background: #16213e;
       border: 1px solid #333;
       border-radius: 4px;
@@ -89,32 +143,65 @@
       font-family: inherit;
       margin-bottom: 8px;
     }
-    .task-input:focus {
-      outline: none;
-      border-color: #00d4ff;
+    .task-input:focus { outline: none; border-color: #00d4ff; }
+
+    /* ── Status ── */
+    .status {
+      margin-top: 10px;
+      padding: 7px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      display: none;
+      line-height: 1.5;
+      word-break: break-word;
     }
+    .status.active  { display: block; background: #16213e; border: 1px solid #333; color: #ccc; }
+    .status.success { display: block; background: #0d2015; border: 1px solid #00c853; color: #00c853; }
+    .status.error   { display: block; background: #200a0a; border: 1px solid #ff1744; color: #ff6b6b; }
+    .status.warn    { display: block; background: #1e1600; border: 1px solid #ffc800; color: #ffc800; }
   </style>
 </head>
 <body>
-  <h1>Aegis Privacy Agent</h1>
 
+  <!-- Header + model status -->
+  <div class="header">
+    <h1>SIH26171 Privacy Agent</h1>
+    <span class="model-status loading" id="model-status">⟳ Loading…</span>
+  </div>
+
+  <!-- Privacy receipt (shown after each run) -->
+  <div class="receipt" id="receipt">
+    <div class="receipt-title">Last Privacy Receipt</div>
+    <div class="receipt-row"><span>Fields masked</span><span id="r-fields">—</span></div>
+    <div class="receipt-row"><span>Faces detected</span><span id="r-faces">—</span></div>
+    <div class="receipt-row"><span>PII spans</span><span id="r-pii">—</span></div>
+    <div class="receipt-row"><span>Total latency</span><span id="r-total">—</span></div>
+    <div class="receipt-badges" id="r-badges"></div>
+  </div>
+
+  <!-- Detection toggles -->
   <div class="section">
     <div class="section-title">Detections</div>
-    <label><input type="checkbox" id="face-detection" checked> Face Detection (BlazeFace)</label>
+    <label><input type="checkbox" id="face-detection" checked> Face Detection (BlazeFace ONNX)</label>
     <label><input type="checkbox" id="password-detection" checked> Password Fields (DOM)</label>
     <label><input type="checkbox" id="pii-detection" checked> Text PII (Regex + NER)</label>
   </div>
 
+  <!-- VLM server config -->
   <div class="section">
     <div class="section-title">VLM Server</div>
     <input type="url" id="vlm-endpoint" placeholder="http://localhost:8000/v1/chat/completions">
     <input type="text" id="vlm-model" placeholder="Qwen/Qwen3-VL-8B-Instruct">
   </div>
 
+  <!-- Task + buttons -->
   <div class="section">
     <div class="section-title">Task</div>
-    <textarea class="task-input" id="task-input" placeholder="Describe what to do on this page..."></textarea>
-    <button id="run-btn">Run Agent</button>
+    <textarea class="task-input" id="task-input" placeholder="Describe what to do on this page…"></textarea>
+    <div class="btn-row">
+      <button id="scan-btn">Scan page</button>
+      <button id="run-btn">Run Agent</button>
+    </div>
   </div>
 
   <div class="status" id="status"></div>
