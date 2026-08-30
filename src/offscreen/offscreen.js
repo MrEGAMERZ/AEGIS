@@ -1,16 +1,13 @@
 // Offscreen Document — Runs inference and mask rendering (has Canvas/DOM access)
-// Phase: Task 1.2 — inference.worker.js is now wired via postMessage bridge.
-// Models are still stubbed in the worker; face/NER results will be empty
-// until Task 1.3 loads BlazeFace and DistilBERT NER.
+// Face redaction is a hard gate: SANITIZE throws if BlazeFace is unavailable
+// while face detection is enabled, so background.js never calls the VLM with
+// an unredacted live frame.
 
 const canvas = document.getElementById("mask-canvas");
 const ctx = canvas.getContext("2d");
 
 // ── Inference Worker Setup ────────────────────────────────────────
-// The worker is a classic (non-module) Web Worker.
-// offscreen.js is loaded as type="module" (see offscreen.html), but the
-// Worker itself is spawned with default options (classic) because
-// inference.worker.js does not use ES module import syntax yet.
+// Module worker: inference.worker.js is spawned with { type: "module" }.
 
 let inferenceWorker = null;
 
@@ -19,33 +16,99 @@ let inferenceWorker = null;
 // because the pipeline is sequential (faces, then NER).
 const pendingRequests = {};
 
+const WORKER_ERROR_TO_PENDING = {
+  INIT: "INIT_DONE",
+  DETECT_FACES: "FACES_DETECTED",
+  DETECT_NER: "NER_DETECTED",
+};
+
+function rejectAllPending(err) {
+  for (const key of Object.keys(pendingRequests)) {
+    const pending = pendingRequests[key];
+    if (pending && typeof pending.reject === "function") {
+      pending.reject(err);
+    }
+  }
+}
+
+function forwardProgress(data) {
+  chrome.runtime.sendMessage({
+    type: "INIT_PROGRESS",
+    status: data.status || "Loading on-device models…",
+    backend: data.backend,
+  }).catch(() => {});
+}
+
 function handleWorkerMessage(e) {
   const { type, ...data } = e.data;
 
+  if (type === "INIT_PROGRESS") {
+    console.log("[Aegis Offscreen]", data.status || "INIT_PROGRESS");
+    forwardProgress(data);
+    return;
+  }
+
+  if (type === "ERROR") {
+    const pendingType = WORKER_ERROR_TO_PENDING[data.originalType];
+    if (pendingType && pendingRequests[pendingType]) {
+      pendingRequests[pendingType].reject(new Error(data.error || "Worker error"));
+    }
+    return;
+  }
+
   if (type === "INIT_DONE") {
-    console.log("[Aegis Offscreen] Worker ready, backend:", data.backend);
+    console.log("[Aegis Offscreen] Worker ready, backend:", data.backend,
+      "faceModelReady:", data.faceModelReady);
+    chrome.runtime.sendMessage({
+      type: "INIT_DONE",
+      backend: data.backend,
+      faceModelReady: data.faceModelReady,
+      faceModelError: data.faceModelError,
+    }).catch(() => {});
     if (pendingRequests["INIT_DONE"]) {
       pendingRequests["INIT_DONE"].resolve(data);
-      delete pendingRequests["INIT_DONE"];
     }
     return;
   }
 
   if (pendingRequests[type]) {
     pendingRequests[type].resolve(data);
-    delete pendingRequests[type];
   }
+}
+
+function describeWorkerError(e) {
+  const message = (e && e.message) || (e && e.error && e.error.message) || "";
+  const filename = (e && e.filename) || "";
+  const lineno = (e && e.lineno) || 0;
+  if (message || filename) {
+    return `Inference worker failed to load: ${message || "script error"} (${filename || "inference.worker.js"}:${lineno || "?"})`;
+  }
+  return (
+    "Inference worker failed to load (module link/eval error with no message). " +
+    "Open chrome://extensions → this extension → Errors. A dedicated module " +
+    "Worker has no chrome.* API — vendor paths must use import.meta.url, not " +
+    "chrome.runtime.getURL. Then reload the extension and this tab."
+  );
 }
 
 function getWorker() {
   if (!inferenceWorker) {
     const workerUrl = chrome.runtime.getURL("src/inference/inference.worker.js");
     // type: 'module' is required because inference.worker.js uses ES module
-    // import statements for ORT and Transformers.js v4 (which is ESM-only).
-    inferenceWorker = new Worker(workerUrl, { type: 'module' });
+    // import statements for ORT (Transformers.js is imported lazily).
+    inferenceWorker = new Worker(workerUrl, { type: "module" });
     inferenceWorker.onmessage = handleWorkerMessage;
-    inferenceWorker.onerror = (e) =>
-      console.error("[SIH26171 Offscreen] Worker error:", e.message, e);
+    inferenceWorker.onerror = (e) => {
+      const err = new Error(describeWorkerError(e));
+      console.error("[Aegis Offscreen] Worker error:", err.message, e);
+      rejectAllPending(err);
+      try { inferenceWorker.terminate(); } catch { /* already dead */ }
+      inferenceWorker = null;
+    };
+    inferenceWorker.onmessageerror = () => {
+      const err = new Error("Inference worker message deserialize failed");
+      rejectAllPending(err);
+    };
   }
   return inferenceWorker;
 }
@@ -56,22 +119,30 @@ function getWorker() {
 // timeoutMs: reject if no response arrives within this window.
 function workerRequest(type, payload = {}, responseType, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
-    pendingRequests[responseType] = { resolve, reject };
-    getWorker().postMessage({ type, payload });
-
     const timer = setTimeout(() => {
       if (pendingRequests[responseType]) {
         delete pendingRequests[responseType];
-        reject(new Error(`Worker request "${type}" timed out after ${timeoutMs}ms`));
+        reject(new Error(
+          type === "INIT"
+            ? `Worker request "INIT" timed out after ${timeoutMs}ms. BlazeFace WASM did not finish compiling. Reload the extension at chrome://extensions, then click Run Agent again (first load can take up to a minute).`
+            : `Worker request "${type}" timed out after ${timeoutMs}ms`
+        ));
       }
     }, timeoutMs);
 
-    // Wrap resolve so we can clear the timer on success.
-    const originalResolve = pendingRequests[responseType].resolve;
-    pendingRequests[responseType].resolve = (value) => {
-      clearTimeout(timer);
-      originalResolve(value);
+    pendingRequests[responseType] = {
+      resolve: (value) => {
+        clearTimeout(timer);
+        delete pendingRequests[responseType];
+        resolve(value);
+      },
+      reject: (err) => {
+        clearTimeout(timer);
+        delete pendingRequests[responseType];
+        reject(err);
+      },
     };
+    getWorker().postMessage({ type, payload });
   });
 }
 
@@ -88,7 +159,9 @@ function workerRequest(type, payload = {}, responseType, timeoutMs = 10000) {
 let workerInitPromise = null;
 function ensureWorkerReady() {
   if (!workerInitPromise) {
-    workerInitPromise = workerRequest("INIT", {}, "INIT_DONE", 10000).catch((err) => {
+    // Cold WASM compile of ort-wasm-simd-threaded.wasm (~13MB) can exceed 20s
+    // on first Load-unpacked. Progress is posted as INIT_PROGRESS.
+    workerInitPromise = workerRequest("INIT", {}, "INIT_DONE", 90000).catch((err) => {
       // If INIT times out, reset so the next SANITIZE call retries.
       workerInitPromise = null;
       throw err;
@@ -126,10 +199,12 @@ function scaleToDPR(rect, dpr) {
 
 // ── Sanitize Pipeline ─────────────────────────────────────────────
 
-async function handleSanitize({ screenshot, domScanResults }) {
+async function handleSanitize({ screenshot, domScanResults, faceDetection, piiDetection }) {
   // Ensure the inference worker is ready before running any inference.
   // This is a no-op after the first SANITIZE call.
-  await ensureWorkerReady();
+  const init = await ensureWorkerReady();
+  const faceDetectionEnabled = faceDetection !== false;
+  const piiDetectionEnabled = piiDetection !== false;
 
   // 1. Load screenshot into canvas
   const img = await loadImage(screenshot);
@@ -139,12 +214,12 @@ async function handleSanitize({ screenshot, domScanResults }) {
 
   // DPR reported by the content script's window.devicePixelRatio.
   // Defaults to 1 so DPR=1 displays are unaffected.
-  const dpr = domScanResults.dpr || 1;
+  const dpr = (domScanResults && domScanResults.dpr) || 1;
 
   const maskedRegions = [];
 
   // 2. Mask sensitive DOM fields (solid black fill)
-  if (domScanResults.fields) {
+  if (domScanResults && domScanResults.fields) {
     for (const field of domScanResults.fields) {
       const MASK_TYPES = ["password_input", "sensitive_input", "contenteditable_pii"];
       if (MASK_TYPES.includes(field.type)) {
@@ -157,35 +232,77 @@ async function handleSanitize({ screenshot, domScanResults }) {
     }
   }
 
-  // 3. Face detection via inference worker (returns [] until Task 1.3)
-  // BlazeFace outputs are already in image-pixel space, no DPR scaling needed.
-  const faceDetections = await detectFaces(screenshot);
-  for (const face of faceDetections) {
-    const [x1, y1, x2, y2] = face.bbox;
-    applyPixelation(ctx, x1, y1, x2 - x1, y2 - y1);
-    maskedRegions.push({ type: "face", bbox: [x1, y1, x2, y2], confidence: face.confidence });
-  }
-
-  // 4. PII text detection via inference worker (regex active; NER returns [] until Task 1.3)
-  // visibleText rects are CSS pixels — must scale to image pixels.
-  const piiDetections = await detectTextPII(domScanResults.visibleText || []);
-  for (const pii of piiDetections) {
-    if (pii.bbox) {
-      const { x, y, width, height } = scaleToDPR(pii.bbox, dpr);
-      applyPixelation(ctx, x, y, width, height);
-      maskedRegions.push({
-        type: "pii",
-        entity: pii.entity_type,
-        bbox: [x, y, x + width, y + height],
-        confidence: pii.confidence,
-      });
+  // 3. Face detection — HARD GATE. When enabled (default), BlazeFace MUST
+  // run and pixelate before this function returns a sanitized image.
+  // Fail closed if the model is missing or inference throws: never hand a
+  // live frame to background.js for a VLM call.
+  let facePassComplete = false;
+  if (faceDetectionEnabled) {
+    if (!init || init.faceModelReady !== true) {
+      const detail = init && init.faceModelError ? ` (${init.faceModelError})` : "";
+      throw new Error(
+        "FACE_MODEL_UNAVAILABLE: BlazeFace did not load; refusing to send unredacted frames to the VLM" + detail
+      );
     }
+    const faceDetections = await detectFaces(screenshot);
+    for (const face of faceDetections) {
+      const [x1, y1, x2, y2] = face.bbox;
+      applyPixelation(ctx, x1, y1, x2 - x1, y2 - y1);
+      maskedRegions.push({ type: "face", bbox: [x1, y1, x2, y2], confidence: face.confidence });
+    }
+    facePassComplete = true;
+  } else {
+    // User explicitly disabled face detection in the popup.
+    facePassComplete = true;
   }
 
-  // 5. Export sanitized image
+  // 4. PII text detection — HARD GATE for names/places/orgs (NER) plus
+  // regex structured PII. When enabled (default), DistilBERT MUST run
+  // before this function returns a sanitized image. Fail closed if the
+  // model is missing or inference throws.
+  let nerPassComplete = false;
+  let nerEntities = [];
+  const piiDetections = [];
+  if (piiDetectionEnabled) {
+    const detected = await detectTextPII((domScanResults && domScanResults.visibleText) || []);
+    for (const pii of detected) {
+      piiDetections.push(pii);
+      if (pii.bbox) {
+        const { x, y, width, height } = scaleToDPR(pii.bbox, dpr);
+        applyPixelation(ctx, x, y, width, height);
+        maskedRegions.push({
+          type: "pii",
+          entity: pii.entity_type,
+          bbox: [x, y, x + width, y + height],
+          confidence: pii.confidence,
+        });
+      }
+      if (pii.source === "ner") {
+        nerEntities.push({
+          text: pii.text,
+          entity_type: pii.entity_type,
+        });
+      }
+    }
+    nerPassComplete = true;
+  } else {
+    nerPassComplete = true;
+  }
+
+  // 5. Export sanitized image — only after face + NER passes have completed
   const sanitizedImage = canvas.toDataURL("image/png");
 
-  return { sanitizedImage, maskedRegions, dpr };
+  return {
+    sanitizedImage,
+    maskedRegions,
+    dpr,
+    facePassComplete,
+    faceDetectionEnabled,
+    faceModelReady: !!(init && init.faceModelReady),
+    nerPassComplete,
+    piiDetectionEnabled,
+    nerEntities,
+  };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -248,34 +365,39 @@ function applyPixelation(ctx, x, y, w, h, blockSize = 12) {
 }
 
 // ── Face Detection — worker bridge ────────────────────────────────
-// Sends the screenshot's ImageData to the inference worker.
+// Sends ImageData + the original capture data URL to the inference worker.
 // Returns Array<{ bbox: [x1,y1,x2,y2], confidence: number }>.
-// Returns [] on error (worker still initializing, model not loaded yet).
+// Throws on error (model missing, worker ERROR, timeout) — fail closed.
 
 async function detectFaces(screenshotDataUrl) {
-  try {
-    // Render screenshot to a temporary canvas to extract ImageData.
-    const img = await loadImage(screenshotDataUrl);
-    const tmpCanvas = document.createElement("canvas");
-    tmpCanvas.width = img.width;
-    tmpCanvas.height = img.height;
-    const tmpCtx = tmpCanvas.getContext("2d");
-    tmpCtx.drawImage(img, 0, 0);
-    const imageData = tmpCtx.getImageData(0, 0, img.width, img.height);
+  // Send BOTH the original capture data URL (worker fallback) AND ImageData
+  // (what this document already decoded). Worker accepts either. Do NOT
+  // swallow errors — a failed face pass must fail the SANITIZE request so
+  // background.js never calls the VLM with a raw live frame.
+  const img = await loadImage(screenshotDataUrl);
+  const tmpCanvas = document.createElement("canvas");
+  tmpCanvas.width = img.width;
+  tmpCanvas.height = img.height;
+  const tmpCtx = tmpCanvas.getContext("2d");
+  tmpCtx.drawImage(img, 0, 0);
+  const imageData = tmpCtx.getImageData(0, 0, img.width, img.height);
 
-    const result = await workerRequest("DETECT_FACES", { imageData }, "FACES_DETECTED");
-    return result.faces || [];
-  } catch (e) {
-    console.warn("[Aegis Offscreen] detectFaces failed:", e.message);
-    return [];
+  const result = await workerRequest(
+    "DETECT_FACES",
+    { imageData, imageDataUrl: screenshotDataUrl },
+    "FACES_DETECTED"
+  );
+  if (result.error) {
+    throw new Error(result.error);
   }
+  return result.faces || [];
 }
 
 // ── Text PII Detection — regex layer + worker NER bridge ──────────
-// Stage A (regex): deterministic, synchronous, runs here in the offscreen
-//   document. Catches SSN, email, phone, Indian mobile, Aadhaar, PAN.
-// Stage B (NER): sends text to worker; returns [] until Task 1.3.
-// Results from both stages are merged and returned.
+// Stage A (regex): deterministic, synchronous. SSN/email/phone/Aadhaar/PAN.
+// Stage B (NER): DistilBERT PER/ORG/LOC on live visible text. Fail closed —
+// a missing model or worker ERROR must fail SANITIZE so background.js never
+// calls the VLM with unredacted names/places/orgs.
 
 async function detectTextPII(visibleTexts) {
   // ── Stage A: Regex (structured PII) ──────────────────────────────
@@ -307,16 +429,19 @@ async function detectTextPII(visibleTexts) {
     }
   }
 
-  // ── Stage B: NER via worker (stub — returns [] until Task 1.3) ───
-  try {
-    const result = await workerRequest("DETECT_NER", { texts: visibleTexts }, "NER_DETECTED");
-    const nerEntities = result.entities || [];
-    for (const entity of nerEntities) {
-      detections.push({ ...entity, source: "ner" });
-    }
-  } catch (e) {
-    console.warn("[Aegis Offscreen] detectTextPII NER failed:", e.message);
-    // Regex results are still returned below.
+  // First-load NER can take ~11s (HF download). Do not inherit the 10s default.
+  const result = await workerRequest(
+    "DETECT_NER",
+    { texts: visibleTexts },
+    "NER_DETECTED",
+    60000
+  );
+  if (result.error) {
+    throw new Error(result.error);
+  }
+  const nerEntities = result.entities || [];
+  for (const entity of nerEntities) {
+    detections.push({ ...entity, source: "ner" });
   }
 
   return detections;

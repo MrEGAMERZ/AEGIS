@@ -13,6 +13,9 @@ yarn-debug.log*
 yarn-error.log*
 package-lock.json
 
+# Generated "Load unpacked" root (scripts/build-dist.sh)
+dist/
+
 # Environment variables
 .env
 .env.local

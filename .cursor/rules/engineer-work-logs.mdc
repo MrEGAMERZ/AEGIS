@@ -1,0 +1,14 @@
+---
+description: Record every completed task in engineers/<role>/work_done.md and team-memory
+alwaysApply: true
+---
+
+# Record completed work
+
+When a task finishes (fix, audit, eval, schema change, hygiene pass), write it down before calling it done.
+
+1. Each specialist who touched the work appends a dated section to `engineers/<role>/work_done.md` using that file's table format. Cite real files, what changed, measured results, remaining risks. Never claim an unverified metric.
+2. Lead appends to `engineers/Lead/work_done.md` (decision, owners, status, remaining risks) and updates the Active Tasks row in `.opencode/memory/team-memory.md`. Team-memory stays lean; details live in `work_done.md`.
+3. Every dispatch prompt must include: report back in `engineers/<role>/work_done.md`.
+4. Do not mark complete until eval has measured it and privacy has cleared it, or remaining risks are written down.
+5. Roles: `ml`, `backend`, `frontend`, `privacy`, `evaluation`, `codebase`, `database`, `git`, `Lead`.

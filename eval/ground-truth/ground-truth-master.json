@@ -510,5 +510,144 @@
     ],
     "expected_totals": { "sensitive": 7, "non_sensitive": 6, "face": 0 },
     "generalization_notes": "Table-based form layout, serif font, government color scheme — tests layout-agnostic detection"
+  },
+  {
+    "page_id": "tp08-kitchen-sink-registration",
+    "page_file": "tp08-kitchen-sink-registration.html",
+    "description": "Kitchen-sink scholarship form — face + visible PII redaction bait, empty fillable fields, hallucination traps",
+    "sensitive_elements": [
+      {
+        "id": "gt-080",
+        "selector": "#applicant-photo",
+        "type": "face",
+        "detection_layer": "BlazeFace",
+        "reason": "Stock portrait for on-device face redaction",
+        "expected_redaction": "blur",
+        "pii_category": "biometric",
+        "is_dynamic": false
+      },
+      {
+        "id": "gt-081",
+        "selector": "#session-name",
+        "type": "ner_person",
+        "detection_layer": "NER",
+        "reason": "Visible PERSON: Ananya Krishnan",
+        "expected_redaction": "blur",
+        "pii_category": "identity",
+        "is_dynamic": false
+      },
+      {
+        "id": "gt-082",
+        "selector": "#session-email",
+        "type": "email_pii",
+        "detection_layer": "regex",
+        "reason": "EMAIL: ananya.krishnan@example.com",
+        "expected_redaction": "blur",
+        "pii_category": "contact",
+        "is_dynamic": false
+      },
+      {
+        "id": "gt-083",
+        "selector": "#session-phone",
+        "type": "phone_pii",
+        "detection_layer": "regex",
+        "reason": "IN_MOBILE: 9876543210",
+        "expected_redaction": "blur",
+        "pii_category": "contact",
+        "is_dynamic": false
+      },
+      {
+        "id": "gt-084",
+        "selector": "#session-aadhaar",
+        "type": "id_pii",
+        "detection_layer": "regex",
+        "reason": "AADHAAR: 2345 6789 0123 (synthetic)",
+        "expected_redaction": "blur",
+        "pii_category": "government_id",
+        "is_dynamic": false
+      },
+      {
+        "id": "gt-085",
+        "selector": "#session-pan",
+        "type": "id_pii",
+        "detection_layer": "regex",
+        "reason": "PAN: AANPK9182Q (synthetic)",
+        "expected_redaction": "blur",
+        "pii_category": "government_id",
+        "is_dynamic": false
+      },
+      {
+        "id": "gt-086",
+        "selector": "#portal-pin",
+        "type": "password_input",
+        "detection_layer": "DOM",
+        "reason": "input[type=password]",
+        "expected_redaction": "black_fill",
+        "pii_category": "credential",
+        "is_dynamic": false
+      },
+      {
+        "id": "gt-087",
+        "selector": "#confirm-pin",
+        "type": "password_input",
+        "detection_layer": "DOM",
+        "reason": "input[type=password]",
+        "expected_redaction": "black_fill",
+        "pii_category": "credential",
+        "is_dynamic": false
+      },
+      {
+        "id": "gt-088",
+        "selector": "#cvv",
+        "type": "sensitive_input",
+        "detection_layer": "DOM",
+        "reason": "autocomplete=cc-csc + type=password",
+        "expected_redaction": "black_fill",
+        "pii_category": "financial",
+        "is_dynamic": false
+      },
+      {
+        "id": "gt-089",
+        "selector": "#card-number",
+        "type": "sensitive_input",
+        "detection_layer": "DOM",
+        "reason": "autocomplete=cc-number",
+        "expected_redaction": "blur",
+        "pii_category": "financial",
+        "is_dynamic": false
+      },
+      {
+        "id": "gt-090",
+        "selector": "#aadhaar-number",
+        "type": "sensitive_input",
+        "detection_layer": "DOM",
+        "reason": "keyword aadhaar in id/name",
+        "expected_redaction": "blur",
+        "pii_category": "government_id",
+        "is_dynamic": false
+      },
+      {
+        "id": "gt-091",
+        "selector": "#pan-number",
+        "type": "sensitive_input",
+        "detection_layer": "DOM",
+        "reason": "keyword pan in id/name",
+        "expected_redaction": "blur",
+        "pii_category": "government_id",
+        "is_dynamic": false
+      }
+    ],
+    "non_sensitive_elements": [
+      { "selector": "#full-name", "type": "text_input" },
+      { "selector": "#college", "type": "text_input" },
+      { "selector": "#blood-group", "type": "text_input" },
+      { "selector": "#project-description", "type": "textarea" },
+      { "selector": ".site-name", "type": "heading" },
+      { "selector": ".nav a", "type": "navigation" },
+      { "selector": "#submit-btn", "type": "button" }
+    ],
+    "expected_totals": { "sensitive": 12, "non_sensitive": 7, "face": 1 },
+    "profile_fixture": "eval/fixtures/dummy-profile-ananya.json",
+    "generalization_notes": "Dual-purpose: left session card is redaction bait; main form is empty for fill + hallucination traps"
   }
 ]

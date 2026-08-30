@@ -159,6 +159,42 @@
     .status.success { display: block; background: #0d2015; border: 1px solid #00c853; color: #00c853; }
     .status.error   { display: block; background: #200a0a; border: 1px solid #ff1744; color: #ff6b6b; }
     .status.warn    { display: block; background: #1e1600; border: 1px solid #ffc800; color: #ffc800; }
+
+    .hint {
+      font-size: 10px;
+      color: #666;
+      margin-top: -2px;
+      margin-bottom: 6px;
+      line-height: 1.4;
+    }
+
+    .preview-wrap {
+      display: none;
+      margin-bottom: 12px;
+      background: #0f1629;
+      border: 1px solid #1e3060;
+      border-radius: 6px;
+      padding: 8px;
+    }
+    .preview-wrap.visible { display: block; }
+    .preview-wrap img {
+      width: 100%;
+      max-height: 160px;
+      object-fit: contain;
+      border-radius: 4px;
+      background: #000;
+    }
+
+    .pipeline {
+      display: none;
+      font-size: 11px;
+      color: #00d4ff;
+      margin-bottom: 8px;
+    }
+    .pipeline.visible { display: block; }
+    .pipeline-step { margin-bottom: 2px; }
+    .pipeline-step.done { color: #00c853; }
+    .pipeline-step.active { color: #ffc800; }
   </style>
 </head>
 <body>
@@ -179,6 +215,17 @@
     <div class="receipt-badges" id="r-badges"></div>
   </div>
 
+  <div class="pipeline" id="pipeline">
+    <div class="pipeline-step" id="step-capture">1. Capture viewport</div>
+    <div class="pipeline-step" id="step-redact">2. Local redaction (faces + NER)</div>
+    <div class="pipeline-step" id="step-vlm">3. VLM on sanitized context</div>
+  </div>
+
+  <div class="preview-wrap" id="preview-wrap">
+    <div class="receipt-title">Sanitized preview (redacted — not the raw capture)</div>
+    <img id="sanitize-preview" alt="Sanitized screenshot preview">
+  </div>
+
   <!-- Detection toggles -->
   <div class="section">
     <div class="section-title">Detections</div>
@@ -190,8 +237,19 @@
   <!-- VLM server config -->
   <div class="section">
     <div class="section-title">VLM Server</div>
-    <input type="url" id="vlm-endpoint" placeholder="http://localhost:8000/v1/chat/completions">
-    <input type="text" id="vlm-model" placeholder="Qwen/Qwen3-VL-8B-Instruct">
+    <input type="url" id="vlm-endpoint" placeholder="http://localhost:11434/v1/chat/completions">
+    <input type="text" id="vlm-model" placeholder="qwen2.5vl:7b">
+    <input type="password" id="vlm-api-key" placeholder="API key (Gemini / hosted VLM)" autocomplete="off">
+    <p class="hint" id="api-key-hint">Session-only — never written to disk. Leave empty for local Ollama.</p>
+  </div>
+
+  <!-- User Profile -->
+  <div class="section">
+    <div class="section-title">My Profile Data</div>
+    <textarea class="task-input" id="profile-input" placeholder="e.g. My name is Rehan, phone is 555-1234..." style="min-height: 45px;"></textarea>
+    <div class="btn-row" style="margin-top: 0;">
+      <button id="save-profile-btn" style="background: #1e3060; color: #00d4ff; border: 1px solid #00d4ff44;">Save Profile</button>
+    </div>
   </div>
 
   <!-- Task + buttons -->

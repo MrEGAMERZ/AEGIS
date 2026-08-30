@@ -22,7 +22,7 @@
 
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": ["<all_urls>", "file://*/*"],
       "js": ["src/content/content.js"],
       "run_at": "document_idle"
     }
@@ -43,6 +43,10 @@
     "128": "src/icons/icon128.png"
   },
 
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  },
+
   "web_accessible_resources": [
     {
       "resources": [
@@ -51,7 +55,12 @@
         "src/vendor/ort.min.js",
         "src/vendor/transformers.min.js",
         "src/vendor/transformers-global.js",
-        "src/vendor/*.wasm"
+        "src/vendor/*.wasm",
+        "src/vendor/*.mjs",
+        "src/vendor/ort-wasm-simd-threaded.wasm",
+        "src/vendor/ort-wasm-simd-threaded.mjs",
+        "src/vendor/blaze.onnx",
+        "src/vendor/models/*"
       ],
       "matches": ["<all_urls>"]
     }
