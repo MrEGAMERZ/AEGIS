@@ -9,6 +9,14 @@ const previewWrap = document.getElementById("preview-wrap");
 const previewImg  = document.getElementById("sanitize-preview");
 const pipelineEl  = document.getElementById("pipeline");
 
+// Must match src/background/background.js — bounded agent loop contract.
+const MAX_AGENT_STEPS = 10;
+const AGENT_STEP_DELAY_MS = 400;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // ── Status helpers ────────────────────────────────────────────────
 
 function setStatus(message, type = "active") {
@@ -67,19 +75,21 @@ function showSanitizedPreview(dataUrl) {
   previewWrap.classList.add("visible");
 }
 
-function setPipeline(stage) {
+function setPipeline(stage, options = {}) {
   const steps = {
     capture: document.getElementById("step-capture"),
     redact: document.getElementById("step-redact"),
     vlm: document.getElementById("step-vlm"),
   };
+  const includeVlm = options.includeVlm !== false;
+  if (steps.vlm) steps.vlm.style.display = includeVlm ? "" : "none";
   if (!stage) {
     pipelineEl.classList.remove("visible");
     Object.values(steps).forEach((el) => { if (el) el.className = "pipeline-step"; });
     return;
   }
   pipelineEl.classList.add("visible");
-  const order = ["capture", "redact", "vlm"];
+  const order = includeVlm ? ["capture", "redact", "vlm"] : ["capture", "redact"];
   const idx = order.indexOf(stage);
   order.forEach((name, i) => {
     if (!steps[name]) return;
@@ -176,7 +186,28 @@ function updateModelStatus(status, type) {
 }
 
 function checkModelStatus() {
-  updateModelStatus("○ Models idle", "loading");
+  updateModelStatus("⟳ Warming models…", "loading");
+  chrome.runtime.sendMessage({ type: "WARM_MODELS" }).catch(() => {
+    updateModelStatus("○ Models idle", "loading");
+  });
+}
+
+function formatVlmOfflineMessage(vlmError) {
+  const msg = String(vlmError || "");
+  const offline =
+    msg.includes("Failed to fetch") ||
+    msg.includes("unreachable") ||
+    msg.includes("ECONNREFUSED") ||
+    msg.includes("network") ||
+    /VLM API error:\s*5\d\d/.test(msg);
+  if (offline) {
+    return (
+      "VLM optional for this demo — local redaction succeeded. " +
+      "See the sanitized preview and privacy receipt above. " +
+      "Use Privacy scan anytime without Ollama; Run Agent needs a running VLM."
+    );
+  }
+  return `VLM unavailable: ${msg}`;
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
@@ -299,23 +330,35 @@ function formatRuntimeDisconnect(err) {
 
 scanBtn.addEventListener("click", async () => {
   scanBtn.disabled = true;
+  runBtn.disabled = true;
   clearStatus();
-  setStatus("Scanning page for sensitive fields…");
+  previewWrap.classList.remove("visible");
+  setPipeline("capture", { includeVlm: false });
+  setStatus("Capturing viewport and running local redaction…");
 
   try {
+    setPipeline("redact", { includeVlm: false });
     const result = await chrome.runtime.sendMessage({ type: "SCAN_AND_OVERLAY" });
     if (result.error) {
+      setPipeline(null);
       setStatus(formatAgentError(result.errorCode || "UNKNOWN", result.error), "error");
     } else {
+      if (result.receipt) showReceipt(result.receipt);
+      showSanitizedPreview(result.sanitizedImage);
+      setPipeline(null);
+      const faces = result.receipt?.masked?.faces || 0;
+      const fields = result.fieldCount || 0;
       setStatus(
-        `Found ${result.fieldCount} sensitive field(s). Overlay shown on page.`,
-        result.fieldCount > 0 ? "success" : "active"
+        `Shield ON — ${fields} field(s) + ${faces} face(s) hidden on the live page. Ask Gemini now: it should only “see” the blacked-out regions. Preview below is what leaves the device.`,
+        fields > 0 || faces > 0 ? "success" : "active"
       );
     }
   } catch (err) {
+    setPipeline(null);
     setStatus(formatRuntimeDisconnect(err), "error");
   } finally {
     scanBtn.disabled = false;
+    runBtn.disabled = false;
   }
 });
 
@@ -332,50 +375,75 @@ runBtn.addEventListener("click", async () => {
   scanBtn.disabled = true;
   clearStatus();
   previewWrap.classList.remove("visible");
-  setPipeline("capture");
-  setStatus("Capturing viewport and running local redaction…");
-  setPipeline("redact");
 
   try {
-    const response = await chrome.runtime.sendMessage({ type: "CAPTURE_AND_SANITIZE", task });
+    for (let step = 1; step <= MAX_AGENT_STEPS; step++) {
+      const stepLabel = `Step ${step}/${MAX_AGENT_STEPS}`;
+      setPipeline("capture");
+      setStatus(`${stepLabel}: Capturing viewport and running local redaction…`);
+      setPipeline("redact");
 
-    if (response.error) {
-      setPipeline(null);
-      setStatus(formatAgentError(response.errorCode || "UNKNOWN", response.error), "error");
-      return;
-    }
+      const response = await chrome.runtime.sendMessage({ type: "CAPTURE_AND_SANITIZE", task });
 
-    if (response.receipt) showReceipt(response.receipt);
-    showSanitizedPreview(response.sanitizedImage);
+      if (response.error) {
+        setPipeline(null);
+        setStatus(formatAgentError(response.errorCode || "UNKNOWN", response.error), "error");
+        return;
+      }
 
-    setPipeline("vlm");
+      if (response.receipt) showReceipt(response.receipt);
+      showSanitizedPreview(response.sanitizedImage);
 
-    // Surface VLM-level errors without crashing
-    if (response.vlmError) {
-      setStatus(`VLM unavailable: ${response.vlmError}`, "warn");
-      return;
-    }
+      setPipeline("vlm");
 
-    if (!response.action) {
-      setStatus("No action returned from VLM. Check server logs.", "warn");
-      return;
-    }
+      if (response.vlmError) {
+        setPipeline(null);
+        setStatus(formatVlmOfflineMessage(response.vlmError), "warn");
+        return;
+      }
 
-    setStatus(`VLM → action: ${response.action.action}. Executing…`);
+      if (!response.action) {
+        setPipeline(null);
+        setStatus(`${stepLabel}: No action returned from VLM. Check server logs.`, "warn");
+        return;
+      }
 
-    const execResult = await chrome.runtime.sendMessage({
-      type: "EXECUTE_ACTION",
-      action: response.action,
-    });
+      setStatus(`${stepLabel}: VLM → ${response.action.action}. Executing…`);
 
-    if (execResult.error) {
-      setStatus(formatAgentError(execResult.errorCode || "UNKNOWN", execResult.error), "error");
-    } else if (response.action.action === "done") {
-      setStatus(`Done: ${response.action.summary}`, "success");
-    } else {
-      setStatus(`Executed: ${JSON.stringify(execResult)}`, "success");
+      const execResult = await chrome.runtime.sendMessage({
+        type: "EXECUTE_ACTION",
+        action: response.action,
+      });
+
+      if (execResult.error) {
+        setPipeline(null);
+        setStatus(
+          `${stepLabel}: ${formatAgentError(execResult.errorCode || "UNKNOWN", execResult.error)}`,
+          "error"
+        );
+        return;
+      }
+
+      if (response.action.action === "done") {
+        setPipeline(null);
+        setStatus(`${stepLabel}: Done: ${response.action.summary}`, "success");
+        return;
+      }
+
+      if (step >= MAX_AGENT_STEPS) {
+        setPipeline(null);
+        setStatus(
+          `${stepLabel}: Step cap reached (${MAX_AGENT_STEPS}). Task may be incomplete — refine the prompt or run again.`,
+          "warn"
+        );
+        return;
+      }
+
+      setStatus(`${stepLabel}: Executed ${response.action.action}. Replanning…`);
+      await sleep(AGENT_STEP_DELAY_MS);
     }
   } catch (err) {
+    setPipeline(null);
     setStatus(formatRuntimeDisconnect(err), "error");
   } finally {
     runBtn.disabled = false;

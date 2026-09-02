@@ -141,14 +141,63 @@ async function loadFaceModel() {
 // Do not pass it to pipeline() construction — that is a documented no-op
 // and previously made detectNER drop every PER/ORG/LOC (no entity_group).
 let nerLoadPromise = null;
-// transformers.js v4 Callable tokenizers should be functions, but some bundled
-// builds return a plain object with `_call`. Wrap so pipeline._call can tokenize.
+
+// Path-only localModelPath for Transformers.js.
+// MODELS_DIR.href is http(s):// under the smoke server (and would also be a
+// full URL in some hosts). Transformers.js Xb() skips the allowLocalModels
+// probe for http(s) paths; with allowRemoteModels=false that reports
+// tokenizer_config.json as missing, pipeline() is built with tokenizer=null,
+// and DETECT_NER throws "this.tokenizer is not a function".
+// Pathname (/src/vendor/models/) is probed via fetch and resolves against the
+// worker origin — works for chrome-extension:// and loopback smoke.
+function localModelsPathname() {
+  const path = MODELS_DIR.pathname || '/src/vendor/models/';
+  return path.endsWith('/') ? path : `${path}/`;
+}
+
+// Transformers.js v4 PreTrainedTokenizer extends Callable. If tokenizer is
+// null (bad localModelPath) or a plain object with `_call`, wrap or fail closed.
 function ensureCallableTokenizer(pipelineInstance) {
   const tok = pipelineInstance && pipelineInstance.tokenizer;
-  if (!tok || typeof tok === 'function') return;
-  if (typeof tok._call === 'function') {
-    pipelineInstance.tokenizer = (text, options) => tok._call(text, options);
+  if (!tok) {
+    throw new Error(
+      'NER_MODEL_UNAVAILABLE: tokenizer missing after pipeline load (check localModelPath)'
+    );
   }
+
+  const invoke = (text, options) => {
+    if (typeof tok === 'function') {
+      try {
+        return tok(text, options);
+      } catch (err) {
+        if (!String(err.message || err).includes('not a function')) throw err;
+      }
+    }
+    if (typeof tok._call === 'function') return tok._call(text, options);
+    const proto = Object.getPrototypeOf(tok);
+    if (proto && typeof proto._call === 'function') return proto._call.call(tok, text, options);
+    throw new Error(
+      `NER_MODEL_UNAVAILABLE: tokenizer not callable (type=${typeof tok}, ctor=${tok.constructor && tok.constructor.name})`
+    );
+  };
+
+  const decode =
+    typeof tok.decode === 'function'
+      ? tok.decode.bind(tok)
+      : (() => {
+          const d = Object.getPrototypeOf(tok)?.decode;
+          return typeof d === 'function' ? (...args) => d.call(tok, ...args) : null;
+        })();
+
+  /** @type {any} */
+  const wrapper = (text, options) => invoke(text, options);
+  if (decode) wrapper.decode = decode;
+  if (typeof tok.batch_decode === 'function') wrapper.batch_decode = tok.batch_decode.bind(tok);
+  if (typeof tok.apply_chat_template === 'function') {
+    wrapper.apply_chat_template = tok.apply_chat_template.bind(tok);
+  }
+  if (tok.config) wrapper.config = tok.config;
+  pipelineInstance.tokenizer = wrapper;
 }
 
 async function loadNERModel() {
@@ -167,31 +216,23 @@ async function loadNERModel() {
     // than merely unlikely.
     transformersEnv.allowLocalModels = true;
     transformersEnv.allowRemoteModels = false;
-    transformersEnv.localModelPath = MODELS_DIR.href;
+    transformersEnv.localModelPath = localModelsPathname();
     transformersEnv.useBrowserCache = false;
     transformersEnv.useFSCache = false;
+    // Do not blob-cache the ORT .mjs factory — MV3 CSP rejects import(blob:).
+    transformersEnv.useWasmCache = false;
 
     const wasm = transformersEnv.backends?.onnx?.wasm;
     if (wasm) {
       wasm.numThreads = 1;
       wasm.proxy = false;
-      // At module-eval time transformers.min.js assigns a jsdelivr wasmPaths
-      // default, but only when wasmPaths is unset, and it does not fetch then.
-      // Overwriting it before the first pipeline() call means the CDN URL is
-      // never requested.
-      //
-      // { wasm } ONLY — adding .mjs here makes ORT skip its embedded factory
-      // and fall through to URL.createObjectURL + import(blob:), which MV3 CSP
-      // rejects. Same contract as lockOrtWasmSingleThread above.
-      //
-      // transformers.min.js is bundled against the same ORT 1.29.0 wasm build
-      // BlazeFace uses, so this points at the one vendored binary rather than
-      // shipping a second 13MB copy.
+      // transformers.min.js is rebuilt with onnxruntime-web/wasm (NOT webgpu/
+      // asyncify). Overwrite wasmPaths before the first pipeline() so jsdelivr
+      // is never contacted. { wasm } ONLY — same contract as BlazeFace above.
       wasm.wasmPaths = {
         wasm: new URL('ort-wasm-simd-threaded.wasm', VENDOR_DIR).href,
       };
-      // Already in memory from face INIT — reuse it so NER does not refetch
-      // and recompile the same 13MB binary.
+      // Reuse BlazeFace's in-memory binary so NER does not re-fetch/re-compile.
       if (ort.env.wasm.wasmBinary) wasm.wasmBinary = ort.env.wasm.wasmBinary;
     }
 
@@ -235,22 +276,139 @@ async function loadNERModel() {
 //     inside the graph, so confidence is reported as 1.0 (= "detected").
 //     It is NOT calibrated confidence — do not present it as such.
 //
-// Preprocessing pipeline:
+// Preprocessing pipeline (letterbox — preserves aspect ratio):
 //   1. Draw dataUrl to OffscreenCanvas at original dims
-//   2. Downscale to 128×128 OffscreenCanvas (no squash, aspect assumed ok)
+//   2. Letterbox into 128×128 (scale-to-fit + black padding; no squash)
 //   3. getImageData → Uint8ClampedArray [RGBA, RGBA, ...]
 //   4. Extract R,G,B, normalize: val = pixel / 255.0
 //   5. Transpose HWC→CHW: Float32Array shape [1, 3, 128, 128]
 //   6. session.run({ image, conf_threshold, max_detections, iou_threshold })
 //   7. Parse single output selectedBoxes [1,N,16] → bbox [ymin,xmin,ymax,xmax]
-//   8. Scale boxes from 128×128 space back to original image dims
+//   8. Map boxes from letterboxed 128×128 space back to original capture coords
 //
-// Known limitation: BlazeFace reliably detects faces occupying >5% of image area.
-// Smaller faces (e.g. in browser video call thumbnails) may be missed.
+// Previously the frame was squashed to 128×128, shrinking a sidebar photo on
+// TP08 to ~12 px and yielding zero detections on full-viewport captures.
+
+function letterboxTo128(sourceDrawable, origW, origH) {
+  const targetW = 128;
+  const targetH = 128;
+  const scale = Math.min(targetW / origW, targetH / origH);
+  const scaledW = origW * scale;
+  const scaledH = origH * scale;
+  const offsetX = (targetW - scaledW) / 2;
+  const offsetY = (targetH - scaledH) / 2;
+
+  const canvas = new OffscreenCanvas(targetW, targetH);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, targetW, targetH);
+  ctx.drawImage(sourceDrawable, offsetX, offsetY, scaledW, scaledH);
+
+  return { canvas, targetW, targetH, scale, offsetX, offsetY };
+}
+
+function mapBlazeFaceBoxToOrig(ymin, xmin, ymax, xmax, targetW, targetH, scale, offsetX, offsetY, origW, origH) {
+  const x1 = Math.round((xmin * targetW - offsetX) / scale);
+  const y1 = Math.round((ymin * targetH - offsetY) / scale);
+  const x2 = Math.round((xmax * targetW - offsetX) / scale);
+  const y2 = Math.round((ymax * targetH - offsetY) / scale);
+  return [
+    Math.max(0, Math.min(origW, x1)),
+    Math.max(0, Math.min(origH, y1)),
+    Math.max(0, Math.min(origW, x2)),
+    Math.max(0, Math.min(origH, y2)),
+  ];
+}
+
+function iouBox(a, b) {
+  const x1 = Math.max(a[0], b[0]);
+  const y1 = Math.max(a[1], b[1]);
+  const x2 = Math.min(a[2], b[2]);
+  const y2 = Math.min(a[3], b[3]);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  if (inter <= 0) return 0;
+  const areaA = Math.max(0, a[2] - a[0]) * Math.max(0, a[3] - a[1]);
+  const areaB = Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1]);
+  return inter / (areaA + areaB - inter + 1e-6);
+}
+
+function nmsFaces(faces, iouThresh = 0.4) {
+  const sorted = faces
+    .filter((f) => f.bbox[2] > f.bbox[0] + 2 && f.bbox[3] > f.bbox[1] + 2)
+    .sort((a, b) => (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1])
+      - (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]));
+  const kept = [];
+  for (const face of sorted) {
+    if (kept.every((k) => iouBox(k.bbox, face.bbox) < iouThresh)) {
+      kept.push(face);
+    }
+  }
+  return kept;
+}
+
+async function runBlazeFaceOnDrawable(sourceDrawable, srcW, srcH, originX, originY, fullW, fullH) {
+  const {
+    canvas,
+    targetW,
+    targetH,
+    scale,
+    offsetX,
+    offsetY,
+  } = letterboxTo128(sourceDrawable, srcW, srcH);
+  const imgData = canvas.getContext('2d').getImageData(0, 0, targetW, targetH);
+  const data = imgData.data;
+
+  const float32Data = new Float32Array(3 * targetW * targetH);
+  for (let i = 0; i < targetW * targetH; i++) {
+    float32Data[i] = data[i * 4] / 255.0;
+    float32Data[targetW * targetH + i] = data[i * 4 + 1] / 255.0;
+    float32Data[2 * targetW * targetH + i] = data[i * 4 + 2] / 255.0;
+  }
+
+  const feeds = {
+    image: new ort.Tensor('float32', float32Data, [1, 3, targetH, targetW]),
+    conf_threshold: new ort.Tensor('float32', Float32Array.from([0.5]), [1]),
+    max_detections: new ort.Tensor('int64', BigInt64Array.from([BigInt(25)]), [1]),
+    iou_threshold: new ort.Tensor('float32', Float32Array.from([0.3]), [1]),
+  };
+
+  const results = await faceSession.run(feeds);
+  const boxesTensor = results[faceSession.outputNames[0]];
+  const boxes = boxesTensor.data;
+  const numFaces = boxesTensor.dims.length === 3
+    ? boxesTensor.dims[1]
+    : boxesTensor.dims.length === 2 ? boxesTensor.dims[0] : (boxes.length / 16);
+
+  const faces = [];
+  for (let i = 0; i < numFaces; i++) {
+    const ymin = boxes[i * 16 + 0];
+    const xmin = boxes[i * 16 + 1];
+    const ymax = boxes[i * 16 + 2];
+    const xmax = boxes[i * 16 + 3];
+    const [lx1, ly1, lx2, ly2] = mapBlazeFaceBoxToOrig(
+      ymin, xmin, ymax, xmax,
+      targetW, targetH, scale, offsetX, offsetY, srcW, srcH
+    );
+    faces.push({
+      bbox: [
+        Math.max(0, Math.min(fullW, lx1 + originX)),
+        Math.max(0, Math.min(fullH, ly1 + originY)),
+        Math.max(0, Math.min(fullW, lx2 + originX)),
+        Math.max(0, Math.min(fullH, ly2 + originY)),
+      ],
+      confidence: 1.0,
+    });
+  }
+  return faces;
+}
 
 // Fail CLOSED: never return [] just because the model is missing — that
 // previously let unredacted live frames reach the VLM. Callers must treat
 // FACE_MODEL_UNAVAILABLE as a hard error and refuse the VLM call.
+//
+// Full-frame letterbox alone still shrinks a TP08 sidebar photo to a few
+// pixels on Retina captures. Also run overlapping ~512px tiles so faces that
+// occupy ≪5% of the viewport remain detectable, then NMS-merge.
 async function detectFacesFromPayload(payload) {
   if (!faceSession) {
     throw new Error('FACE_MODEL_UNAVAILABLE');
@@ -281,63 +439,34 @@ async function detectFacesFromPayload(payload) {
     throw new Error('DETECT_FACES requires imageData or imageDataUrl');
   }
 
-  const targetW = 128;
-  const targetH = 128;
-  const canvas = new OffscreenCanvas(targetW, targetH);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(sourceDrawable, 0, 0, targetW, targetH);
-  const imgData = ctx.getImageData(0, 0, targetW, targetH);
-  const data = imgData.data;
+  const all = [];
+  all.push(...await runBlazeFaceOnDrawable(sourceDrawable, origW, origH, 0, 0, origW, origH));
 
-  const float32Data = new Float32Array(3 * targetW * targetH);
-  for (let i = 0; i < targetW * targetH; i++) {
-    const r = data[i * 4] / 255.0;
-    const g = data[i * 4 + 1] / 255.0;
-    const b = data[i * 4 + 2] / 255.0;
-    float32Data[i] = r;
-    float32Data[targetW * targetH + i] = g;
-    float32Data[2 * targetW * targetH + i] = b;
+  const tileSize = Math.min(512, origW, origH);
+  if (tileSize >= 160 && (origW > tileSize * 1.2 || origH > tileSize * 1.2)) {
+    const stride = Math.max(128, Math.floor(tileSize * 0.5));
+    const tileCanvas = new OffscreenCanvas(tileSize, tileSize);
+    const tileCtx = tileCanvas.getContext('2d');
+    let tileCount = 0;
+    const maxTiles = 24;
+    for (let y = 0; y < origH && tileCount < maxTiles; y += stride) {
+      for (let x = 0; x < origW && tileCount < maxTiles; x += stride) {
+        const w = Math.min(tileSize, origW - x);
+        const h = Math.min(tileSize, origH - y);
+        if (w < 96 || h < 96) continue;
+        tileCtx.clearRect(0, 0, tileSize, tileSize);
+        tileCtx.fillStyle = '#000000';
+        tileCtx.fillRect(0, 0, tileSize, tileSize);
+        tileCtx.drawImage(sourceDrawable, x, y, w, h, 0, 0, w, h);
+        all.push(...await runBlazeFaceOnDrawable(tileCanvas, tileSize, tileSize, x, y, origW, origH));
+        tileCount += 1;
+        if (x + w >= origW) break;
+      }
+      if (y + Math.min(tileSize, origH - y) >= origH) break;
+    }
   }
 
-  const inputTensor = new ort.Tensor('float32', float32Data, [1, 3, targetH, targetW]);
-  const confThreshold = new ort.Tensor('float32', Float32Array.from([0.5]), [1]);
-  const maxDetections = new ort.Tensor('int64', BigInt64Array.from([BigInt(25)]), [1]);
-  const iouThreshold = new ort.Tensor('float32', Float32Array.from([0.3]), [1]);
-
-  const feeds = {
-    image: inputTensor,
-    conf_threshold: confThreshold,
-    max_detections: maxDetections,
-    iou_threshold: iouThreshold,
-  };
-
-  const results = await faceSession.run(feeds);
-  const boxesTensor = results[faceSession.outputNames[0]];
-  const boxes = boxesTensor.data;
-
-  const faces = [];
-  const numFaces = boxesTensor.dims.length === 3
-    ? boxesTensor.dims[1]
-    : boxesTensor.dims.length === 2 ? boxesTensor.dims[0] : (boxes.length / 16);
-
-  for (let i = 0; i < numFaces; i++) {
-    const ymin = boxes[i * 16 + 0];
-    const xmin = boxes[i * 16 + 1];
-    const ymax = boxes[i * 16 + 2];
-    const xmax = boxes[i * 16 + 3];
-
-    const x1 = Math.round(xmin * origW);
-    const y1 = Math.round(ymin * origH);
-    const x2 = Math.round(xmax * origW);
-    const y2 = Math.round(ymax * origH);
-
-    faces.push({
-      bbox: [x1, y1, x2, y2],
-      confidence: 1.0,
-    });
-  }
-
-  return faces;
+  return nmsFaces(all);
 }
 
 // ── NER Detection (DistilBERT) ─────────────────────────────────────
@@ -366,6 +495,7 @@ async function detectNER(texts) {
   if (!nerPipeline) {
     throw new Error('NER_MODEL_UNAVAILABLE');
   }
+  ensureCallableTokenizer(nerPipeline);
 
   const entities = [];
   const items = Array.isArray(texts) ? texts : [];

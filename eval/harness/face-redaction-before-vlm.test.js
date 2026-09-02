@@ -329,6 +329,31 @@ check(
     workerSrc.includes("wasmBinary") &&
     /await\s+ensureOrtWasmBinary\s*\(/.test(workerSrc)
 );
+
+console.log("\nBlazeFace letterbox preprocess (full-viewport recall)");
+
+check(
+  "worker letterboxes to 128×128 instead of squashing (letterboxTo128)",
+  workerSrc.includes("function letterboxTo128") &&
+    workerSrc.includes("Math.min(targetW / origW, targetH / origH)") &&
+    workerSrc.includes("fillRect(0, 0, targetW, targetH)")
+);
+check(
+  "worker maps detections back through letterbox offsets (mapBlazeFaceBoxToOrig)",
+  workerSrc.includes("function mapBlazeFaceBoxToOrig") &&
+    workerSrc.includes("offsetX") && workerSrc.includes("offsetY") && workerSrc.includes("/ scale")
+);
+check(
+  "worker no longer drawImage(..., 0, 0, targetW, targetH) squash in detectFacesFromPayload",
+  !/async function detectFacesFromPayload[\s\S]*?drawImage\(sourceDrawable,\s*0,\s*0,\s*targetW,\s*targetH\)/.test(workerSrc)
+);
+check(
+  "worker tiles large viewports so sidebar faces remain detectable",
+  workerSrc.includes("maxTiles") &&
+    workerSrc.includes("runBlazeFaceOnDrawable") &&
+    workerSrc.includes("nmsFaces")
+);
+
 check(
   "worker locks ORT to single-thread (numThreads=1 / proxy=false) before session create",
   workerSrc.includes("lockOrtWasmSingleThread") &&

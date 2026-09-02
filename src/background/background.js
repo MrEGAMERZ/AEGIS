@@ -182,6 +182,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .then((r) => sendResponse(r.lastReceipt || null));
     return true;
   }
+
+  if (msg.type === "WARM_MODELS") {
+    (async () => {
+      try {
+        await ensureOffscreen();
+        const warm = await chrome.runtime.sendMessage({ type: "WARM_WORKER" });
+        sendResponse(warm || { ok: true });
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  }
 });
 
 // Keys that must never be written to chrome.storage.local (F-11 / session-secret rule).
@@ -239,26 +252,118 @@ function buildPageStructureForVlm({ fields, maskedRegions, dpr, viewport }) {
   return structure;
 }
 
-// ── Scan + Overlay (no VLM) ────────────────────────────────────────
-// Used by the popup's "Scan page" button. Runs the DOM scan and shows
-// the redaction overlay in the active tab — no screenshot, no VLM call.
+// ── Scan + local redaction (no VLM) ───────────────────────────────
+// Popup "Privacy scan": DOM overlays + capture + BlazeFace/NER sanitize,
+// sanitized preview + privacy receipt — hero path when Ollama is offline.
+
+function buildPrivacyReceipt(tab, sanitizeResponse, timing) {
+  const receipt = {
+    timestamp: new Date().toISOString(),
+    url: tab.url,
+    masked: {
+      passwordFields: (sanitizeResponse.maskedRegions || []).filter(
+        (r) => r.type === "password_input" || r.type === "sensitive_input"
+      ).length,
+      faces: (sanitizeResponse.maskedRegions || []).filter((r) => r.type === "face").length,
+      piiSpans: (sanitizeResponse.maskedRegions || []).filter((r) => r.type === "pii").length,
+    },
+    backend: sanitizeResponse.backend || "wasm",
+    vlmRetried: timing.vlmRetried || false,
+    latencyMs: {
+      capture: timing.tCapture,
+      domScan: timing.tDomScan,
+      inference: timing.tInference,
+    },
+    totalMs: Date.now() - timing.t0,
+  };
+  if (timing.tVlm != null) receipt.latencyMs.vlm = timing.tVlm;
+  return receipt;
+}
+
+async function performLocalRedaction(tab, config) {
+  const t0 = Date.now();
+  const passwordDetectionEnabled = config.passwordDetection !== false;
+  const faceDetectionEnabled = config.faceDetection !== false;
+  const piiDetectionEnabled = config.piiDetection !== false;
+
+  if (isInjectableTabUrl(tab.url)) {
+    await sendTabMessage(tab, { type: "CLEAR_REDACTION_OVERLAY" }).catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, OVERLAY_CLEAR_PAINT_MS));
+  }
+
+  const t1 = Date.now();
+  const screenshotDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+  const tCapture = Date.now() - t1;
+
+  const t2 = Date.now();
+  const domScanResults = await sendTabMessage(tab, { type: "DOM_SCAN" });
+  domScanResults.fields = filterFieldsForPasswordDetection(
+    domScanResults.fields,
+    passwordDetectionEnabled
+  );
+  const tDomScan = Date.now() - t2;
+
+  sendTabMessage(tab, {
+    type: "SHOW_REDACTION_OVERLAY",
+    fields: domScanResults.fields || [],
+  }).catch(() => {});
+
+  await ensureOffscreen();
+  const t3 = Date.now();
+  const sanitizeResponse = await chrome.runtime.sendMessage({
+    type: "SANITIZE",
+    screenshot: screenshotDataUrl,
+    domScanResults,
+    faceDetection: faceDetectionEnabled,
+    piiDetection: piiDetectionEnabled,
+  });
+  const tInference = Date.now() - t3;
+
+  if (sanitizeResponse?.error) throw new Error(sanitizeResponse.error);
+
+  assertReadyForVlm(sanitizeResponse, {
+    faceDetection: faceDetectionEnabled,
+    piiDetection: piiDetectionEnabled,
+  });
+
+  const faceRegions = (sanitizeResponse.maskedRegions || []).filter((r) => r.type === "face");
+  sendTabMessage(tab, {
+    type: "SHOW_REDACTION_OVERLAY",
+    fields: domScanResults.fields || [],
+    faces: faceRegions,
+    dpr: sanitizeResponse.dpr || domScanResults.dpr || 1,
+  }).catch(() => {});
+
+  const receipt = buildPrivacyReceipt(tab, sanitizeResponse, {
+    t0,
+    tCapture,
+    tDomScan,
+    tInference,
+  });
+
+  return { domScanResults, sanitizeResponse, receipt, t0, tCapture, tDomScan, tInference };
+}
 
 async function handleScanAndOverlay() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("No active tab");
 
-  const domScanResults = await sendTabMessage(tab, { type: "DOM_SCAN" });
+  const config = await chrome.storage.local.get([
+    "faceDetection",
+    "piiDetection",
+    "passwordDetection",
+  ]);
 
-  // Show overlay in the content script
-  await sendTabMessage(tab, {
-    type: "SHOW_REDACTION_OVERLAY",
-    fields: domScanResults.fields || [],
-  });
+  const { domScanResults, sanitizeResponse, receipt } = await performLocalRedaction(tab, config);
+
+  await chrome.storage.session.set({ lastReceipt: receipt });
 
   return {
     fieldCount: domScanResults.fields?.length || 0,
     dpr: domScanResults.dpr || 1,
     url: tab.url,
+    sanitizedImage: sanitizeResponse.sanitizedImage,
+    receipt,
   };
 }
 
@@ -314,88 +419,88 @@ function safeStringify(v) {
 
 // ── Core Pipeline ──────────────────────────────────────────────────
 
+// Bounded multi-step agent loop — popup runs capture→execute cycles until
+// done, sanitize/VLM/execute error, or cap. Constants exported for harness.
+const MAX_AGENT_STEPS = 10;
+const AGENT_STEP_DELAY_MS = 400;
+
+// When passwordDetection is off, skip type="password" fields for masking and
+// overlay only — sensitive_input / NER / face gates stay fail-closed.
+function filterFieldsForPasswordDetection(fields, passwordDetectionEnabled) {
+  const list = Array.isArray(fields) ? fields : [];
+  if (passwordDetectionEnabled !== false) return list;
+  return list.filter((f) => f && f.type !== "password_input");
+}
+
+function agentLoopStopAfterCapture(captureResult) {
+  if (captureResult?.error) {
+    return {
+      stop: true,
+      phase: "capture",
+      errorCode: captureResult.errorCode,
+      error: captureResult.error,
+    };
+  }
+  if (captureResult?.vlmError) {
+    return { stop: true, phase: "vlm", error: captureResult.vlmError };
+  }
+  if (!captureResult?.action) {
+    return { stop: true, phase: "vlm", error: "No action returned from VLM." };
+  }
+  return { stop: false, action: captureResult.action };
+}
+
+function agentLoopStopAfterExecute({ step, maxSteps, action, execResult }) {
+  if (execResult?.error) {
+    return {
+      stop: true,
+      phase: "execute",
+      errorCode: execResult.errorCode,
+      error: execResult.error,
+    };
+  }
+  if (action?.action === "done") {
+    return {
+      stop: true,
+      phase: "done",
+      summary: action.summary || execResult?.summary,
+    };
+  }
+  if (step >= maxSteps) {
+    return { stop: true, phase: "max_steps", step, maxSteps };
+  }
+  return { stop: false };
+}
+
 // Two frames at 60Hz — enough for an overlay clear to composite before capture.
 const OVERLAY_CLEAR_PAINT_MS = 32;
 
 async function handleCaptureAndSanitize(task) {
-  const t0 = Date.now();
-
-  // 1. Get active tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("No active tab");
 
-  // 2. Capture screenshot.
-  // Drop any overlay left by a previous run first — captureVisibleTab records
-  // whatever is composited, so our own tinted boxes and "🔒" badges would be
-  // baked into the image the VLM reasons over. The short wait lets the
-  // clear actually paint before the frame is grabbed.
-  // Guarded by isInjectableTabUrl so a restricted scheme still fails later at
-  // DOM_SCAN with NO_CONTENT_SCRIPT rather than here with a vaguer error.
-  if (isInjectableTabUrl(tab.url)) {
-    await sendTabMessage(tab, { type: "CLEAR_REDACTION_OVERLAY" }).catch(() => {});
-    await new Promise((resolve) => setTimeout(resolve, OVERLAY_CLEAR_PAINT_MS));
-  }
-
-  const t1 = Date.now();
-  const screenshotDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
-  const tCapture = Date.now() - t1;
-
-  // 3. DOM scan (includes dpr). Auto-injects the content script once if
-  // the tab was orphaned by an extension reload (file:// included).
-  const t2 = Date.now();
-  const domScanResults = await sendTabMessage(tab, { type: "DOM_SCAN" });
-  const tDomScan = Date.now() - t2;
-
-  // Show redaction overlay immediately after DOM scan, before inference
-  // (gives visual feedback while the offscreen pipeline runs)
-  sendTabMessage(tab, {
-    type: "SHOW_REDACTION_OVERLAY",
-    fields: domScanResults.fields || [],
-  }).catch(() => {}); // non-critical, don't let overlay failure block pipeline
-
-  // 4. Offscreen: inference + masking (MUST complete before any VLM call)
   const config = await chrome.storage.local.get([
-    "vlmEndpoint", "vlmModel", "userProfile", "faceDetection", "piiDetection",
+    "vlmEndpoint",
+    "vlmModel",
+    "userProfile",
+    "faceDetection",
+    "piiDetection",
+    "passwordDetection",
   ]);
+
+  const {
+    domScanResults,
+    sanitizeResponse,
+    t0,
+    tCapture,
+    tDomScan,
+    tInference,
+  } = await performLocalRedaction(tab, config);
+
   const faceDetectionEnabled = config.faceDetection !== false;
   const piiDetectionEnabled = config.piiDetection !== false;
-
-  await ensureOffscreen();
-  const t3 = Date.now();
-  const sanitizeResponse = await chrome.runtime.sendMessage({
-    type: "SANITIZE",
-    screenshot: screenshotDataUrl,
-    domScanResults,
-    faceDetection: faceDetectionEnabled,
-    piiDetection: piiDetectionEnabled,
-  });
-  const tInference = Date.now() - t3;
-
-  if (sanitizeResponse?.error) throw new Error(sanitizeResponse.error);
-
-  // Hard privacy gate: refuse the VLM call unless live face + NER passes ran.
-  assertReadyForVlm(sanitizeResponse, {
-    faceDetection: faceDetectionEnabled,
-    piiDetection: piiDetectionEnabled,
-  });
-
-  // Refresh overlays with live field anchors + face boxes from sanitize
-  // (physical px; content script scales by dpr). Non-critical.
-  const faceRegions = (sanitizeResponse.maskedRegions || []).filter((r) => r.type === "face");
-  sendTabMessage(tab, {
-    type: "SHOW_REDACTION_OVERLAY",
-    fields: domScanResults.fields || [],
-    faces: faceRegions,
-    dpr: sanitizeResponse.dpr || domScanResults.dpr || 1,
-  }).catch(() => {});
-
-  // 5. Build structural context payload
-  // Default: Ollama running locally (verified working — see docs/SERVER_SETUP.md)
   const vlmEndpoint = config.vlmEndpoint || "http://localhost:11434/v1/chat/completions";
-  const vlmModel    = config.vlmModel    || "qwen2.5vl:7b";
-  // userProfile is set by the popup Settings tab — may be empty on first run.
-  // normalizeProfile() accepts the popup's raw string OR a JSON object/JSON
-  // string, so the VLM always sees real key: value pairs — never char indices.
+  const vlmModel = config.vlmModel || "qwen2.5vl:7b";
   const userProfile = normalizeProfile(config.userProfile);
 
   const pageStructure = buildPageStructureForVlm({
@@ -535,22 +640,14 @@ Only use actions that do NOT require reading redacted screen regions.`;
 
   const tVlm = Date.now() - t4;
 
-  // 7. Privacy receipt
-  const receipt = {
-    timestamp: new Date().toISOString(),
-    url: tab.url,
-    masked: {
-      passwordFields: (sanitizeResponse.maskedRegions || []).filter((r) => r.type === "password_input" || r.type === "sensitive_input").length,
-      faces: (sanitizeResponse.maskedRegions || []).filter((r) => r.type === "face").length,
-      piiSpans: (sanitizeResponse.maskedRegions || []).filter((r) => r.type === "pii").length,
-    },
-    backend: sanitizeResponse.backend || "wasm",
-    // vlmRetried: the model's first reply was not a usable action and cost a
-    // second round trip — the single biggest swing in the vlm timing below.
+  const receipt = buildPrivacyReceipt(tab, sanitizeResponse, {
+    t0,
+    tCapture,
+    tDomScan,
+    tInference,
+    tVlm,
     vlmRetried,
-    latencyMs: { capture: tCapture, domScan: tDomScan, inference: tInference, vlm: tVlm },
-    totalMs: Date.now() - t0,
-  };
+  });
 
   // Store receipt in session storage (cleared on browser close, not persisted)
   await chrome.storage.session.set({ lastReceipt: receipt });

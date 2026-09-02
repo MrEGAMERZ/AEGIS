@@ -179,6 +179,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((err) => sendResponse({ error: err.message }));
     return true; // async
   }
+
+  if (msg.type === "WARM_WORKER") {
+    ensureWorkerReady()
+      .then((data) =>
+        sendResponse({
+          ok: true,
+          faceModelReady: data.faceModelReady,
+          backend: data.backend,
+        })
+      )
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 });
 
 // ── DPR Scaling Helper ────────────────────────────────────────────

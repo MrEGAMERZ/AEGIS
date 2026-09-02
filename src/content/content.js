@@ -86,6 +86,20 @@
     return fields;
   }
 
+  function filterFieldsForPasswordDetection(fields, passwordDetectionEnabled) {
+    if (passwordDetectionEnabled !== false) return fields;
+    return fields.filter((f) => f.type !== "password_input");
+  }
+
+  async function passwordDetectionEnabledFromStorage() {
+    try {
+      const { passwordDetection } = await chrome.storage.local.get(["passwordDetection"]);
+      return passwordDetection !== false;
+    } catch {
+      return true;
+    }
+  }
+
   // ── Visible Text Extractor (for NER / regex PII) ───────────────
 
   function extractVisibleText() {
@@ -276,13 +290,16 @@
   let overlayRaf = 0;
   let overlayListenersAttached = false;
 
+  // OPAQUE shields — Gemini / screen-capture extensions must not read
+  // faces or passwords through a translucent tint. Solid covers win the
+  // judge demo: what is on the tab is what a vision model would see.
   const TYPE_COLORS = {
-    password_input:    { bg: "rgba(255,50,50,0.15)",  border: "#ff3232" },
-    sensitive_input:   { bg: "rgba(255,140,0,0.12)",  border: "#ff8c00" },
-    contenteditable_pii: { bg: "rgba(220,50,220,0.12)", border: "#dc32dc" },
-    face:              { bg: "rgba(80,160,255,0.15)", border: "#50a0ff" },
+    password_input:      { bg: "#0f172a", border: "#ef4444", badge: "#ef4444" },
+    sensitive_input:     { bg: "#1e293b", border: "#f97316", badge: "#f97316" },
+    contenteditable_pii: { bg: "#1e293b", border: "#a855f7", badge: "#a855f7" },
+    face:                { bg: "#020617", border: "#3b82f6", badge: "#3b82f6" },
   };
-  const DEFAULT_COLOR = { bg: "rgba(255,200,0,0.12)", border: "#ffc800" };
+  const DEFAULT_COLOR = { bg: "#1e293b", border: "#eab308", badge: "#eab308" };
 
   function getOrCreateOverlayRoot() {
     let root = document.getElementById(OVERLAY_ROOT_ID);
@@ -360,7 +377,15 @@
       position: "fixed",
       border: `2px solid ${colors.border}`,
       backgroundColor: colors.bg,
+      // Extra insurance vs translucent captures
+      backgroundImage:
+        type === "face"
+          ? "repeating-linear-gradient(45deg,#020617 0 6px,#111827 6px 12px)"
+          : "none",
       boxSizing: "border-box",
+      borderRadius: type === "face" ? "10px" : "6px",
+      boxShadow: "0 0 0 1px rgba(0,0,0,0.5)",
+      opacity: "1",
     });
 
     const badge = document.createElement("div");
@@ -368,12 +393,13 @@
       position: "absolute",
       top: "-18px",
       left: "0",
-      background: colors.border,
+      background: colors.badge || colors.border,
       color: "#fff",
       fontSize: "10px",
-      fontFamily: "monospace",
-      padding: "1px 5px",
-      borderRadius: "3px",
+      fontFamily: "system-ui,sans-serif",
+      fontWeight: "600",
+      padding: "1px 6px",
+      borderRadius: "4px",
       whiteSpace: "nowrap",
       lineHeight: "16px",
     });
@@ -382,11 +408,35 @@
     return box;
   }
 
+  function showShieldBanner(root) {
+    const banner = document.createElement("div");
+    Object.assign(banner.style, {
+      position: "fixed",
+      top: "12px",
+      left: "50%",
+      transform: "translateX(-50%)",
+      zIndex: "2147483647",
+      background: "linear-gradient(135deg,#1d4ed8,#0f172a)",
+      color: "#fff",
+      fontFamily: "system-ui,sans-serif",
+      fontSize: "13px",
+      fontWeight: "600",
+      padding: "10px 18px",
+      borderRadius: "999px",
+      boxShadow: "0 8px 24px rgba(15,23,42,0.35)",
+      pointerEvents: "none",
+      letterSpacing: "0.01em",
+    });
+    banner.textContent = "Aegis Privacy Shield ON — faces & passwords hidden from Gemini / screen capture";
+    root.appendChild(banner);
+  }
+
   function showRedactionOverlay(fields, faces, dpr) {
     const root = getOrCreateOverlayRoot();
     root.innerHTML = "";
     overlayAnchors = [];
     faceAnchors = [];
+    showShieldBanner(root);
 
     for (const field of fields || []) {
       // Prefer live element so boxes track the real field, not a stale rect.
@@ -397,10 +447,10 @@
       if (!rect || rect.width === 0 || rect.height === 0) continue;
 
       const typeLabel = {
-        password_input: "🔒 Password",
-        sensitive_input: "🔒 Sensitive",
-        contenteditable_pii: "🔒 Card data",
-      }[field.type] || "🔒 Redacted";
+        password_input: "HIDDEN · Password",
+        sensitive_input: "HIDDEN · Sensitive",
+        contenteditable_pii: "HIDDEN · Card data",
+      }[field.type] || "HIDDEN · Redacted";
 
       const box = makeOverlayBox(field.type, typeLabel);
       root.appendChild(box);
@@ -419,35 +469,43 @@
       }
     }
 
-    // Face boxes from Run Agent sanitize. Prefer a live photo element
-    // (tp08 #applicant-photo) so the overlay sticks like field boxes.
-    // Otherwise anchor bboxes in document space (physical px → CSS via dpr).
-    const photoEl = document.querySelector("#applicant-photo");
-    if (photoEl && (faces || []).length > 0) {
-      const box = makeOverlayBox("face", "🔒 Face");
+    // Face shields from Privacy scan / sanitize. Prefer the live photo element
+    // (tp08 #applicant-photo) so the whole ID photo is covered for Gemini.
+    // Also paint model bboxes (physical px → CSS via dpr) when no photo el.
+    const photoEl = document.querySelector("#applicant-photo, img.applicant-photo, img[alt*='photo' i], img[alt*='face' i]");
+    if (photoEl) {
+      const box = makeOverlayBox("face", "HIDDEN · Face");
       root.appendChild(box);
       overlayAnchors.push({ el: photoEl, box });
-    } else {
-      const scale = typeof dpr === "number" && dpr > 0 ? dpr : 1;
-      const sx = window.scrollX || 0;
-      const sy = window.scrollY || 0;
-      for (const face of faces || []) {
-        const bbox = face.bbox || face;
-        if (!Array.isArray(bbox) || bbox.length < 4) continue;
-        const [x1, y1, x2, y2] = bbox;
-        const width = (x2 - x1) / scale;
-        const height = (y2 - y1) / scale;
-        if (width <= 0 || height <= 0) continue;
-        const box = makeOverlayBox("face", "🔒 Face");
-        root.appendChild(box);
-        faceAnchors.push({
-          docX: x1 / scale + sx,
-          docY: y1 / scale + sy,
-          width,
-          height,
-          box,
-        });
+    }
+    const scale = typeof dpr === "number" && dpr > 0 ? dpr : 1;
+    const sx = window.scrollX || 0;
+    const sy = window.scrollY || 0;
+    for (const face of faces || []) {
+      const bbox = face.bbox || face;
+      if (!Array.isArray(bbox) || bbox.length < 4) continue;
+      const [x1, y1, x2, y2] = bbox;
+      const width = (x2 - x1) / scale;
+      const height = (y2 - y1) / scale;
+      if (width <= 0 || height <= 0) continue;
+      // Skip if already covering the same photo element tightly
+      if (photoEl) {
+        const pr = photoEl.getBoundingClientRect();
+        const fx = x1 / scale;
+        const fy = y1 / scale;
+        const overlap =
+          fx < pr.right && fx + width > pr.left && fy < pr.bottom && fy + height > pr.top;
+        if (overlap) continue;
       }
+      const box = makeOverlayBox("face", "HIDDEN · Face");
+      root.appendChild(box);
+      faceAnchors.push({
+        docX: x1 / scale + sx,
+        docY: y1 / scale + sy,
+        width,
+        height,
+        box,
+      });
     }
 
     ensureOverlayListeners();
@@ -521,12 +579,15 @@
     if (rescanTimer) clearTimeout(rescanTimer);
     rescanTimer = setTimeout(() => {
       rescanTimer = null;
-      try {
-        const fields = scanDOMForSensitiveFields();
-        showRedactionOverlay(fields);
-      } catch {
-        // Overlay refresh is best-effort; never throw into the page.
-      }
+      (async () => {
+        try {
+          const fields = scanDOMForSensitiveFields();
+          const passwordOn = await passwordDetectionEnabledFromStorage();
+          showRedactionOverlay(filterFieldsForPasswordDetection(fields, passwordOn));
+        } catch {
+          // Overlay refresh is best-effort; never throw into the page.
+        }
+      })();
     }, RESCAN_DEBOUNCE_MS);
   }
 

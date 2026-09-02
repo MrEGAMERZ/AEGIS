@@ -6,26 +6,42 @@
 Icon
 ._*
 
-# Node dependencies (we only want our specific src/vendor/ files)
+# Node dependencies
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-package-lock.json
 
 # Generated "Load unpacked" root (scripts/build-dist.sh)
 dist/
 
-# Environment variables
+# Environment / local secrets
 .env
 .env.local
 .env.*
+.venv/
+.chrome-demo-profile/
 
-# Editor directories
-.vscode/
-.idea/
+# Local agent / editor / graph tooling (not part of the extension)
+.agents/
+.cursor/
+.opencode/
+graphify-out/
+.graphify_detect.json
+.graphifyignore
+engineers/
+AGENTS.md
+CLAUDE.md
+
+# Backup / patch leftovers
+*.bak
+*.bak-*
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# Editor directories
+.vscode/
+.idea/

@@ -224,6 +224,27 @@ check(
   workerSrc.includes(".replace(/^(B-|I-)/")
 );
 
+check(
+  "worker sets useWasmCache=false (no blob: ORT factory import)",
+  workerSrc.includes("useWasmCache = false")
+);
+check(
+  "ensureCallableTokenizer always wraps pipeline tokenizer as callable",
+  workerSrc.includes("function ensureCallableTokenizer") &&
+    workerSrc.includes("pipelineInstance.tokenizer = wrapper") &&
+    workerSrc.includes("proto._call.call(tok")
+);
+check(
+  "worker uses path-only localModelPath (not http href) so tokenizer files are found offline",
+  workerSrc.includes("function localModelsPathname") &&
+    workerSrc.includes("localModelPath = localModelsPathname()") &&
+    !/localModelPath\s*=\s*MODELS_DIR\.href/.test(workerSrc)
+);
+check(
+  "ensureCallableTokenizer fails closed when tokenizer is missing",
+  workerSrc.includes("tokenizer missing after pipeline load")
+);
+
 console.log("\nOffscreen / background live-path contract");
 
 check(

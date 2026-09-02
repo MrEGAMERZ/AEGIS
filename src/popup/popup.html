@@ -5,12 +5,12 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      width: 340px;
+      width: 360px;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       font-size: 13px;
-      color: #e0e0e0;
-      background: #1a1a2e;
-      padding: 14px;
+      color: #1e293b;
+      background: #f8fafc;
+      padding: 16px;
     }
 
     /* ── Header ── */
@@ -18,196 +18,229 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 12px;
+      margin-bottom: 14px;
     }
-    h1 { font-size: 14px; font-weight: 700; color: #00d4ff; }
+    h1 {
+      font-size: 15px;
+      font-weight: 700;
+      color: #0f172a;
+      letter-spacing: -0.02em;
+    }
     .model-status {
       font-size: 10px;
-      padding: 2px 7px;
-      border-radius: 10px;
-      background: #16213e;
-      border: 1px solid #333;
-      color: #888;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      color: #64748b;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     }
-    .model-status.ready  { border-color: #00c853; color: #00c853; }
-    .model-status.failed { border-color: #ff1744; color: #ff1744; }
-    .model-status.loading { border-color: #ffc800; color: #ffc800; }
+    .model-status.ready  { border-color: #86efac; background: #f0fdf4; color: #15803d; }
+    .model-status.failed { border-color: #fca5a5; background: #fef2f2; color: #dc2626; }
+    .model-status.loading { border-color: #fcd34d; background: #fffbeb; color: #b45309; }
+
+    /* ── Cards ── */
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+    }
+    .card-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #64748b;
+      margin-bottom: 8px;
+    }
 
     /* ── Privacy Receipt ── */
-    .receipt {
-      background: #0f1629;
-      border: 1px solid #1e3060;
-      border-radius: 6px;
-      padding: 8px 10px;
-      margin-bottom: 12px;
-      display: none;
-    }
+    .receipt { display: none; }
     .receipt.visible { display: block; }
-    .receipt-title {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #00d4ff;
-      margin-bottom: 6px;
-    }
     .receipt-row {
       display: flex;
       justify-content: space-between;
-      font-size: 11px;
-      color: #aaa;
-      margin-bottom: 2px;
+      font-size: 12px;
+      color: #64748b;
+      margin-bottom: 4px;
     }
-    .receipt-row span:last-child { color: #e0e0e0; font-weight: 600; }
+    .receipt-row span:last-child { color: #0f172a; font-weight: 600; }
     .receipt-badges {
       display: flex;
       gap: 6px;
-      margin-top: 6px;
+      margin-top: 8px;
       flex-wrap: wrap;
     }
     .badge {
       font-size: 10px;
-      padding: 2px 7px;
-      border-radius: 10px;
-      background: #16213e;
-      border: 1px solid #2a4080;
-      color: #ccc;
+      font-weight: 500;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      color: #475569;
     }
-    .badge.warn { border-color: #ff8c00; color: #ff8c00; }
+    .badge.warn { border-color: #fed7aa; background: #fff7ed; color: #c2410c; }
 
     /* ── Sections ── */
     .section { margin-bottom: 12px; }
     .section-title {
       font-size: 10px;
+      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #666;
-      margin-bottom: 7px;
+      letter-spacing: 0.06em;
+      color: #64748b;
+      margin-bottom: 8px;
     }
     label {
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-bottom: 5px;
-      cursor: pointer;
-      color: #ccc;
-      font-size: 12px;
-    }
-    input[type="checkbox"] { accent-color: #00d4ff; }
-    input[type="text"], input[type="url"] {
-      width: 100%;
-      padding: 6px 8px;
-      background: #16213e;
-      border: 1px solid #333;
-      border-radius: 4px;
-      color: #e0e0e0;
-      font-size: 12px;
       margin-bottom: 6px;
+      cursor: pointer;
+      color: #334155;
+      font-size: 12px;
     }
-    input:focus { outline: none; border-color: #00d4ff; }
+    input[type="checkbox"] { accent-color: #2563eb; width: 15px; height: 15px; }
+    input[type="text"], input[type="url"], input[type="password"] {
+      width: 100%;
+      padding: 8px 10px;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      color: #0f172a;
+      font-size: 12px;
+      margin-bottom: 8px;
+      box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.03);
+    }
+    input:focus {
+      outline: none;
+      border-color: #93c5fd;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
 
     /* ── Buttons ── */
-    .btn-row { display: flex; gap: 8px; margin-top: 4px; }
+    .btn-row { display: flex; gap: 8px; margin-top: 6px; }
     button {
       flex: 1;
-      padding: 9px;
+      padding: 10px 12px;
       border: none;
-      border-radius: 6px;
+      border-radius: 10px;
       font-weight: 600;
       font-size: 12px;
       cursor: pointer;
+      transition: background 0.15s, box-shadow 0.15s;
     }
-    #run-btn {
-      background: #00d4ff;
-      color: #1a1a2e;
-    }
-    #run-btn:hover { background: #00b8d9; }
     #scan-btn {
-      background: #1e3060;
-      color: #00d4ff;
-      border: 1px solid #00d4ff44;
+      background: #2563eb;
+      color: #fff;
+      box-shadow: 0 1px 2px rgba(37, 99, 235, 0.25);
     }
-    #scan-btn:hover { background: #243870; }
-    button:disabled { background: #333 !important; color: #666 !important; cursor: not-allowed; border-color: transparent !important; }
+    #scan-btn:hover { background: #1d4ed8; }
+    #run-btn {
+      background: #fff;
+      color: #334155;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    #run-btn:hover { background: #f8fafc; border-color: #cbd5e1; }
+    #save-profile-btn {
+      background: #fff;
+      color: #334155;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    #save-profile-btn:hover { background: #f8fafc; }
+    button:disabled {
+      background: #f1f5f9 !important;
+      color: #94a3b8 !important;
+      cursor: not-allowed;
+      border-color: #e2e8f0 !important;
+      box-shadow: none !important;
+    }
 
     /* ── Task input ── */
     .task-input {
       width: 100%;
       min-height: 55px;
-      padding: 7px;
-      background: #16213e;
-      border: 1px solid #333;
-      border-radius: 4px;
-      color: #e0e0e0;
+      padding: 8px 10px;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      color: #0f172a;
       font-size: 12px;
       resize: vertical;
       font-family: inherit;
       margin-bottom: 8px;
+      box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.03);
     }
-    .task-input:focus { outline: none; border-color: #00d4ff; }
+    .task-input:focus {
+      outline: none;
+      border-color: #93c5fd;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
 
     /* ── Status ── */
     .status {
       margin-top: 10px;
-      padding: 7px 10px;
-      border-radius: 4px;
-      font-size: 11px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 12px;
       display: none;
       line-height: 1.5;
       word-break: break-word;
     }
-    .status.active  { display: block; background: #16213e; border: 1px solid #333; color: #ccc; }
-    .status.success { display: block; background: #0d2015; border: 1px solid #00c853; color: #00c853; }
-    .status.error   { display: block; background: #200a0a; border: 1px solid #ff1744; color: #ff6b6b; }
-    .status.warn    { display: block; background: #1e1600; border: 1px solid #ffc800; color: #ffc800; }
+    .status.active  { display: block; background: #fff; border: 1px solid #e2e8f0; color: #475569; }
+    .status.success { display: block; background: #f0fdf4; border: 1px solid #86efac; color: #15803d; }
+    .status.error   { display: block; background: #fef2f2; border: 1px solid #fca5a5; color: #b91c1c; }
+    .status.warn    { display: block; background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
 
     .hint {
+      font-size: 11px;
+      color: #64748b;
+      margin-top: -4px;
+      margin-bottom: 8px;
+      line-height: 1.45;
+    }
+    .btn-hint {
       font-size: 10px;
-      color: #666;
-      margin-top: -2px;
-      margin-bottom: 6px;
+      color: #94a3b8;
+      text-align: center;
+      margin-top: 6px;
       line-height: 1.4;
     }
 
-    .preview-wrap {
-      display: none;
-      margin-bottom: 12px;
-      background: #0f1629;
-      border: 1px solid #1e3060;
-      border-radius: 6px;
-      padding: 8px;
-    }
+    .preview-wrap { display: none; }
     .preview-wrap.visible { display: block; }
     .preview-wrap img {
       width: 100%;
       max-height: 160px;
       object-fit: contain;
-      border-radius: 4px;
-      background: #000;
+      border-radius: 8px;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
     }
 
-    .pipeline {
-      display: none;
-      font-size: 11px;
-      color: #00d4ff;
-      margin-bottom: 8px;
-    }
+    .pipeline { display: none; font-size: 11px; color: #64748b; }
     .pipeline.visible { display: block; }
-    .pipeline-step { margin-bottom: 2px; }
-    .pipeline-step.done { color: #00c853; }
-    .pipeline-step.active { color: #ffc800; }
+    .pipeline-step { margin-bottom: 3px; padding-left: 4px; }
+    .pipeline-step.done { color: #15803d; }
+    .pipeline-step.active { color: #2563eb; font-weight: 600; }
   </style>
 </head>
 <body>
 
-  <!-- Header + model status -->
   <div class="header">
     <h1>SIH26171 Privacy Agent</h1>
     <span class="model-status loading" id="model-status">⟳ Loading…</span>
   </div>
 
-  <!-- Privacy receipt (shown after each run) -->
-  <div class="receipt" id="receipt">
-    <div class="receipt-title">Last Privacy Receipt</div>
+  <div class="card receipt" id="receipt">
+    <div class="card-title">Last Privacy Receipt</div>
     <div class="receipt-row"><span>Fields masked</span><span id="r-fields">—</span></div>
     <div class="receipt-row"><span>Faces detected</span><span id="r-faces">—</span></div>
     <div class="receipt-row"><span>PII spans</span><span id="r-pii">—</span></div>
@@ -215,27 +248,26 @@
     <div class="receipt-badges" id="r-badges"></div>
   </div>
 
-  <div class="pipeline" id="pipeline">
+  <div class="card pipeline" id="pipeline">
+    <div class="card-title">Pipeline</div>
     <div class="pipeline-step" id="step-capture">1. Capture viewport</div>
     <div class="pipeline-step" id="step-redact">2. Local redaction (faces + NER)</div>
     <div class="pipeline-step" id="step-vlm">3. VLM on sanitized context</div>
   </div>
 
-  <div class="preview-wrap" id="preview-wrap">
-    <div class="receipt-title">Sanitized preview (redacted — not the raw capture)</div>
+  <div class="card preview-wrap" id="preview-wrap">
+    <div class="card-title">Sanitized preview (redacted — not the raw capture)</div>
     <img id="sanitize-preview" alt="Sanitized screenshot preview">
   </div>
 
-  <!-- Detection toggles -->
-  <div class="section">
+  <div class="section card">
     <div class="section-title">Detections</div>
     <label><input type="checkbox" id="face-detection" checked> Face Detection (BlazeFace ONNX)</label>
     <label><input type="checkbox" id="password-detection" checked> Password Fields (DOM)</label>
     <label><input type="checkbox" id="pii-detection" checked> Text PII (Regex + NER)</label>
   </div>
 
-  <!-- VLM server config -->
-  <div class="section">
+  <div class="section card">
     <div class="section-title">VLM Server</div>
     <input type="url" id="vlm-endpoint" placeholder="http://localhost:11434/v1/chat/completions">
     <input type="text" id="vlm-model" placeholder="qwen2.5vl:7b">
@@ -243,23 +275,22 @@
     <p class="hint" id="api-key-hint">Session-only — never written to disk. Leave empty for local Ollama.</p>
   </div>
 
-  <!-- User Profile -->
-  <div class="section">
+  <div class="section card">
     <div class="section-title">My Profile Data</div>
     <textarea class="task-input" id="profile-input" placeholder="e.g. My name is Rehan, phone is 555-1234..." style="min-height: 45px;"></textarea>
     <div class="btn-row" style="margin-top: 0;">
-      <button id="save-profile-btn" style="background: #1e3060; color: #00d4ff; border: 1px solid #00d4ff44;">Save Profile</button>
+      <button id="save-profile-btn">Save Profile</button>
     </div>
   </div>
 
-  <!-- Task + buttons -->
-  <div class="section">
+  <div class="section card">
     <div class="section-title">Task</div>
     <textarea class="task-input" id="task-input" placeholder="Describe what to do on this page…"></textarea>
     <div class="btn-row">
-      <button id="scan-btn">Scan page</button>
+      <button id="scan-btn">Privacy scan</button>
       <button id="run-btn">Run Agent</button>
     </div>
+    <p class="btn-hint">Judge demo: Privacy scan puts opaque shields on the live page so Gemini / screen capture cannot see faces or passwords. No cloud required.</p>
   </div>
 
   <div class="status" id="status"></div>
