@@ -109,6 +109,22 @@ Reasoning:
 
 ---
 
+## 7.5 `aegisDocVault` — local document vault (NEW, 2026-09-06 backend)
+
+| Key | Shape / Type | Default | Written by | Read by | Sensitivity | Retention |
+|---|---|---|---|---|---|---|
+| `aegisDocVault` | `Array<{ id: string, docName: string, format: string, extractedAt: ISO string, text: string }>` | `[]` (absent → treated as empty) | `ADD_DOC_TO_VAULT` handler → `AegisDocVault.addDocToVault()` (`src/background/doc-vault.js`) | `retrieveVaultSnippets()` (RAG-lite prompt block in `handleCaptureAndSanitize`), `GET_DOC_VAULT` (dashboard list — names + char counts ONLY, text never returned) | **High** (user's own documents, may contain PII) — mitigated: Aadhaar/PAN numbers are scrubbed to `[REDACTED]` at store time; text NEVER leaves the device / is never sent to any endpoint except the LOCAL VLM's system prompt (same path as `userProfile`) | Until user removes / extension uninstalled; capped at 10 docs / 200 KB total (oldest dropped first) |
+
+Rules (enforced in `src/background/doc-vault.js`, not just documented):
+
+- **Local-only:** vault text is never included in the sanitized-image path and never sent to a remote endpoint. `STRUCTURE_DOCUMENT_TEXT` (the only path that transmits document text to a VLM) rejects any resolved endpoint failing `isLocalVlmEndpoint()` with `STRUCTURE_REMOTE_REJECTED` *before* a request is made.
+- **Never persist sensitive:** `normalizeVaultDoc()` runs `redactSensitiveNumbers()` (Aadhaar + PAN regex) on the text before it is written to storage.
+- **Caps:** `VAULT_MAX_DOCS = 10`, `VAULT_MAX_BYTES = 200 * 1024` (UTF-8-ish byte sum of `text` fields); `trimVault()` drops oldest (`extractedAt`) first; a single oversized doc is truncated to fit.
+- **Synchronous provenance cache:** vault texts are mirrored into an in-memory cache (`getCachedVaultTexts()`), refreshed on vault writes and at capture time, so `sanitizeAction()`'s synchronous "type" guard can verify a value is traceable to vault text. Empty cache → vault provenance disabled → fail closed.
+- **Snippet contract:** `retrieveVaultSnippets(docs, query, topK=3)` returns sentence-level matches ≤ 400 chars, keyword-scored (stopwords filtered). Injected into the LOCAL VLM system prompt only, in the `DOCUMENT KNOWLEDGE` block.
+
+---
+
 ## 8. Open items for the Lead
 
 1. ~~`userProfile` contract mismatch~~ — **Resolved by Lead 2026-08-28**: was a repo-recovery gap (checkpoint commit not yet restored to the working tree), not unlanded work. Now restored and verified in `src/`.

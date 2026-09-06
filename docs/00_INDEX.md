@@ -26,6 +26,7 @@ A privacy-preserving browser extension that intercepts screen content before it 
 
 | Doc | Purpose | Link |
 |---|---|---|
+| Master Task Board | **Canonical outstanding-work board (OPEN WORK A–H)** — what is not done, owners, dependencies, acceptance criteria | [TASK_MASTER.md](TASK_MASTER.md) |
 | 01 | Requirements — functional/non-functional reqs, redaction taxonomy, MVP scope | [01_REQUIREMENTS.md](01_REQUIREMENTS.md) |
 | 02 | Architecture — components, data flow, sanitization pipeline, server contract | [02_ARCHITECTURE.md](02_ARCHITECTURE.md) |
 | 03 | Tech Stack & Models — model selection matrix, ADRs, latency budgets | [03_TECH_STACK_MODELS.md](03_TECH_STACK_MODELS.md) |
@@ -38,6 +39,12 @@ A privacy-preserving browser extension that intercepts screen content before it 
 |---|---|---|
 | Deep Structured Analysis | Problem understanding, feasibility, competitor landscape, evaluator lens | [Aegis_Deep_Structured_Analysis.md](../docs/Aegis_Deep_Structured_Analysis.md) |
 | Pitch Storytelling Framework | Narrative arc for the final pitch | [Aegis_Pitch_Storytelling_Framework.md](../Aegis_Pitch_Storytelling_Framework.md) |
+
+## Privacy & Security Documents
+
+| Doc | Purpose | Link |
+|---|---|---|
+| Document Upload Trust Boundary | What may leave the device for the PDF/DOCX upload + AI-structured profile feature, never-store enforcement points, verification checklist | [PRIVACY_DOC_UPLOAD.md](PRIVACY_DOC_UPLOAD.md) |
 
 ---
 
