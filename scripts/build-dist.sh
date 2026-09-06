@@ -26,6 +26,9 @@ RUNTIME_DIRS=(
   src/offscreen
   src/inference
   src/icons
+  src/shared
+  src/voice
+  src/dashboard
 )
 
 # src/vendor/ is an allowlist, not a directory copy.
@@ -51,8 +54,13 @@ VENDOR_FILES=(
 # never needs a network. A directory rather than an allowlist because the model
 # is a self-contained tree. No ORT binary here: transformers.min.js is bundled
 # against the same 1.29.0 wasm build BlazeFace loads.
+#
+# pdfjs/  — pdf.min.mjs + pdf.worker.min.mjs (lazy on-device PDF extraction)
+# pako/   — pako_inflate.min.js (lazy on-device DOCX ZIP inflate)
 VENDOR_DIRS=(
   src/vendor/models
+  src/vendor/pdfjs
+  src/vendor/pako
 )
 
 ROOT_FILES=(
