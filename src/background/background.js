@@ -1020,6 +1020,8 @@ AVAILABLE ACTIONS:
   {"action":"navigate","url":"<url>"}
   {"action":"done","summary":"<string>"}
 
+The ONLY fill action is "type". Never reply with {"action":"fill",...} or {"action":"fill_field",...} — those names do not exist.
+
 CHOOSING THE ACTION:
 - If the user asks a question, or asks you to summarize / describe / read / explain the page, do NOT interact with the page. Reply {"action":"done","summary":"<your real answer>"} and put the actual answer text in "summary" — it is shown directly to the user. Keep it under 400 characters.
 - If the user asks you to click, press, open or select something visible, use "click".
@@ -1041,6 +1043,7 @@ PROFILE RULES (these govern the "type" action only):
 3. "profileKey" should name the matching USER PROFILE entry (same words, any casing or spacing — e.g. "fullName" is fine for "Full Name"). Never invent a key that is not in the list. Never attach a real key to a field it does not belong to (e.g. do not put a "Job Title" value into a Name field). If the value comes from DOCUMENT KNOWLEDGE and no profile key matches the field, you may use a descriptive dynamic key (any key is allowed) or omit "profileKey".
 4. If the information is NOT in the USER PROFILE or DOCUMENT KNOWLEDGE (no listed key or snippet matches the field), you MUST NOT guess, invent, or use placeholder data (like "John Doe"). Output: {"action": "done", "summary": "Profile missing information. Please add it in Settings."}
 5. Every "type" action is independently re-checked against the real profile or the stored document text before execution. An action whose value or profileKey cannot be verified against either is discarded and nothing is typed — guessing never helps, it only wastes the turn. When in doubt, use "done".
+6. Never output a "type" action that targets a password field — passwords are never in the USER PROFILE. Apply "type" only to fields whose label matches a profile key.
 
 EXAMPLES:
 - "Fill my name", profile has Name "Alice": {"action": "type", "selector": "#name", "value": "Alice", "profileKey": "Name"}
@@ -1495,6 +1498,35 @@ function jsonCandidatesFrom(raw) {
   return out;
 }
 
+// qwen2.5vl family emits two off-schema fill shapes that are NOT in the
+// AVAILABLE ACTIONS set: {"action":"fill","fields":[{...},...]} and
+// {"action":"fill_field","field_selector":...}. Both express exactly the
+// same intent as "type" with fields whose values must satisfy the same
+// provenance/label guards. Rewrite those shapes to the canonical "type"
+// form BEFORE sanitizeAction runs — so the model's correct intent survives
+// its chance of wrong vocabulary, while every safety gate (profile/vault
+// provenance, password-field label correlation) is still enforced on the
+// canonical shape. Any unknown shape is passed through untouched and
+// rejected by sanitizeAction's default case as before.
+function normalizeActionShape(action) {
+  if (!action || typeof action !== "object" || Array.isArray(action)) return action;
+  if (action.action === "fill_field") {
+    return {
+      action: "type",
+      selector: action.field_selector ?? action.selector,
+      value: action.value,
+      profileKey: action.profileKey,
+    };
+  }
+  if (action.action === "fill" && Array.isArray(action.fields) && action.fields.length) {
+    const f = action.fields[0];
+    if (f && typeof f === "object") {
+      return { action: "type", selector: f.selector, value: f.value, profileKey: f.profileKey };
+    }
+  }
+  return action;
+}
+
 function parseAction(raw, context = {}) {
   if (typeof raw !== "string" || !raw.trim()) return null;
 
@@ -1508,7 +1540,7 @@ function parseAction(raw, context = {}) {
     } catch {
       continue;
     }
-    const safe = sanitizeAction(candidate, context);
+    const safe = sanitizeAction(normalizeActionShape(candidate), context);
     if (safe) return safe;
   }
   return null;

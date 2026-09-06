@@ -13,6 +13,7 @@
 - **Phase 1 — COMPLETE**
 - **Phase 2 — Code + harness largely complete; live-browser proof + demo numbers owed** (see OPEN WORK §A–§C)
 - **Next gate before demo:** §A live Chrome proof on TP08, §B measured SIH numbers, §C privacy re-audit sign-off
+- **2026-09-06 sync:** sanitize-action harness 43/43 (7 new); §A4 fill-agent schema-drift robustness shipped (off-schema `fill`/`fill_field` → `type` normalization + prompt hardening, driven by the live TP08/TP01 incidents); §E2 done (`patch_vlm_*.js` removed, zero refs, dist rebuilt 81M). §A4 live TP08 completion still owed.
 
 ---
 
@@ -55,7 +56,7 @@
 | # | Task | Owner | Acceptance criteria |
 |---|---|---|---|
 | E1 | `normalize-profile.test.js` tests an embedded copy, not a live import — diff the copy against current `src/background/background.js` (`normalizeProfile`), convert to live import or document the drift | eval + codebase | Harness runs against the REAL function; stale-copy note removed |
-| E2 | Remove stale root `patch_vlm_stream.js` / `patch_vlm_json.js` (superseded by `server/index.js` gateway; verify dead references before deleting) | codebase | Grep shows zero references; files deleted or archived; no behavior change |
+| E2 | Remove stale root `patch_vlm_stream.js` / `patch_vlm_json.js` (superseded by `server/index.js` gateway; verify dead references before deleting) | codebase | **DONE 2026-09-06** — both deleted; grep shows zero references (only `graphify-out/` index + task docs named them); no behavior change; dist rebuilt |
 | E3 | Document CMap-needing PDFs as an accepted fail-closed limitation (pdf.js lazy load) in demo runbook §known-limitations | frontend + codebase | One honest bullet in `docs/DEMO_RUNBOOK.md` |
 | E4 | Standing rule: re-run `scripts/build-dist.sh` + manifest-path check after ANY `src/` change; record dist size in the commit/log | lead (whoever changes src) | `dist/` byte-identical to `src/` semantics; size logged (currently 81M) |
 

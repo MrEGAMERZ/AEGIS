@@ -343,6 +343,75 @@ for (const [label, raw] of [
   );
 }
 
+// ── 5. Off-schema small-VLM shapes (fill / fill_field) — normalized ──
+//
+// Live-observed (2026-09-06): qwen2.5vl:7b pervasively emits
+//   {"action":"fill","fields":[{...}]} and
+//   {"action":"fill_field","field_selector":"#id","value":...}
+// despite the prompt's AVAILABLE ACTIONS set. normalizeActionShape() maps
+// these to "type" so correct intent survives — but the value must still pass
+// the same provenance + label-correlation guards. Safety is unchanged.
+
+const SHAPE_CTX = {
+  userProfile: normalizeProfile({ "Full Name": "Alice Smith" }),
+  fields: [...PAGE_FIELDS, { type: "password_input", label: "Password", selector: "#password" }],
+};
+
+// Live incident (tp08): fill_field → type, for a verified profile value.
+{
+  const raw = '{"action":"fill_field","field_selector":"#name_input","value":"Alice Smith","profileKey":"Full Name"}';
+  const result = parseAction(raw, SHAPE_CTX);
+  check(
+    "fill_field maps to type for a verified profile fill",
+    result && result.action === "type" && result.value === "Alice Smith" && result.profileKey === "Full Name",
+    JSON.stringify(result)
+  );
+}
+
+// fill {fields:[...]} → first verified field as a type action. The agent loop
+// executes ONE action per step; the next step's fresh screenshot re-prompts
+// the model for the remaining fields.
+{
+  const raw = '{"action":"fill","fields":[{"selector":"#name_input","value":"Alice Smith","profileKey":"Full Name"},{"selector":"#title_input","value":"Software Engineer","profileKey":"Job Title"}]}';
+  const result = parseAction(raw, SHAPE_CTX);
+  check(
+    "fill[fields] takes the first verified field as a type action",
+    result && result.action === "type" && result.selector === "#name_input",
+    JSON.stringify(result)
+  );
+}
+
+// A redacted/invented value inside an off-schema fill is STILL rejected.
+{
+  const raw = '{"action":"fill_field","field_selector":"#card-name","value":"Na[REDACTED] on Card","profileKey":"Name"}';
+  const result = parseAction(raw, SHAPE_CTX);
+  check("fill_field with a redacted/invented value is STILL rejected", result === null, JSON.stringify(result));
+}
+
+// Off-schema fill targeting a password field with the profile email is STILL rejected.
+{
+  const raw = '{"action":"fill_field","field_selector":"#password","value":"alice@example.com","profileKey":"Email"}';
+  const result = parseAction(raw, SHAPE_CTX);
+  check("fill_field into a password field is STILL rejected (label correlation)", result === null, JSON.stringify(result));
+}
+
+// A schema-valid "type" aimed at the password field is also still rejected
+// (the tp01 live incident — the model tried typing the profile email into
+// #password; sanitizeAction's label correlation correctly blocked it).
+{
+  const ctx = { ...SHAPE_CTX, userProfile: normalizeProfile({ Email: "alice@example.com", "Full Name": "Alice Smith" }) };
+  const raw = '{"action":"type","selector":"#password","value":"alice@example.com","profileKey":"Email"}';
+  const result = parseAction(raw, ctx);
+  check("valid-schema type into a password field is STILL rejected", result === null, JSON.stringify(result));
+}
+
+// Unknown action names still fail closed.
+{
+  const raw = '{"action":"autofill_everything"}';
+  const result = parseAction(raw, SHAPE_CTX);
+  check("unknown action names still fail closed", result === null, JSON.stringify(result));
+}
+
 console.log(`\n${pass}/${pass + fail} passed, ${fail} failed.`);
 if (fail > 0) {
   console.log("sanitizeAction() anti-hallucination guard has a REGRESSION.");
