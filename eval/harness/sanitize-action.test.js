@@ -159,6 +159,23 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
   );
 }
 
+// VLM often camelCases keys ("fullName") while the saved profile used "Full Name".
+{
+  const profile = normalizeProfile({ "Full Name": "Alice Smith" });
+  const action = {
+    action: "type",
+    selector: "#name_input",
+    value: "Alice Smith",
+    profileKey: "fullName",
+  };
+  const result = sanitizeAction(action, { userProfile: profile, fields: PAGE_FIELDS });
+  check(
+    "camelCase profileKey resolves to Full Name -> ALLOWED",
+    result && result.action === "type" && result.profileKey === "Full Name",
+    JSON.stringify(result)
+  );
+}
+
 // Case-insensitive / whitespace-tolerant value matching (model reformats
 // casing/whitespace slightly but the underlying value is genuinely correct).
 {
@@ -319,6 +336,10 @@ for (const [label, raw] of [
   check(
     "classifyError maps VLM_BAD_RESPONSE explicitly",
     classifyError({ message: 'VLM_BAD_RESPONSE: server did not return JSON. It sent: "Sure"' }) === "VLM_BAD_RESPONSE"
+  );
+  check(
+    "classifyError maps timed out to TIMEOUT",
+    classifyError({ message: "VLM server timed out after 120s at http://localhost:8000" }) === "TIMEOUT"
   );
 }
 
