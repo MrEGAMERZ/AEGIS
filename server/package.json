@@ -1,0 +1,16 @@
+{
+  "name": "aegis-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local VLM gateway for the Aegis extension. Runs on the operator's laptop.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "start:mock": "node index.js --mock",
+    "test": "node test-extract.js",
+    "mock": "node mock-client.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
