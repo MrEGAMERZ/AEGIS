@@ -290,16 +290,17 @@
   let overlayRaf = 0;
   let overlayListenersAttached = false;
 
-  // OPAQUE shields — Gemini / screen-capture extensions must not read
-  // faces or passwords through a translucent tint. Solid covers win the
-  // judge demo: what is on the tab is what a vision model would see.
+  // USER-VISIBLE indicators only — never black out the live page.
+  // AI redaction happens on the captured/sanitized image (offscreen), not here.
+  // Outline + tiny "Secured" badge; transparent fill so the user still sees
+  // passwords, faces, and fields normally. pointer-events:none on the root.
   const TYPE_COLORS = {
-    password_input:      { bg: "#0f172a", border: "#ef4444", badge: "#ef4444" },
-    sensitive_input:     { bg: "#1e293b", border: "#f97316", badge: "#f97316" },
-    contenteditable_pii: { bg: "#1e293b", border: "#a855f7", badge: "#a855f7" },
-    face:                { bg: "#020617", border: "#3b82f6", badge: "#3b82f6" },
+    password_input:      { border: "#16a34a", badge: "#16a34a" },
+    sensitive_input:     { border: "#2563eb", badge: "#2563eb" },
+    contenteditable_pii: { border: "#7c3aed", badge: "#7c3aed" },
+    face:                { border: "#2563eb", badge: "#2563eb" },
   };
-  const DEFAULT_COLOR = { bg: "#1e293b", border: "#eab308", badge: "#eab308" };
+  const DEFAULT_COLOR = { border: "#64748b", badge: "#64748b" };
 
   function getOrCreateOverlayRoot() {
     let root = document.getElementById(OVERLAY_ROOT_ID);
@@ -375,60 +376,34 @@
     const box = document.createElement("div");
     Object.assign(box.style, {
       position: "fixed",
-      border: `2px solid ${colors.border}`,
-      backgroundColor: colors.bg,
-      // Extra insurance vs translucent captures
-      backgroundImage:
-        type === "face"
-          ? "repeating-linear-gradient(45deg,#020617 0 6px,#111827 6px 12px)"
-          : "none",
+      border: `1.5px solid ${colors.border}`,
+      backgroundColor: "transparent",
       boxSizing: "border-box",
       borderRadius: type === "face" ? "10px" : "6px",
-      boxShadow: "0 0 0 1px rgba(0,0,0,0.5)",
-      opacity: "1",
+      boxShadow: `0 0 0 1px ${colors.border}22`,
+      pointerEvents: "none",
     });
 
     const badge = document.createElement("div");
     Object.assign(badge.style, {
       position: "absolute",
-      top: "-18px",
-      left: "0",
+      top: "-14px",
+      left: "4px",
       background: colors.badge || colors.border,
       color: "#fff",
-      fontSize: "10px",
+      fontSize: "9px",
       fontFamily: "system-ui,sans-serif",
       fontWeight: "600",
-      padding: "1px 6px",
-      borderRadius: "4px",
+      padding: "0 5px",
+      borderRadius: "3px",
       whiteSpace: "nowrap",
-      lineHeight: "16px",
+      lineHeight: "14px",
+      letterSpacing: "0.02em",
+      opacity: "0.92",
     });
     badge.textContent = labelText;
     box.appendChild(badge);
     return box;
-  }
-
-  function showShieldBanner(root) {
-    const banner = document.createElement("div");
-    Object.assign(banner.style, {
-      position: "fixed",
-      top: "12px",
-      left: "50%",
-      transform: "translateX(-50%)",
-      zIndex: "2147483647",
-      background: "linear-gradient(135deg,#1d4ed8,#0f172a)",
-      color: "#fff",
-      fontFamily: "system-ui,sans-serif",
-      fontSize: "13px",
-      fontWeight: "600",
-      padding: "10px 18px",
-      borderRadius: "999px",
-      boxShadow: "0 8px 24px rgba(15,23,42,0.35)",
-      pointerEvents: "none",
-      letterSpacing: "0.01em",
-    });
-    banner.textContent = "Aegis Privacy Shield ON — faces & passwords hidden from Gemini / screen capture";
-    root.appendChild(banner);
   }
 
   function showRedactionOverlay(fields, faces, dpr) {
@@ -436,7 +411,6 @@
     root.innerHTML = "";
     overlayAnchors = [];
     faceAnchors = [];
-    showShieldBanner(root);
 
     for (const field of fields || []) {
       // Prefer live element so boxes track the real field, not a stale rect.
@@ -446,11 +420,12 @@
         : field.rect;
       if (!rect || rect.width === 0 || rect.height === 0) continue;
 
+      // Tiny labels — user still sees field contents through transparent fill.
       const typeLabel = {
-        password_input: "HIDDEN · Password",
-        sensitive_input: "HIDDEN · Sensitive",
-        contenteditable_pii: "HIDDEN · Card data",
-      }[field.type] || "HIDDEN · Redacted";
+        password_input: "Secured",
+        sensitive_input: "Secured",
+        contenteditable_pii: "Secured",
+      }[field.type] || "Secured";
 
       const box = makeOverlayBox(field.type, typeLabel);
       root.appendChild(box);
@@ -469,12 +444,11 @@
       }
     }
 
-    // Face shields from Privacy scan / sanitize. Prefer the live photo element
-    // (tp08 #applicant-photo) so the whole ID photo is covered for Gemini.
-    // Also paint model bboxes (physical px → CSS via dpr) when no photo el.
+    // Face outline for the user (transparent). Prefer live photo element on TP08.
+    // Actual face pixelation for AI is only on the sanitized capture.
     const photoEl = document.querySelector("#applicant-photo, img.applicant-photo, img[alt*='photo' i], img[alt*='face' i]");
     if (photoEl) {
-      const box = makeOverlayBox("face", "HIDDEN · Face");
+      const box = makeOverlayBox("face", "Secured");
       root.appendChild(box);
       overlayAnchors.push({ el: photoEl, box });
     }
@@ -488,7 +462,6 @@
       const width = (x2 - x1) / scale;
       const height = (y2 - y1) / scale;
       if (width <= 0 || height <= 0) continue;
-      // Skip if already covering the same photo element tightly
       if (photoEl) {
         const pr = photoEl.getBoundingClientRect();
         const fx = x1 / scale;
@@ -497,7 +470,7 @@
           fx < pr.right && fx + width > pr.left && fy < pr.bottom && fy + height > pr.top;
         if (overlap) continue;
       }
-      const box = makeOverlayBox("face", "HIDDEN · Face");
+      const box = makeOverlayBox("face", "Secured");
       root.appendChild(box);
       faceAnchors.push({
         docX: x1 / scale + sx,

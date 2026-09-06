@@ -3,6 +3,8 @@
 // while face detection is enabled, so background.js never calls the VLM with
 // an unredacted live frame.
 
+import { extractDocumentText, detectFormat } from "./document-extract.js";
+
 const canvas = document.getElementById("mask-canvas");
 const ctx = canvas.getContext("2d");
 
@@ -190,6 +192,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         })
       )
       .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (msg.type === "EXTRACT_DOCUMENT_TEXT") {
+    // On-device document → text. The heavy parsers (pdf.js / pako) are
+    // imported lazily inside extractDocumentText — never here.
+    extractDocumentText(msg.file)
+      .then((result) => sendResponse({ text: result.text, format: result.format }))
+      .catch((err) =>
+        sendResponse({
+          text: "",
+          format: msg.file ? detectFormat(msg.file.name, msg.file.mimeType) || "text" : "text",
+          error: err.message,
+        })
+      );
     return true;
   }
 });

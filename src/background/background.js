@@ -2,6 +2,84 @@
 
 const OFFSCREEN_URL = chrome.runtime.getURL("src/offscreen/offscreen.html");
 
+const DEFAULT_OLLAMA_VLM = "http://localhost:11434/v1/chat/completions";
+const DEFAULT_GATEWAY_VLM = "http://localhost:8000/v1/chat/completions";
+const DEFAULT_GATEWAY_HEALTH = "http://localhost:8000/health";
+const DEFAULT_VLM_MODEL = "qwen2.5vl:7b";
+const VLM_FETCH_TIMEOUT_MS = 120000;
+
+// ── Local document vault module (lazy) ────────────────────────────
+// doc-vault.js owns vault storage, snippet retrieval, structured-output
+// validation, and the vault provenance predicate. It attaches
+// `globalThis.AegisDocVault` (no import/export statements), so it can be
+// loaded two ways:
+//   1. Browser MV3 module SW: lazy `import("./doc-vault.js")` below.
+//   2. Node VM harnesses: the harness runs doc-vault.js in the SAME sandbox
+//      before background.js, so `globalThis.AegisDocVault` already exists and
+//      getDocVault() resolves without ever touching dynamic import (which the
+//      VM sandbox cannot link).
+const MAX_STRUCTURE_INPUT_CHARS = 60000; // mirrors doc-vault.js constant
+
+let _docVaultPromise = null;
+function getDocVault() {
+  if (globalThis.AegisDocVault) return Promise.resolve(globalThis.AegisDocVault);
+  if (!_docVaultPromise) {
+    _docVaultPromise = import("./doc-vault.js")
+      .then(() => globalThis.AegisDocVault || null)
+      .catch((err) => {
+        _docVaultPromise = null;
+        throw err;
+      });
+  }
+  return _docVaultPromise;
+}
+
+// Synchronous provenance check for sanitizeAction(): a "type" value passes the
+// anti-hallucination guard only if it is traceable to the profile OR to the
+// user's OWN stored document text (cached vault texts; empty cache → false →
+// fail closed, which is exactly the pre-vault behavior).
+//
+// D9 (privacy audit 2026-09-06): vault provenance is permitted ONLY on the
+// local-VLM path. handleCaptureAndSanitize() flips this flag from the RESOLVED
+// endpoint's locality — a remote capture disables it, so sanitizeAction falls
+// back to profile-only matching even if a future code path re-populates the
+// vault-text cache. Default true = pre-feature behavior (cache empty at boot).
+let vaultProvenanceLocalOnly = true;
+
+function vaultAllowsValue(value) {
+  try {
+    if (!vaultProvenanceLocalOnly) return false;
+    const api = globalThis.AegisDocVault;
+    if (!api || typeof api.vaultContainsValue !== "function") return false;
+    return api.vaultContainsValue(value, api.getCachedVaultTexts());
+  } catch {
+    return false;
+  }
+}
+
+// Best-effort refresh of the synchronous vault-text cache (used by
+// handleExecuteAction's re-validation so a vault-sourced "type" survives the
+// second guard pass after a capture-less EXECUTE_ACTION).
+async function refreshVaultCacheBestEffort() {
+  try {
+    const api = await getDocVault();
+    await api.refreshVaultCache();
+  } catch {
+    // Vault unavailable → cache stays as-is → guard degrades to profile-only.
+  }
+}
+
+// ── Audit Log Helper ──────────────────────────────────────────────
+async function writeAuditLog(entry) {
+  try {
+    const { aegisAuditLogs = [] } = await chrome.storage.local.get(["aegisAuditLogs"]);
+    aegisAuditLogs.unshift(entry);
+    // Keep last 50 entries
+    if (aegisAuditLogs.length > 50) aegisAuditLogs.length = 50;
+    await chrome.storage.local.set({ aegisAuditLogs });
+  } catch {}
+}
+
 // ── Offscreen State ────────────────────────────────────────────────
 // Do NOT use a boolean flag — it resets to false on every service worker
 // restart, even if the offscreen document is still alive. Use getContexts()
@@ -23,6 +101,27 @@ async function ensureOffscreen() {
     justification:
       "Inference and mask rendering require Canvas/DOM access; WORKERS reason required to spawn inference Web Worker inside offscreen document",
   });
+}
+
+// ── Document text extraction (popup → offscreen router) ───────────
+// The heavy lifting happens in the offscreen document (DOM + module imports):
+// this service worker only guarantees the offscreen document exists, forwards
+// the payload, and relays the { text, format } answer. Base64 round-trips a
+// message-bounded size; see MAX_DOCUMENT_BYTES in src/shared/file-helpers.js.
+
+async function handleExtractDocumentText(filePayload) {
+  if (!filePayload || typeof filePayload.arrayBufferBase64 !== "string") {
+    throw new Error("DOC_EXTRACT_NO_FILE: expected { name, size, mimeType, arrayBufferBase64 }");
+  }
+  await ensureOffscreen();
+  const response = await chrome.runtime.sendMessage({
+    type: "EXTRACT_DOCUMENT_TEXT",
+    file: filePayload,
+  });
+  if (!response || typeof response !== "object") {
+    throw new Error("DOC_EXTRACT_NO_RESPONSE: the offscreen document did not answer");
+  }
+  return response;
 }
 
 // ── Content-script injection (file:// + post-reload) ───────────────
@@ -104,6 +203,31 @@ async function sendTabMessage(tab, message) {
   }
 }
 
+// ── Keyboard Shortcut Listener (Ctrl+Shift+F) ─────────────────────
+chrome.commands?.onCommand?.addListener(async (command) => {
+  if (command === "autofill_page") {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) {
+      sendTabMessage(tab, { type: "PROFILE_PREFILL" }).catch(() => {});
+    }
+  }
+});
+
+// ── Context Menu (Right-Click "Fill with Aegis Profile") ─────────
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus?.create({
+    id: "aegis_autofill_context",
+    title: "Fill Form with Aegis Profile",
+    contexts: ["page", "editable"],
+  });
+});
+
+chrome.contextMenus?.onClicked?.addListener(async (info, tab) => {
+  if (info.menuItemId === "aegis_autofill_context" && tab?.id) {
+    sendTabMessage(tab, { type: "PROFILE_PREFILL" }).catch(() => {});
+  }
+});
+
 // ── Message Router ─────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -131,6 +255,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "PROFILE_PREFILL") {
+    handleProfilePrefill()
+      .then(sendResponse)
+      .catch((err) =>
+        sendResponse({
+          error: err.message,
+          errorCode: classifyError(err),
+        })
+      );
+    return true;
+  }
+
   if (msg.type === "SCAN_AND_OVERLAY") {
     // Scan the active tab's DOM and show redaction overlay — no VLM call.
     handleScanAndOverlay()
@@ -147,6 +283,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "SET_CONFIG") {
     const safe = sanitizeLocalConfig(msg.config);
     chrome.storage.local.set(safe).then(() => sendResponse({ ok: true }));
+    return true;
+  }
+
+  if (msg.type === "GET_GATEWAY_STATUS") {
+    (async () => {
+      const gateway = await probeRealGateway();
+      sendResponse({
+        ok: !!gateway,
+        endpoint: gateway || DEFAULT_GATEWAY_VLM,
+        usingGateway: !!gateway,
+      });
+    })();
     return true;
   }
 
@@ -183,6 +331,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "EXTRACT_DOCUMENT_TEXT") {
+    // Popup → offscreen document routing for the on-device document ingestion
+    // pipeline. The popup sends { name, size, mimeType, arrayBufferBase64 };
+    // the offscreen document decodes/parses it (pdf.js / pako / DOMParser) and
+    // answers { text, format, error? }. Nothing here touches the network.
+    handleExtractDocumentText(msg.file)
+      .then(sendResponse)
+      .catch((err) =>
+        sendResponse({
+          text: "",
+          format: "text", // format authority is the offscreen document
+          error: err.message,
+        })
+      );
+    return true;
+  }
+
   if (msg.type === "WARM_MODELS") {
     (async () => {
       try {
@@ -195,19 +360,114 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+
+  if (msg.type === "STRUCTURE_DOCUMENT_TEXT") {
+    // User's OWN extracted document text → LOCAL VLM only. Rejected up-front
+    // when the resolved endpoint is remote (see handler). Returns
+    // { fields: {dynamicKey: value}, latencyMs } — fields are merged into the
+    // profile by the popup, never persisted raw here.
+    handleStructureDocumentText(msg)
+      .then(sendResponse)
+      .catch((err) =>
+        sendResponse({
+          error: err.message,
+          errorCode: classifyError(err),
+        })
+      );
+    return true;
+  }
+
+  if (msg.type === "ADD_DOC_TO_VAULT") {
+    // User opts to keep the extracted text in the local vault (aegisDocVault).
+    // Aadhaar/PAN are scrubbed before anything is persisted.
+    handleAddDocToVault(msg)
+      .then(sendResponse)
+      .catch((err) =>
+        sendResponse({
+          error: err.message,
+          errorCode: classifyError(err),
+        })
+      );
+    return true;
+  }
+
+  if (msg.type === "GET_DOC_VAULT") {
+    // Dashboard listing: names + char counts ONLY. Text never leaves the
+    // vault / is never returned to the caller.
+    handleGetDocVault()
+      .then(sendResponse)
+      .catch((err) =>
+        sendResponse({
+          error: err.message,
+          errorCode: classifyError(err),
+        })
+      );
+    return true;
+  }
+
+  if (msg.type === "CLEAR_DOC_VAULT") {
+    // Full purge (D6): empties aegisDocVault AND strips every `_docSource`
+    // marker from the active profile. Wired for the dashboard/toggle to call.
+    handleClearDocVault()
+      .then(sendResponse)
+      .catch((err) =>
+        sendResponse({
+          error: err.message,
+          errorCode: classifyError(err),
+        })
+      );
+    return true;
+  }
 });
 
 // Keys that must never be written to chrome.storage.local (F-11 / session-secret rule).
 const FORBIDDEN_LOCAL_SECRET_KEYS = ["vlmApiKey", "apiKey", "authorization", "token", "secret"];
+
+function isOllamaDirectEndpoint(endpoint) {
+  if (typeof endpoint !== "string") return false;
+  return /localhost:11434|127\.0\.0\.1:11434|\[::1\]:11434/.test(endpoint);
+}
+
+function preferGatewayEndpoint(endpoint) {
+  if (isOllamaDirectEndpoint(endpoint)) return DEFAULT_GATEWAY_VLM;
+  if (typeof endpoint === "string" && endpoint.trim()) return endpoint.trim();
+  return DEFAULT_GATEWAY_VLM;
+}
 
 function sanitizeLocalConfig(config) {
   if (!config || typeof config !== "object" || Array.isArray(config)) return {};
   const out = {};
   for (const [k, v] of Object.entries(config)) {
     if (FORBIDDEN_LOCAL_SECRET_KEYS.includes(k)) continue;
-    out[k] = v;
+    out[k] = k === "vlmEndpoint" ? preferGatewayEndpoint(v) : v;
   }
   return out;
+}
+
+async function probeRealGateway() {
+  try {
+    const res = await fetch(DEFAULT_GATEWAY_HEALTH, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const health = await res.json();
+    if (health && health.status === "ok" && health.mock !== true) {
+      return DEFAULT_GATEWAY_VLM;
+    }
+  } catch {
+    // Down, slow, or fake (--mock). Do not treat that as a working VLM.
+  }
+  return null;
+}
+
+async function resolveVlmEndpoint(stored) {
+  const preferred = preferGatewayEndpoint(stored);
+  const gateway = await probeRealGateway();
+  const resolved = gateway || preferred;
+  if (resolved !== stored) {
+    chrome.storage.local.set({ vlmEndpoint: resolved }).catch(() => {});
+  }
+  return resolved;
 }
 
 function isLocalVlmEndpoint(endpoint) {
@@ -277,6 +537,7 @@ function buildPrivacyReceipt(tab, sanitizeResponse, timing) {
     totalMs: Date.now() - timing.t0,
   };
   if (timing.tVlm != null) receipt.latencyMs.vlm = timing.tVlm;
+  if (timing.tRag != null) receipt.latencyMs.rag = timing.tRag;
   return receipt;
 }
 
@@ -344,6 +605,12 @@ async function performLocalRedaction(tab, config) {
   return { domScanResults, sanitizeResponse, receipt, t0, tCapture, tDomScan, tInference };
 }
 
+async function handleProfilePrefill() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) throw new Error("No active tab");
+  return sendTabMessage(tab, { type: "PROFILE_PREFILL" });
+}
+
 async function handleScanAndOverlay() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("No active tab");
@@ -358,6 +625,17 @@ async function handleScanAndOverlay() {
 
   await chrome.storage.session.set({ lastReceipt: receipt });
 
+  const maskedFaces = receipt?.masked?.faces || 0;
+  const maskedPii = receipt?.masked?.piiSpans || 0;
+  const maskedFields = receipt?.masked?.passwordFields || 0;
+  await writeAuditLog({
+    domain: tab.url ? new URL(tab.url).hostname : "unknown",
+    action: "scan",
+    fields: maskedFields + maskedPii,
+    faces: maskedFaces,
+    time: new Date().toLocaleString(),
+  });
+
   return {
     fieldCount: domScanResults.fields?.length || 0,
     dpr: domScanResults.dpr || 1,
@@ -365,6 +643,158 @@ async function handleScanAndOverlay() {
     sanitizedImage: sanitizeResponse.sanitizedImage,
     receipt,
   };
+}
+
+// ── Document Structuring + Local Vault ────────────────────────────
+// Privacy boundary: the user's OWN extracted document text goes to the LOCAL
+// VLM only — never a remote endpoint (absolute: rejected up-front), never
+// persisted raw, never logged raw. Structured fields are returned to the popup
+// which merges them into the profile; the text itself is stored ONLY if the
+// user opted into the local vault, and even then Aadhaar/PAN are scrubbed.
+
+async function handleStructureDocumentText(msg) {
+  const text = typeof msg?.text === "string" ? msg.text : "";
+  if (!text.trim()) {
+    throw new Error("STRUCTURE_EMPTY_TEXT: No document text provided to structure.");
+  }
+  if (text.length > MAX_STRUCTURE_INPUT_CHARS) {
+    throw new Error(
+      `STRUCTURE_TOO_LARGE: Document text is too large to structure (${text.length} chars, max ${MAX_STRUCTURE_INPUT_CHARS}).`
+    );
+  }
+
+  // D3 (privacy audit): consent is enforced HERE, in the background — the
+  // popup checkbox is only the UI. Default OFF: either the stored
+  // chrome.storage.local `docConsent` flag must be === true OR the message
+  // must carry consented:true (the popup sends it only when the toggle is
+  // checked). Without consent no VLM request is made, even if the popup (or a
+  // co-installed extension) sends text directly.
+  const { docConsent } = await chrome.storage.local.get("docConsent");
+  const consented = docConsent === true || msg?.consented === true;
+  if (!consented) {
+    throw new Error(
+      "STRUCTURE_CONSENT_REQUIRED: Analyzing a document needs your explicit consent. Enable \"Allow local document analysis\" in the popup."
+    );
+  }
+
+  const api = await getDocVault();
+
+  const limiter = api.structureRateLimit(1000);
+  if (!limiter.ok) {
+    throw new Error(
+      `STRUCTURE_RATE_LIMITED: The analyzer is still busy — try again in ${Math.ceil(limiter.retryAfterMs)}ms.`
+    );
+  }
+
+  const config = await chrome.storage.local.get(["vlmEndpoint", "vlmModel"]);
+  const vlmEndpoint = await resolveVlmEndpoint(config.vlmEndpoint);
+
+  // THE guard: raw document text must never reach a remote AI. This runs
+  // before any request is made — a remote endpoint means no VLM call at all.
+  if (!isLocalVlmEndpoint(vlmEndpoint)) {
+    throw new Error(
+      "Document text cannot be sent to a remote AI. Switch to the local model."
+    );
+  }
+
+  const vlmModel = config.vlmModel || DEFAULT_VLM_MODEL;
+  const sessionSecrets = await chrome.storage.session.get(["vlmApiKey"]);
+  const vlmHeaders = buildVlmAuthHeaders(sessionSecrets.vlmApiKey, vlmEndpoint);
+
+  const systemPrompt =
+    `You are a privacy-preserving local document structurer. The user uploaded their own document and explicitly consented to analyzing it with the LOCAL model only.
+
+Convert the document text into a JSON object that maps profile field names to their values. Example: {"fullName": "...", "email": "...", "skills": "...", "university": "..."}
+
+RULES:
+1. Output ONLY a single JSON object — no prose, no explanations, no markdown code fences. Start with { and end with }.
+2. Field names are short lowercase keys (max 40 characters), one per distinct piece of information. ANY key is allowed — invent the key that best matches the information (e.g. "skills", "university", "motherTongue").
+3. Values are the exact text found in the document, trimmed (max 500 characters), always as JSON strings.
+4. NEVER include Aadhaar, PAN, CVV, passport, UPI, or bank/card numbers in the output — omit those fields entirely.
+5. If the document contains no extractable fields, output an empty object: {}
+6. Do not infer or invent information that is not stated in the document.`;
+
+  const t0 = Date.now();
+  let raw;
+  try {
+    raw = await requestVlmContent(vlmEndpoint, vlmHeaders, {
+      model: vlmModel,
+      stream: false,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Document text:\n${text}` },
+      ],
+      max_tokens: 512,
+      temperature: 0.1,
+    });
+  } catch (err) {
+    const vlmMs = Date.now() - t0;
+    throw new Error(`${err.message} (structuring took ${vlmMs}ms)`);
+  }
+  const tVlm = Date.now() - t0;
+
+  const parsed = api.parseStructuredFields(raw);
+  const { fields, dropped } = parsed
+    ? api.validateStructuredFields(parsed)
+    : { fields: {}, dropped: 1 };
+
+  // Audit log: counts only — never the text, never the raw reply.
+  await writeAuditLog({
+    action: "structure",
+    fields: Object.keys(fields).length,
+    dropped,
+    time: new Date().toLocaleString(),
+  });
+
+  return {
+    fields,
+    dropped,
+    latencyMs: { vlm: tVlm, total: Date.now() - t0 },
+    endpoint: vlmEndpoint,
+  };
+}
+
+async function handleAddDocToVault(msg) {
+  const api = await getDocVault();
+  const res = await api.addDocToVault({
+    docName: msg?.docName,
+    format: msg?.format,
+    text: msg?.text,
+  });
+  if (!res.ok) {
+    return { error: res.error, ok: false };
+  }
+  return { ok: true, doc: res.doc, vault: { count: res.count, bytes: res.bytes } };
+}
+
+async function handleGetDocVault() {
+  const api = await getDocVault();
+  const docs = await api.getVaultList();
+  return { docs };
+}
+
+async function handleClearDocVault() {
+  const api = await getDocVault();
+  await api.clearVault();
+  // D6: purge also strips every `_docSource*` marker from the active profile
+  // (fields that were derived from a vaulted document). Non-marker fields are
+  // preserved — this is a doc purge, not a profile wipe.
+  const { userProfile } = await chrome.storage.local.get("userProfile");
+  let removedDocSourceMarkers = 0;
+  if (userProfile && typeof userProfile === "object" && !Array.isArray(userProfile)) {
+    const clean = {};
+    for (const [k, v] of Object.entries(userProfile)) {
+      if (String(k).startsWith("_docSource")) {
+        removedDocSourceMarkers++;
+        continue;
+      }
+      clean[k] = v;
+    }
+    if (removedDocSourceMarkers > 0) {
+      await chrome.storage.local.set({ userProfile: clean });
+    }
+  }
+  return { ok: true, removedDocSourceMarkers };
 }
 
 // ── Profile Normalization ─────────────────────────────────────────
@@ -499,8 +929,8 @@ async function handleCaptureAndSanitize(task) {
 
   const faceDetectionEnabled = config.faceDetection !== false;
   const piiDetectionEnabled = config.piiDetection !== false;
-  const vlmEndpoint = config.vlmEndpoint || "http://localhost:11434/v1/chat/completions";
-  const vlmModel = config.vlmModel || "qwen2.5vl:7b";
+  const vlmEndpoint = await resolveVlmEndpoint(config.vlmEndpoint);
+  const vlmModel = config.vlmModel || DEFAULT_VLM_MODEL;
   const userProfile = normalizeProfile(config.userProfile);
 
   const pageStructure = buildPageStructureForVlm({
@@ -515,6 +945,7 @@ async function handleCaptureAndSanitize(task) {
   let action = null;
   let vlmError = null;
   let vlmRetried = false;
+  let tRagMs = 0;
 
   try {
     // Build the system prompt.
@@ -534,6 +965,44 @@ ${Object.entries(userProfile)
       ? `AVAILABLE PROFILE KEYS (the ONLY values you may put in "profileKey"): ${profileKeys.map((k) => `"${k}"`).join(", ")}`
       : `AVAILABLE PROFILE KEYS: (none — the profile is empty, so you MUST use the "done" action for any field request)`;
 
+    // RAG-lite — LOCAL VLM ONLY (privacy audit finding D9): pull the top
+    // relevant snippets from the user's OWN uploaded documents (local vault).
+    // These are the ONLY other values the model may type — and sanitizeAction()
+    // re-verifies every "type" value against the stored vault text (see
+    // vaultAllowsValue), same provenance bar as the profile. When the RESOLVED
+    // endpoint is remote, vault text must NEVER enter this prompt: the block is
+    // omitted, the vault-provenance cache is cleared, and vaultProvenanceLocalOnly
+    // is disabled so sanitizeAction falls back to profile-only matching.
+    const ragAllowed = isLocalVlmEndpoint(vlmEndpoint);
+    vaultProvenanceLocalOnly = ragAllowed;
+    const tRag0 = Date.now();
+    let docSnippets = [];
+    try {
+      const vaultApi = await getDocVault();
+      if (ragAllowed) {
+        const { docs } = await vaultApi.loadVault();
+        // Keep the synchronous provenance cache in sync for this capture's
+        // parseAction()/sanitizeAction() pass.
+        vaultApi.setVaultTextCache(docs.map((d) => d.text));
+        docSnippets = vaultApi.retrieveVaultSnippets(docs, task, 3);
+      } else {
+        // Remote path: never populate the provenance cache; clear stale texts
+        // from an earlier local capture so no vault value can pass the guard.
+        vaultApi.setVaultTextCache([]);
+      }
+    } catch {
+      docSnippets = [];
+    }
+    const tRag = Date.now() - tRag0;
+    tRagMs = ragAllowed ? tRag : 0;
+    const docKnowledgeBlock = docSnippets.length
+      ? `DOCUMENT KNOWLEDGE (from the user's OWN uploaded files — the ONLY other source of fill values):
+${docSnippets.map((s, i) => `  ${i + 1}. ${s.text}`).join("\n")}`
+      : "";
+    const docKnowledgeRule = ragAllowed
+      ? ", OR in the DOCUMENT KNOWLEDGE block above (which comes from the user's OWN uploaded files)"
+      : "";
+
     // NOTE: every "type" action is independently re-verified server-side
     // against the real profile in sanitizeAction() — a value/profileKey that
     // doesn't check out is rejected before it ever reaches the browser, no
@@ -551,6 +1020,8 @@ AVAILABLE ACTIONS:
   {"action":"navigate","url":"<url>"}
   {"action":"done","summary":"<string>"}
 
+The ONLY fill action is "type". Never reply with {"action":"fill",...} or {"action":"fill_field",...} — those names do not exist.
+
 CHOOSING THE ACTION:
 - If the user asks a question, or asks you to summarize / describe / read / explain the page, do NOT interact with the page. Reply {"action":"done","summary":"<your real answer>"} and put the actual answer text in "summary" — it is shown directly to the user. Keep it under 400 characters.
 - If the user asks you to click, press, open or select something visible, use "click".
@@ -564,12 +1035,15 @@ ${profileBlock}
 
 ${allowedKeysBlock}
 
+${docKnowledgeBlock}
+
 PROFILE RULES (these govern the "type" action only):
-1. To fill a field, you MUST find the exact matching information in the USER PROFILE above.
-2. If (and only if) the information is present, output: {"action": "type", "selector": "<css_selector>", "value": "<profile_value>", "profileKey": "<exact_key_from_AVAILABLE_PROFILE_KEYS>"}
-3. "profileKey" MUST be copied EXACTLY, character-for-character, from the AVAILABLE PROFILE KEYS list above. Never invent a profileKey. Never attach a real profileKey to a field it does not belong to (e.g. do not put a "Job Title" value into a Name field).
-4. If the information is NOT in the USER PROFILE (no listed key matches the field), you MUST NOT guess, invent, or use placeholder data (like "John Doe"). Output: {"action": "done", "summary": "Profile missing information. Please add it in Settings."}
-5. Every "type" action is independently re-checked against the real profile before execution. An action whose value or profileKey cannot be verified is discarded and nothing is typed — guessing never helps, it only wastes the turn. When in doubt, use "done".
+1. To fill a field, you MUST find the exact matching information in the USER PROFILE above${docKnowledgeRule}.
+2. If (and only if) the information is present, output: {"action": "type", "selector": "<css_selector>", "value": "<matching_value>", "profileKey": "<exact_key_from_AVAILABLE_PROFILE_KEYS>"}
+3. "profileKey" should name the matching USER PROFILE entry (same words, any casing or spacing — e.g. "fullName" is fine for "Full Name"). Never invent a key that is not in the list. Never attach a real key to a field it does not belong to (e.g. do not put a "Job Title" value into a Name field). If the value comes from DOCUMENT KNOWLEDGE and no profile key matches the field, you may use a descriptive dynamic key (any key is allowed) or omit "profileKey".
+4. If the information is NOT in the USER PROFILE or DOCUMENT KNOWLEDGE (no listed key or snippet matches the field), you MUST NOT guess, invent, or use placeholder data (like "John Doe"). Output: {"action": "done", "summary": "Profile missing information. Please add it in Settings."}
+5. Every "type" action is independently re-checked against the real profile or the stored document text before execution. An action whose value or profileKey cannot be verified against either is discarded and nothing is typed — guessing never helps, it only wastes the turn. When in doubt, use "done".
+6. Never output a "type" action that targets a password field — passwords are never in the USER PROFILE. Apply "type" only to fields whose label matches a profile key.
 
 EXAMPLES:
 - "Fill my name", profile has Name "Alice": {"action": "type", "selector": "#name", "value": "Alice", "profileKey": "Name"}
@@ -647,6 +1121,7 @@ Only use actions that do NOT require reading redacted screen regions.`;
     tInference,
     tVlm,
     vlmRetried,
+    tRag: tRagMs,
   });
 
   // Store receipt in session storage (cleared on browser close, not persisted)
@@ -692,13 +1167,43 @@ function describeVlmHttpError(status, statusText, body) {
 // VLM_* message on transport, HTTP, or body-shape failure — never a bare
 // SyntaxError.
 async function requestVlmContent(vlmEndpoint, vlmHeaders, vlmPayload) {
-  const response = await fetch(vlmEndpoint, {
-    method: "POST",
-    headers: vlmHeaders,
-    body: JSON.stringify(vlmPayload),
-  });
+  // Chrome sends Origin: chrome-extension://… — Ollama :11434 answers 403.
+  // Always go through the local gateway for that host.
+  if (isOllamaDirectEndpoint(vlmEndpoint)) {
+    vlmEndpoint = DEFAULT_GATEWAY_VLM;
+  }
 
-  const body = await response.text();
+  let response;
+  try {
+    response = await fetch(vlmEndpoint, {
+      method: "POST",
+      headers: vlmHeaders,
+      body: JSON.stringify(vlmPayload),
+      signal: AbortSignal.timeout(VLM_FETCH_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const name = err?.name || "";
+    const msg = String(err?.message || err || "");
+    if (name === "TimeoutError" || name === "AbortError" || msg.includes("aborted") || msg.includes("The operation was aborted")) {
+      throw new Error(
+        `VLM server timed out after ${VLM_FETCH_TIMEOUT_MS / 1000}s at ${vlmEndpoint}`
+      );
+    }
+    throw err;
+  }
+
+  let body = await response.text();
+
+  if (!response.ok && response.status === 403 && vlmEndpoint !== DEFAULT_GATEWAY_VLM) {
+    response = await fetch(DEFAULT_GATEWAY_VLM, {
+      method: "POST",
+      headers: vlmHeaders,
+      body: JSON.stringify(vlmPayload),
+      signal: AbortSignal.timeout(VLM_FETCH_TIMEOUT_MS),
+    });
+    body = await response.text();
+    chrome.storage.local.set({ vlmEndpoint: DEFAULT_GATEWAY_VLM }).catch(() => {});
+  }
 
   if (!response.ok) {
     throw new Error(describeVlmHttpError(response.status, response.statusText, body));
@@ -833,6 +1338,21 @@ function keysCorrelate(profileKey, fieldLabel) {
   return a === b || a.includes(b) || b.includes(a);
 }
 
+// VLM may emit "fullName" / "Full name" while the saved profile used "Full Name".
+function resolveProfileKey(userProfile, profileKey) {
+  if (!userProfile || typeof userProfile !== "object" || Array.isArray(userProfile)) return null;
+  const raw = typeof profileKey === "string" ? profileKey.trim() : "";
+  if (!raw) return null;
+  if (Object.prototype.hasOwnProperty.call(userProfile, raw)) return raw;
+  const want = normalizeKeyForMatch(raw);
+  if (!want) return null;
+  for (const k of Object.keys(userProfile)) {
+    const have = normalizeKeyForMatch(k);
+    if (have === want || have.includes(want) || want.includes(have)) return k;
+  }
+  return null;
+}
+
 function sanitizeAction(action, context = {}) {
   if (!action || typeof action !== "object" || Array.isArray(action)) return null;
   if (typeof action.action !== "string") return null;
@@ -852,25 +1372,47 @@ function sanitizeAction(action, context = {}) {
       if (!SELECTOR_SAFE_RE.test(selector)) return null;
       if (action.value.length > ACTION_LIMITS.value) return null;
 
-      // Fail CLOSED: no verified profile context means we cannot prove this
-      // value came from the user's real data, so it is treated as unsafe —
-      // same outcome as any other sanitizeAction rejection.
+      // Fail CLOSED: a "type" value is trusted ONLY when it is traceable to
+      // real user data. Two provenance routes:
+      //   1. PROFILE — the claimed profileKey resolves in the CURRENT
+      //      normalized profile AND the value exactly matches that key's value
+      //      (existing anti-hallucination rule, case/whitespace-insensitive).
+      //   2. VAULT (RAG-lite) — the value exactly appears as a substring in
+      //      the user's OWN stored document text (aegisDocVault cache). Same
+      //      bar as the profile: never invented, always traceable.
+      // No verified provenance → rejected, exactly like any malformed action.
       const userProfile = context.userProfile;
-      if (!userProfile || typeof userProfile !== "object" || Array.isArray(userProfile)) return null;
+      const profileOk = userProfile && typeof userProfile === "object" && !Array.isArray(userProfile);
 
-      const profileKey = typeof action.profileKey === "string" ? action.profileKey.trim() : "";
-      if (!profileKey || !Object.prototype.hasOwnProperty.call(userProfile, profileKey)) return null;
+      const profileKey = profileOk ? resolveProfileKey(userProfile, action.profileKey) : null;
+      const expectedValue = profileKey ? String(userProfile[profileKey] ?? "").trim() : "";
+      const profileMatch =
+        !!profileKey && !!expectedValue &&
+        expectedValue.toLowerCase() === action.value.trim().toLowerCase();
 
-      const expectedValue = String(userProfile[profileKey] ?? "").trim();
-      if (!expectedValue || expectedValue.toLowerCase() !== action.value.trim().toLowerCase()) return null;
+      const vaultMatch = vaultAllowsValue(action.value);
+      if (!profileMatch && !vaultMatch) return null;
 
       const fields = context.fields;
       if (Array.isArray(fields)) {
         const field = fields.find((f) => f && f.selector === selector);
-        if (field?.label && !keysCorrelate(profileKey, field.label)) return null;
+        if (field?.label) {
+          if (profileMatch && !keysCorrelate(profileKey, field.label)) return null;
+          // A vault-sourced fill may still carry a profileKey claim; if that
+          // claim resolves to a real key, it must correlate with the field's
+          // label too (catches: doc value + real key attached to wrong field).
+          const claimed = profileOk ? resolveProfileKey(userProfile, action.profileKey) : null;
+          if (!profileMatch && claimed && !keysCorrelate(claimed, field.label)) return null;
+        }
       }
 
-      return { action: "type", selector, value: action.value, profileKey };
+      return {
+        action: "type",
+        selector,
+        value: action.value,
+        profileKey: profileKey || null,
+        source: profileMatch ? "profile" : "vault",
+      };
     }
 
     case "scroll": {
@@ -956,6 +1498,35 @@ function jsonCandidatesFrom(raw) {
   return out;
 }
 
+// qwen2.5vl family emits two off-schema fill shapes that are NOT in the
+// AVAILABLE ACTIONS set: {"action":"fill","fields":[{...},...]} and
+// {"action":"fill_field","field_selector":...}. Both express exactly the
+// same intent as "type" with fields whose values must satisfy the same
+// provenance/label guards. Rewrite those shapes to the canonical "type"
+// form BEFORE sanitizeAction runs — so the model's correct intent survives
+// its chance of wrong vocabulary, while every safety gate (profile/vault
+// provenance, password-field label correlation) is still enforced on the
+// canonical shape. Any unknown shape is passed through untouched and
+// rejected by sanitizeAction's default case as before.
+function normalizeActionShape(action) {
+  if (!action || typeof action !== "object" || Array.isArray(action)) return action;
+  if (action.action === "fill_field") {
+    return {
+      action: "type",
+      selector: action.field_selector ?? action.selector,
+      value: action.value,
+      profileKey: action.profileKey,
+    };
+  }
+  if (action.action === "fill" && Array.isArray(action.fields) && action.fields.length) {
+    const f = action.fields[0];
+    if (f && typeof f === "object") {
+      return { action: "type", selector: f.selector, value: f.value, profileKey: f.profileKey };
+    }
+  }
+  return action;
+}
+
 function parseAction(raw, context = {}) {
   if (typeof raw !== "string" || !raw.trim()) return null;
 
@@ -969,7 +1540,7 @@ function parseAction(raw, context = {}) {
     } catch {
       continue;
     }
-    const safe = sanitizeAction(candidate, context);
+    const safe = sanitizeAction(normalizeActionShape(candidate), context);
     if (safe) return safe;
   }
   return null;
@@ -994,6 +1565,12 @@ function classifyError(err) {
   if (msg.includes("NER_REDACTION") || msg.includes("NER_MODEL")) {
     return "NER_REDACTION_REQUIRED";
   }
+  if (msg.includes("cannot be sent to a remote AI")) return "STRUCTURE_REMOTE_REJECTED";
+  if (msg.includes("STRUCTURE_EMPTY_TEXT")) return "STRUCTURE_EMPTY_TEXT";
+  if (msg.includes("STRUCTURE_TOO_LARGE")) return "STRUCTURE_TOO_LARGE";
+  if (msg.includes("STRUCTURE_RATE_LIMITED")) return "STRUCTURE_RATE_LIMITED";
+  if (msg.includes("STRUCTURE_CONSENT_REQUIRED")) return "STRUCTURE_CONSENT_REQUIRED";
+  if (msg.includes("timed out")) return "TIMEOUT";
   if (msg.includes("VLM_BAD_RESPONSE")) return "VLM_BAD_RESPONSE";
   if (msg.includes("VLM")) return "BACKEND_UNAVAILABLE";
   if (msg.includes("Inference worker failed")) return "INIT_FAILED";
@@ -1007,7 +1584,6 @@ function classifyError(err) {
   ) {
     return "INIT_FAILED";
   }
-  if (msg.includes("timed out")) return "TIMEOUT";
   if (msg.includes("offscreen")) return "OFFSCREEN_ERROR";
   // A bare JSON SyntaxError used to fall through to UNKNOWN and reach the
   // popup as an unactionable "[UNKNOWN] Unexpected token 'S'". Any JSON parse
@@ -1032,8 +1608,11 @@ async function handleExecuteAction(action, tabId) {
   // Defense-in-depth: re-validate even though CAPTURE_AND_SANITIZE already
   // sanitized the action, because EXECUTE_ACTION is message-receiving and may
   // be triggered directly with an untrusted action object. Re-fetch the
-  // current profile so a "type" action's value/profileKey is re-checked
-  // against real data here too, not just trusted from the earlier pass.
+  // current profile AND refresh the vault-text cache so a "type" action's
+  // value/profileKey is re-checked against real data here too, not just
+  // trusted from the earlier pass. Empty vault cache degrades the guard to
+  // profile-only (fail closed for vault-sourced values).
+  await refreshVaultCacheBestEffort();
   const { userProfile: rawProfile } = await chrome.storage.local.get(["userProfile"]);
   const safe = sanitizeAction(action, { userProfile: normalizeProfile(rawProfile) });
   if (!safe) {
@@ -1052,25 +1631,42 @@ async function handleExecuteAction(action, tabId) {
 
   const targetTab = { id: targetTabId, url: tab?.url };
 
+  let execResult;
   switch (safe.action) {
     case "click":
-      return sendTabMessage(targetTab, { type: "EXECUTE_CLICK", x: safe.x, y: safe.y });
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_CLICK", x: safe.x, y: safe.y });
+      break;
 
     case "type":
-      return sendTabMessage(targetTab, { type: "EXECUTE_TYPE", selector: safe.selector, value: safe.value });
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_TYPE", selector: safe.selector, value: safe.value });
+      break;
 
     case "scroll":
-      return sendTabMessage(targetTab, { type: "EXECUTE_SCROLL", direction: safe.direction });
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_SCROLL", direction: safe.direction });
+      break;
 
     case "navigate":
       await chrome.tabs.update(targetTabId, { url: safe.url });
-      return { ok: true, navigated: safe.url };
+      execResult = { ok: true, navigated: safe.url };
+      break;
 
     case "done":
-      // Clear overlay when agent reports task complete
       sendTabMessage(targetTab, { type: "CLEAR_REDACTION_OVERLAY" }).catch(() => {});
-      return { ok: true, summary: safe.summary };
+      execResult = { ok: true, summary: safe.summary };
+      break;
   }
+
+  if (execResult && !execResult.error) {
+    const domain = tab?.url ? new URL(tab.url).hostname : "unknown";
+    await writeAuditLog({
+      domain,
+      action: safe.action === "type" ? `autofill (${safe.profileKey || "field"})` : safe.action === "done" ? "completed" : safe.action,
+      fields: safe.action === "type" ? 1 : 0,
+      time: new Date().toLocaleString(),
+    });
+  }
+
+  return execResult;
 }
 
 // ── Extension Install ──────────────────────────────────────────────
@@ -1078,17 +1674,44 @@ async function handleExecuteAction(action, tabId) {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({
     // Verified working — see docs/SERVER_SETUP.md
-    vlmEndpoint: "http://localhost:11434/v1/chat/completions",
-    vlmModel: "qwen2.5vl:7b",
+    vlmEndpoint: DEFAULT_GATEWAY_VLM,
+    vlmModel: DEFAULT_VLM_MODEL,
     detectionEnabled: true,
     faceDetection: true,
     passwordDetection: true,
     piiDetection: true,
   });
+  try {
+    chrome.contextMenus?.create?.({
+      id: "aegis_autofill_context",
+      title: "Fill form from Aegis profile",
+      contexts: ["page", "editable"],
+    });
+  } catch {
+    // Duplicate id after reload is fine.
+  }
   // Unpacked Reload fires onInstalled (reason "update"). Best-effort
   // re-inject so existing file:// / http(s) tabs can be messaged without
   // a manual refresh. Failures are swallowed; sendTabMessage still retries.
   reinjectContentScriptsBestEffort();
+});
+
+chrome.commands?.onCommand?.addListener(async (command) => {
+  if (command !== "autofill_page") return;
+  try {
+    await handleProfilePrefill();
+  } catch {
+    // Tab may not have a content script yet.
+  }
+});
+
+chrome.contextMenus?.onClicked?.addListener(async (info, tab) => {
+  if (info.menuItemId !== "aegis_autofill_context" || !tab?.id) return;
+  try {
+    await handleProfilePrefill();
+  } catch {
+    // Same as the keyboard shortcut.
+  }
 });
 
 async function reinjectContentScriptsBestEffort() {

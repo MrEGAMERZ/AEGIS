@@ -120,6 +120,20 @@ Or:
 ollama run qwen2.5vl:7b "Say READY" --verbose
 ```
 
+### Local gateway (real model — do not use mock)
+
+The extension talks to `http://localhost:8000` when this process is up and **not** in `--mock` mode. Ollama stays the actual vision model.
+
+```bash
+cd server && node index.js
+curl -sS http://localhost:8000/health
+# Expect: "mock": false  and  "upstreamReachable": true
+```
+
+Do **not** run `npm run start:mock` for a demo. If `/health` says `"mock": true`, stop that process and start with `node index.js` only.
+
+---
+
 Check the model stays loaded:
 
 ```bash
