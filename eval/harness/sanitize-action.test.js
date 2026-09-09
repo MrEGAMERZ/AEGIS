@@ -125,12 +125,18 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
   check("real key but altered/wrong value -> REJECTED", result === null);
 }
 
-// No profileKey at all (old pre-fix action shape) -> fail closed, rejected.
+// No profileKey: allowed only when the value is the field's own profile
+// value (VLM often omits the key). A real value on the WRONG field still
+// fails closed — see the Job Title → Name case above.
 {
   const profile = normalizeProfile({ "Full Name": "Alice Smith" });
   const action = { action: "type", selector: "#name_input", value: "Alice Smith" };
   const result = sanitizeAction(action, { userProfile: profile, fields: PAGE_FIELDS });
-  check("missing profileKey entirely -> REJECTED (fail closed)", result === null);
+  check(
+    "missing profileKey but value matches this field -> ALLOWED",
+    result && result.action === "type" && result.value === "Alice Smith",
+    JSON.stringify(result)
+  );
 }
 
 // No profile context object passed at all -> fail closed, rejected (never
@@ -403,6 +409,105 @@ const SHAPE_CTX = {
   const raw = '{"action":"type","selector":"#password","value":"alice@example.com","profileKey":"Email"}';
   const result = parseAction(raw, ctx);
   check("valid-schema type into a password field is STILL rejected", result === null, JSON.stringify(result));
+}
+
+// Live incident (2026-09-06): qwen emitted a label→value OBJECT, not an
+// array, plus placeholder John Doe. Map First Name → Full Name field and
+// substitute the real profile value.
+{
+  const raw = '{"action":"fill","fields":{"First Name":"John","Last Name":"Doe","Email":"john.doe@example.com","Phone":"123-456-7890"}}';
+  const result = parseAction(raw, SHAPE_CTX);
+  check(
+    "fill{label:value} object + John Doe uses real Full Name",
+    result && result.action === "type" && result.selector === "#name_input" && result.value === "Alice Smith",
+    JSON.stringify(result)
+  );
+}
+
+const BATCH_FIELDS = [
+  ...PAGE_FIELDS,
+  { type: "text_input", label: "Email", selector: "#email_input" },
+];
+const BATCH_CTX = {
+  userProfile: normalizeProfile({
+    "Full Name": "Alice Smith",
+    Email: "alice@example.com",
+    "Job Title": "Software Engineer",
+  }),
+  fields: BATCH_FIELDS,
+};
+
+{
+  const raw = '{"action":"fill","fields":{"First Name":"John","Last Name":"Doe","Email":"john.doe@example.com","Job Title":"CEO"}}';
+  const result = parseAction(raw, BATCH_CTX);
+  const bySel = {};
+  const list = result && result.action === "fill_many" ? result.fields : result ? [result] : [];
+  for (const f of list) bySel[f.selector] = f.value;
+  check(
+    "fill{label:value} batch maps all verified profile fields",
+    result &&
+      result.action === "fill_many" &&
+      result.fields.length === 3 &&
+      bySel["#name_input"] === "Alice Smith" &&
+      bySel["#email_input"] === "alice@example.com" &&
+      bySel["#title_input"] === "Software Engineer",
+    JSON.stringify(result)
+  );
+}
+
+{
+  const raw = '{"action":"fill","fields":[{"selector":"#name_input","value":"Alice Smith","profileKey":"Full Name"},{"selector":"#title_input","value":"Software Engineer","profileKey":"Job Title"}]}';
+  const result = parseAction(raw, BATCH_CTX);
+  check(
+    "fill[fields] batch keeps every verified type",
+    result &&
+      result.action === "fill_many" &&
+      result.fields.length === 3 &&
+      result.fields.some((f) => f.selector === "#email_input" && f.value === "alice@example.com"),
+    JSON.stringify(result)
+  );
+}
+
+{
+  const ctx = {
+    userProfile: normalizeProfile({ notes: "My name is Alice Smith. Email alice@example.com" }),
+    fields: BATCH_FIELDS,
+  };
+  const raw = '{"action":"fill","fields":{"Full Name":"Alice Smith","Email":"alice@example.com"}}';
+  const result = parseAction(raw, ctx);
+  const list = result && result.action === "fill_many" ? result.fields : result ? [result] : [];
+  check(
+    "fill from free-text notes uses values that appear in the notes",
+    list.length >= 2 &&
+      list.some((f) => f.selector === "#name_input" && f.value === "Alice Smith") &&
+      list.some((f) => f.selector === "#email_input" && f.value === "alice@example.com"),
+    JSON.stringify(result)
+  );
+}
+
+{
+  const ctx = {
+    userProfile: normalizeProfile({ "Job Title": "Software Engineer", notes: "I live in Mumbai" }),
+    fields: PAGE_FIELDS,
+  };
+  const raw = '{"action":"type","selector":"#name_input","value":"Software Engineer","profileKey":"Job Title"}';
+  const result = parseAction(raw, ctx);
+  check(
+    "structured value on the wrong field is still rejected (notes do not override)",
+    result === null,
+    JSON.stringify(result)
+  );
+}
+
+// Same shape, empty profile → done (not VLM_BAD_RESPONSE / not a type).
+{
+  const raw = '{"action":"fill","fields":{"First Name":"John","Email":"john.doe@example.com"}}';
+  const result = parseAction(raw, { userProfile: {}, fields: PAGE_FIELDS });
+  check(
+    "fill{label:value} with no profile → done, not a typed invention",
+    result && result.action === "done",
+    JSON.stringify(result)
+  );
 }
 
 // Unknown action names still fail closed.

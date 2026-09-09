@@ -46,6 +46,17 @@ A privacy-preserving browser extension that intercepts screen content before it 
 |---|---|---|
 | Document Upload Trust Boundary | What may leave the device for the PDF/DOCX upload + AI-structured profile feature, never-store enforcement points, verification checklist | [PRIVACY_DOC_UPLOAD.md](PRIVACY_DOC_UPLOAD.md) |
 
+## Operator, measurement, and backlog
+
+| Doc | Purpose | Link |
+|---|---|---|
+| Demo runbook | Judge Chrome E2E on TP08 (load `dist/`, scan / Run Agent, recovery codes) | [DEMO_RUNBOOK.md](DEMO_RUNBOOK.md) |
+| VLM server setup | Measured Ollama install, `qwen2.5vl:7b`, cold/warm smoke tests on `:11434` | [SERVER_SETUP.md](SERVER_SETUP.md) |
+| Backend deploy | Operator path: Node gateway `:8000` → Ollama; Chrome 403 if you hit `:11434` directly | [BACKEND_DEPLOY.md](BACKEND_DEPLOY.md) |
+| Extension size | Measured `du` of `dist/` vs repo root, JS/models/pdfjs/icons breakdown (Resource criterion) | [EXTENSION_SIZE.md](EXTENSION_SIZE.md) |
+| Git branches | Local + fetched remotes, last commits, which branch to demo | [BRANCHES.md](BRANCHES.md) |
+| Improvement ideas | Ranked demo-week vs post-demo backlog | [IMPROVEMENT_IDEAS.md](IMPROVEMENT_IDEAS.md) |
+
 ---
 
 ## Key Technical Decisions (Summary)

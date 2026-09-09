@@ -403,10 +403,22 @@ function formatRuntimeDisconnect(err) {
 const DEFAULT_FILL_TASK = "Fill the visible form using my saved profile. Leave blank any field not in the profile.";
 
 async function persistProfileFromTextarea() {
-  const raw = document.getElementById("profile-input").value;
-  const result = parseUserProfile(raw);
-  if (!result.profile) return result.error || "Save a profile first.";
-  await chrome.runtime.sendMessage({ type: "SET_CONFIG", config: { userProfile: result.profile } });
+  const raw = document.getElementById("profile-input")?.value || "";
+  if (raw.trim()) {
+    const result = parseUserProfile(raw);
+    if (!result.profile) return result.error || "Save a profile first.";
+    await chrome.runtime.sendMessage({ type: "SET_CONFIG", config: { userProfile: result.profile } });
+    return null;
+  }
+  // Profile tab / Demo / upload write aegisProfiles. Sync that into
+  // userProfile so Fill Form does not die on an empty notes textarea.
+  const profile = await getProfile();
+  const keys = profile && typeof profile === "object"
+    ? Object.keys(profile).filter((k) => k !== "_skipped")
+    : [];
+  if (keys.length) {
+    await chrome.runtime.sendMessage({ type: "SET_CONFIG", config: { userProfile: profile } });
+  }
   return null;
 }
 
@@ -426,6 +438,11 @@ async function runAgentLoop(task) {
     setStatus(`${stepLabel}: VLM -> ${response.action.action}. Executing...`);
     const execResult = await chrome.runtime.sendMessage({ type: "EXECUTE_ACTION", action: response.action });
     if (execResult.error) { setPipeline(null); setStatus(`${stepLabel}: ${formatAgentError(execResult.errorCode || "UNKNOWN", execResult.error)}`, "error"); return; }
+    if (response.action.action === "fill_many") {
+      setPipeline(null);
+      setStatus(`${stepLabel}: Filled ${execResult.filled ?? response.action.fields?.length ?? 0} field(s) from your profile and documents.`, "success");
+      return;
+    }
     if (response.action.action === "done") { setPipeline(null); setStatus(`${stepLabel}: Done: ${response.action.summary}`, "success"); return; }
     if (step >= MAX_AGENT_STEPS) { setPipeline(null); setStatus(`${stepLabel}: Step cap reached.`, "warn"); return; }
     setStatus(`${stepLabel}: Executed ${response.action.action}. Replanning...`);
@@ -440,11 +457,28 @@ fillBtn.addEventListener("click", async () => {
   const task = document.getElementById("task-input").value.trim() || DEFAULT_FILL_TASK;
   document.getElementById("task-input").value = task;
   fillBtn.disabled = true; scanBtn.disabled = true; runBtn.disabled = true; clearStatus(); previewWrap.classList.remove("visible");
-  try { await runAgentLoop(task); } catch (err) { setPipeline(null); setStatus(formatRuntimeDisconnect(err), "error"); }
+  try {
+    setStatus("Filling matching fields from your profile and documents…", "active");
+    const local = await chrome.runtime.sendMessage({ type: "FILL_MATCHING_FIELDS" });
+    if (local?.error) {
+      setStatus(formatAgentError(local.errorCode || "UNKNOWN", local.error), "error");
+      return;
+    }
+    const filled = local?.filled || 0;
+    const remaining = local?.remaining ?? 0;
+    if (filled > 0 && remaining === 0) {
+      setStatus(`Filled ${filled} field(s) from your profile and documents.`, "success");
+      return;
+    }
+    if (filled > 0) {
+      setStatus(`Filled ${filled} field(s). Asking local AI for the rest…`, "active");
+    }
+    await runAgentLoop(task);
+  } catch (err) { setPipeline(null); setStatus(formatRuntimeDisconnect(err), "error"); }
   finally { fillBtn.disabled = false; scanBtn.disabled = false; runBtn.disabled = false; }
 });
 
-scanBtn.addEventListener("click", async () => {
+async function runPrivacyScan() {
   scanBtn.disabled = true; fillBtn.disabled = true; runBtn.disabled = true; clearStatus(); previewWrap.classList.remove("visible");
   setPipeline("capture", { includeVlm: false }); setStatus("Capturing viewport and running local redaction...");
   try {
@@ -457,6 +491,12 @@ scanBtn.addEventListener("click", async () => {
     }
   } catch (err) { setPipeline(null); setStatus(formatRuntimeDisconnect(err), "error"); }
   finally { scanBtn.disabled = false; fillBtn.disabled = false; runBtn.disabled = false; }
+}
+
+scanBtn.addEventListener("click", runPrivacyScan);
+document.getElementById("scan-faces-page-btn")?.addEventListener("click", () => {
+  document.querySelector('.tab[data-tab="fill"]')?.click();
+  return runPrivacyScan();
 });
 
 runBtn.addEventListener("click", async () => {
@@ -666,7 +706,7 @@ themeToggleBtn?.addEventListener("click", async () => {
 
 // ── Onboarding Tour ───────────────────────────────────────────────
 const TOUR_STEPS = [
-  { title: "Welcome to Aegis!", body: "Aegis redacts your sensitive PII and faces on-device before any AI analysis." },
+  { title: "Welcome to Aegis!", body: "Privacy Scan outlines faces and redacts PII on-device before any AI analysis. Daily browsing does not scan photos of other people." },
   { title: "Setup Your Profile", body: "Click Demo or speak in your native language to save details." },
   { title: "Instant Autofill", body: "Open any web form and press Ctrl+Shift+F or click Fill Form!" },
 ];

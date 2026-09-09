@@ -1,3 +1,6 @@
+# Commit: src/, server/, eval/, scripts/, lean docs/, manifest.json, package.json
+# Never commit: dist/, node_modules/, .chrome-demo-profile/, *.bak, agent folders
+
 # macOS junk
 .DS_Store
 **/.DS_Store
@@ -6,23 +9,23 @@
 Icon
 ._*
 
-# Node dependencies
+# Node
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Generated "Load unpacked" root (scripts/build-dist.sh)
+# Generated Load-unpacked root
 dist/
 
-# Environment / local secrets
+# Secrets / local Chrome profile
 .env
 .env.local
 .env.*
 .venv/
 .chrome-demo-profile/
 
-# Local agent / editor / graph tooling (not part of the extension)
+# Local agent / editor / graph (not the extension)
 .agents/
 .cursor/
 .opencode/
@@ -33,15 +36,11 @@ engineers/
 AGENTS.md
 CLAUDE.md
 
-# Backup / patch leftovers
+# Backups / patches
 *.bak
 *.bak-*
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+src/vendor/*.bak*
 
-# Editor directories
+# Editors
 .vscode/
 .idea/

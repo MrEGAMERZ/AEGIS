@@ -91,7 +91,29 @@ check(
   /filterFieldsForPasswordDetection\(fields, passwordOn\)/.test(contentSrc)
 );
 
-console.log("\n4. Fail-closed layers unchanged");
+console.log("\n4. Idle MutationObserver never runs face CV");
+const rescanStart = contentSrc.indexOf("function scheduleSensitiveRescan");
+const rescanEnd = contentSrc.indexOf("function mutationTouchesOverlay");
+check("scheduleSensitiveRescan found", rescanStart !== -1 && rescanEnd > rescanStart);
+const rescanFn = contentSrc.slice(rescanStart, rescanEnd);
+check("idle rescan does not mention DETECT_FACES", !rescanFn.includes("DETECT_FACES"));
+check("idle rescan sets includeFaces: false", rescanFn.includes("includeFaces: false"));
+check("idle rescan does not query applicant-photo", !rescanFn.includes("applicant-photo"));
+check(
+  "content script never sends DETECT_FACES",
+  !contentSrc.includes('type: "DETECT_FACES"') && !contentSrc.includes("type: 'DETECT_FACES'")
+);
+check(
+  "photo/face heuristic is inside renderFaceOverlays only",
+  /function renderFaceOverlays[\s\S]*applicant-photo/.test(contentSrc) &&
+    contentSrc.indexOf("function renderFaceOverlays") < contentSrc.indexOf("applicant-photo")
+);
+check(
+  "scan overlay path still requests faces",
+  /SHOW_REDACTION_OVERLAY[\s\S]{0,180}includeFaces:\s*true/.test(backgroundSrc)
+);
+
+console.log("\n5. Fail-closed layers unchanged");
 check("face gate still in assertReadyForVlm", backgroundSrc.includes("facePassComplete"));
 check("NER gate still in assertReadyForVlm", backgroundSrc.includes("nerPassComplete"));
 check("sanitizeAction profileKey guard intact", backgroundSrc.includes("profileKey"));

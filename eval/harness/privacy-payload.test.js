@@ -216,6 +216,11 @@ console.log("\n6. Dynamic DOM re-scan (no VLM)");
 check("content script uses MutationObserver", contentSrc.includes("new MutationObserver"));
 check("rescan is debounced", contentSrc.includes("RESCAN_DEBOUNCE_MS") || contentSrc.includes("setTimeout"));
 check("rescan only refreshes overlay, does not fetch VLM", contentSrc.includes("showRedactionOverlay") && !contentSrc.includes("CAPTURE_AND_SANITIZE") && !contentSrc.includes("fetch("));
+check("idle rescan does not send DETECT_FACES", (() => {
+  const start = contentSrc.indexOf("function scheduleSensitiveRescan");
+  const end = contentSrc.indexOf("function mutationTouchesOverlay");
+  return start !== -1 && end > start && !contentSrc.slice(start, end).includes("DETECT_FACES");
+})());
 
 console.log("");
 if (fail) {
