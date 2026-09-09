@@ -86,6 +86,59 @@
     return fields;
   }
 
+  // Regular form controls (name, email, phone, …) are NOT in the sensitive
+  // scan — that list exists to black-out passwords/cards. Fill still needs
+  // every visible input's label + selector so we can map profile/vault
+  // values without a 90s VLM round-trip per field.
+  function isFillableFormControl(el) {
+    if (!el || el.disabled || el.readOnly) return false;
+    if (el.tagName === "INPUT") {
+      const type = (el.type || "text").toLowerCase();
+      return ![
+        "hidden", "button", "submit", "reset", "image", "file",
+        "checkbox", "radio", "password", "range", "color",
+      ].includes(type);
+    }
+    return el.tagName === "SELECT" || el.tagName === "TEXTAREA";
+  }
+
+  function labelForFormControl(el) {
+    if (el.labels?.[0]?.textContent?.trim()) return el.labels[0].textContent.trim();
+    const aria = el.getAttribute("aria-label");
+    if (aria && aria.trim()) return aria.trim();
+    if (el.id) {
+      try {
+        const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        if (lab?.textContent?.trim()) return lab.textContent.trim();
+      } catch {
+        /* invalid id */
+      }
+    }
+    return (el.placeholder || el.name || el.id || "").trim();
+  }
+
+  function scanFillableFormFields() {
+    const results = [];
+    const seen = new Set();
+    for (const el of document.querySelectorAll("input, select, textarea")) {
+      if (!isFillableFormControl(el)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") continue;
+      const selector = buildSelector(el);
+      if (!selector || seen.has(selector)) continue;
+      seen.add(selector);
+      results.push({
+        selector,
+        label: labelForFormControl(el),
+        type: "text_input",
+        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      });
+    }
+    return results;
+  }
+
   function filterFieldsForPasswordDetection(fields, passwordDetectionEnabled) {
     if (passwordDetectionEnabled !== false) return fields;
     return fields.filter((f) => f.type !== "password_input");
@@ -282,9 +335,15 @@
   // It uses pointer-events:none so it doesn't interfere with page interaction.
 
   const OVERLAY_ROOT_ID = "sih26171-overlay-root";
+  const OVERLAY_FIELDS_ID = "sih26171-overlay-fields";
+  const OVERLAY_FACES_ID = "sih26171-overlay-faces";
 
   /** @type {{ el: Element, box: HTMLElement }[]} */
   let overlayAnchors = [];
+  /** @type {{ el: Element, box: HTMLElement }[]} */
+  let faceLiveAnchors = [];
+  /** @type {{ docX: number, docY: number, width: number, height: number, box: HTMLElement }[]} */
+  let fieldDocAnchors = [];
   /** @type {{ docX: number, docY: number, width: number, height: number, box: HTMLElement }[]} */
   let faceAnchors = [];
   let overlayRaf = 0;
@@ -355,20 +414,30 @@
     });
   }
 
-  function repositionOverlays() {
-    for (const { el, box } of overlayAnchors) {
-      if (!el.isConnected) {
+  function repositionLiveAnchors(anchors) {
+    for (const { el, box } of anchors) {
+      if (!el || !el.isConnected) {
         box.style.display = "none";
         continue;
       }
       const rect = el.getBoundingClientRect();
       applyBoxRect(box, rect.x, rect.y, rect.width, rect.height);
     }
+  }
+
+  function repositionDocAnchors(anchors) {
     const sx = window.scrollX || 0;
     const sy = window.scrollY || 0;
-    for (const face of faceAnchors) {
-      applyBoxRect(face.box, face.docX - sx, face.docY - sy, face.width, face.height);
+    for (const a of anchors) {
+      applyBoxRect(a.box, a.docX - sx, a.docY - sy, a.width, a.height);
     }
+  }
+
+  function repositionOverlays() {
+    repositionLiveAnchors(overlayAnchors);
+    repositionLiveAnchors(faceLiveAnchors);
+    repositionDocAnchors(fieldDocAnchors);
+    repositionDocAnchors(faceAnchors);
   }
 
   function makeOverlayBox(type, labelText) {
@@ -406,11 +475,27 @@
     return box;
   }
 
-  function showRedactionOverlay(fields, faces, dpr) {
+  function getOverlayLayer(root, id) {
+    let layer = document.getElementById(id);
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.id = id;
+      Object.assign(layer.style, {
+        position: "absolute",
+        inset: "0",
+        pointerEvents: "none",
+      });
+      root.appendChild(layer);
+    }
+    return layer;
+  }
+
+  function renderFieldOverlays(fields) {
     const root = getOrCreateOverlayRoot();
-    root.innerHTML = "";
+    const layer = getOverlayLayer(root, OVERLAY_FIELDS_ID);
+    layer.innerHTML = "";
     overlayAnchors = [];
-    faceAnchors = [];
+    fieldDocAnchors = [];
 
     for (const field of fields || []) {
       // Prefer live element so boxes track the real field, not a stale rect.
@@ -428,13 +513,12 @@
       }[field.type] || "Secured";
 
       const box = makeOverlayBox(field.type, typeLabel);
-      root.appendChild(box);
+      layer.appendChild(box);
 
       if (el) {
         overlayAnchors.push({ el, box });
       } else {
-        // Fallback: document-space anchor from the provided viewport rect
-        faceAnchors.push({
+        fieldDocAnchors.push({
           docX: rect.x + (window.scrollX || 0),
           docY: rect.y + (window.scrollY || 0),
           width: rect.width,
@@ -444,13 +528,25 @@
       }
     }
 
+    ensureOverlayListeners();
+    repositionOverlays();
+  }
+
+  function renderFaceOverlays(faces, dpr) {
+    const root = getOrCreateOverlayRoot();
+    const layer = getOverlayLayer(root, OVERLAY_FACES_ID);
+    layer.innerHTML = "";
+    faceAnchors = [];
+    faceLiveAnchors = [];
+
     // Face outline for the user (transparent). Prefer live photo element on TP08.
     // Actual face pixelation for AI is only on the sanitized capture.
+    // Idle browsing never calls this — no photo-alt heuristic on MutationObserver.
     const photoEl = document.querySelector("#applicant-photo, img.applicant-photo, img[alt*='photo' i], img[alt*='face' i]");
     if (photoEl) {
       const box = makeOverlayBox("face", "Secured");
-      root.appendChild(box);
-      overlayAnchors.push({ el: photoEl, box });
+      layer.appendChild(box);
+      faceLiveAnchors.push({ el: photoEl, box });
     }
     const scale = typeof dpr === "number" && dpr > 0 ? dpr : 1;
     const sx = window.scrollX || 0;
@@ -471,7 +567,7 @@
         if (overlap) continue;
       }
       const box = makeOverlayBox("face", "Secured");
-      root.appendChild(box);
+      layer.appendChild(box);
       faceAnchors.push({
         docX: x1 / scale + sx,
         docY: y1 / scale + sy,
@@ -485,8 +581,20 @@
     repositionOverlays();
   }
 
+  // includeFaces:false = idle (DOM password/PII outlines only).
+  // includeFaces:true  = Privacy Scan / Run Agent (BlazeFace boxes + photo outline).
+  function showRedactionOverlay(fields, faces, dpr, options) {
+    const includeFaces = !!(options && options.includeFaces);
+    renderFieldOverlays(fields);
+    if (includeFaces) {
+      renderFaceOverlays(faces, dpr);
+    }
+  }
+
   function clearRedactionOverlay() {
     overlayAnchors = [];
+    faceLiveAnchors = [];
+    fieldDocAnchors = [];
     faceAnchors = [];
     const root = document.getElementById(OVERLAY_ROOT_ID);
     if (root) root.innerHTML = "";
@@ -497,6 +605,7 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "DOM_SCAN") {
       const fields = scanDOMForSensitiveFields();
+      const fillableFields = scanFillableFormFields();
       const visibleText = extractVisibleText();
       // dpr is critical: captureVisibleTab() returns physical pixels,
       // but getBoundingClientRect() returns CSS pixels.
@@ -505,6 +614,7 @@
       // image, which is the coordinate space the VLM must answer clicks in.
       sendResponse({
         fields,
+        fillableFields,
         visibleText,
         dpr: window.devicePixelRatio || 1,
         viewport: { width: window.innerWidth, height: window.innerHeight },
@@ -513,7 +623,9 @@
     }
 
     if (msg.type === "SHOW_REDACTION_OVERLAY") {
-      showRedactionOverlay(msg.fields || [], msg.faces || [], msg.dpr);
+      showRedactionOverlay(msg.fields || [], msg.faces || [], msg.dpr, {
+        includeFaces: msg.includeFaces === true,
+      });
       sendResponse({ ok: true });
       return false;
     }
@@ -541,8 +653,9 @@
   });
 
   // ── Dynamic re-detection (SPA / injected forms) ─────────────────
-  // Local-only: re-scan sensitive fields and refresh the overlay.
+  // Local-only: re-scan sensitive *fields* and refresh the field overlay.
   // Never posts field values or screenshots to the VLM.
+  // Never runs BlazeFace — face CV is Privacy Scan / Run Agent only.
   // Ignores mutations inside our own overlay so we cannot loop.
 
   const RESCAN_DEBOUNCE_MS = 400;
@@ -556,7 +669,9 @@
         try {
           const fields = scanDOMForSensitiveFields();
           const passwordOn = await passwordDetectionEnabledFromStorage();
-          showRedactionOverlay(filterFieldsForPasswordDetection(fields, passwordOn));
+          showRedactionOverlay(filterFieldsForPasswordDetection(fields, passwordOn), [], undefined, {
+            includeFaces: false,
+          });
         } catch {
           // Overlay refresh is best-effort; never throw into the page.
         }

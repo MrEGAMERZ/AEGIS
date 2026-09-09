@@ -292,6 +292,11 @@ function runRestrictedAndFailureCases() {
         contentSrc.includes("attributeTokens") &&
           contentSrc.includes("tokens.has")
       );
+      check(
+        "DOM_SCAN also lists fillable form fields for batch fill",
+        contentSrc.includes("scanFillableFormFields") &&
+          contentSrc.includes("fillableFields")
+      );
 
       console.log("");
       if (fail) {

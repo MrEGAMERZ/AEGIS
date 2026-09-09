@@ -96,6 +96,15 @@ check(
   }).phase === "done"
 );
 check(
+  "fill_many stops after one batch (no 90s-per-field loop)",
+  agentLoopStopAfterExecute({
+    step: 1,
+    maxSteps: MAX_AGENT_STEPS,
+    action: { action: "fill_many", fields: [{ action: "type" }, { action: "type" }] },
+    execResult: { ok: true, filled: 2 },
+  }).phase === "done"
+);
+check(
   "max steps stops after last execute",
   agentLoopStopAfterExecute({
     step: MAX_AGENT_STEPS,

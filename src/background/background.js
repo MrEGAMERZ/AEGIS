@@ -57,6 +57,29 @@ function vaultAllowsValue(value) {
   }
 }
 
+// Free-text profile notes (`raw` / `notes`) count as provenance when the
+// typed value is a real substring of saved text — same bar as the vault
+// (≥2 chars, case-insensitive). Structured keys still win for label checks.
+function profileContainsValue(value, userProfile) {
+  const needle = String(value ?? "").trim().toLowerCase();
+  if (needle.length < 2) return false;
+  if (!userProfile || typeof userProfile !== "object" || Array.isArray(userProfile)) return false;
+  return Object.values(userProfile).some((v) => String(v ?? "").toLowerCase().includes(needle));
+}
+
+function conflictingStructuredKey(value, fieldLabel, userProfile) {
+  if (!userProfile || typeof userProfile !== "object") return null;
+  const want = String(value ?? "").trim().toLowerCase();
+  if (!want) return null;
+  for (const [k, v] of Object.entries(userProfile)) {
+    const key = String(k);
+    if (key === "raw" || key === "notes" || key === "Notes") continue;
+    if (String(v ?? "").trim().toLowerCase() !== want) continue;
+    if (!keysCorrelate(key, fieldLabel) && !labelsAlign(key, fieldLabel)) return key;
+  }
+  return null;
+}
+
 // Best-effort refresh of the synchronous vault-text cache (used by
 // handleExecuteAction's re-validation so a vault-sourced "type" survives the
 // second guard pass after a capture-less EXECUTE_ACTION).
@@ -257,6 +280,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "PROFILE_PREFILL") {
     handleProfilePrefill()
+      .then(sendResponse)
+      .catch((err) =>
+        sendResponse({
+          error: err.message,
+          errorCode: classifyError(err),
+        })
+      );
+    return true;
+  }
+
+  if (msg.type === "FILL_MATCHING_FIELDS") {
+    handleFillMatchingFields()
       .then(sendResponse)
       .catch((err) =>
         sendResponse({
@@ -567,6 +602,7 @@ async function performLocalRedaction(tab, config) {
   sendTabMessage(tab, {
     type: "SHOW_REDACTION_OVERLAY",
     fields: domScanResults.fields || [],
+    includeFaces: true,
   }).catch(() => {});
 
   await ensureOffscreen();
@@ -593,6 +629,7 @@ async function performLocalRedaction(tab, config) {
     fields: domScanResults.fields || [],
     faces: faceRegions,
     dpr: sanitizeResponse.dpr || domScanResults.dpr || 1,
+    includeFaces: true,
   }).catch(() => {});
 
   const receipt = buildPrivacyReceipt(tab, sanitizeResponse, {
@@ -609,6 +646,44 @@ async function handleProfilePrefill() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("No active tab");
   return sendTabMessage(tab, { type: "PROFILE_PREFILL" });
+}
+
+// Instant fill: map every visible form control to a verified profile/vault
+// value. No VLM. Used by the popup Fill Form button so a saved profile or
+// uploaded doc does not wait 90s per field.
+async function handleFillMatchingFields() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) throw new Error("No active tab");
+
+  const config = await chrome.storage.local.get(["userProfile", "passwordDetection", "vlmEndpoint"]);
+  const userProfile = await enrichProfileFromNotes(normalizeProfile(config.userProfile));
+  const vlmEndpoint = await resolveVlmEndpoint(config.vlmEndpoint);
+  vaultProvenanceLocalOnly = isLocalVlmEndpoint(vlmEndpoint);
+  await refreshVaultCacheBestEffort();
+
+  const domScan = await sendTabMessage(tab, { type: "DOM_SCAN" });
+  const fillFields = filterFieldsForPasswordDetection(
+    fieldsForFill(domScan),
+    config.passwordDetection !== false
+  );
+  const context = { userProfile, fields: fillFields };
+  const types = collectVerifiedTypeActions([], context);
+  const action = wrapFillActions(types);
+  const remainingBase = fillFields.filter((f) => f && f.type !== "password_input").length;
+
+  if (action.action === "done") {
+    return { ok: true, filled: 0, remaining: remainingBase, summary: action.summary };
+  }
+
+  const exec = await handleExecuteAction(action, tab.id);
+  if (exec?.error) return { ok: false, filled: 0, remaining: remainingBase, error: exec.error };
+  const filled = exec.filled ?? (action.action === "type" ? 1 : 0);
+  return {
+    ok: true,
+    filled,
+    remaining: Math.max(0, remainingBase - filled),
+    action: action.action,
+  };
 }
 
 async function handleScanAndOverlay() {
@@ -862,6 +937,31 @@ function filterFieldsForPasswordDetection(fields, passwordDetectionEnabled) {
   return list.filter((f) => f && f.type !== "password_input");
 }
 
+// Sensitive scan (passwords/cards) + fillable scan (name/email/…) merged by
+// selector. Overlay/mask still uses only the sensitive list; fill + VLM
+// structure need every visible control.
+function fieldsForFill(domScanResults) {
+  const fillable = Array.isArray(domScanResults?.fillableFields) ? domScanResults.fillableFields : [];
+  const sensitive = Array.isArray(domScanResults?.fields) ? domScanResults.fields : [];
+  if (!fillable.length) return sensitive;
+  const seen = new Set(fillable.map((f) => f && f.selector).filter(Boolean));
+  const extra = sensitive.filter((f) => f && f.selector && !seen.has(f.selector));
+  return fillable.concat(extra);
+}
+
+async function enrichProfileFromNotes(profile) {
+  const base = profile && typeof profile === "object" && !Array.isArray(profile) ? { ...profile } : {};
+  try {
+    const blob = [base.raw, base.notes, base.Notes].filter(Boolean).join("\n");
+    if (!String(blob).trim()) return base;
+    const mod = await import("../shared/extract-profile.js");
+    const extracted = mod.toUserProfileFields(mod.extractProfileFromText(blob));
+    return { ...extracted, ...base };
+  } catch {
+    return base;
+  }
+}
+
 function agentLoopStopAfterCapture(captureResult) {
   if (captureResult?.error) {
     return {
@@ -889,11 +989,14 @@ function agentLoopStopAfterExecute({ step, maxSteps, action, execResult }) {
       error: execResult.error,
     };
   }
-  if (action?.action === "done") {
+  if (action?.action === "done" || action?.action === "fill_many") {
     return {
       stop: true,
       phase: "done",
-      summary: action.summary || execResult?.summary,
+      summary:
+        action.action === "fill_many"
+          ? `Filled ${execResult?.filled ?? action.fields?.length ?? 0} field(s).`
+          : action.summary || execResult?.summary,
     };
   }
   if (step >= maxSteps) {
@@ -931,10 +1034,11 @@ async function handleCaptureAndSanitize(task) {
   const piiDetectionEnabled = config.piiDetection !== false;
   const vlmEndpoint = await resolveVlmEndpoint(config.vlmEndpoint);
   const vlmModel = config.vlmModel || DEFAULT_VLM_MODEL;
-  const userProfile = normalizeProfile(config.userProfile);
+  const userProfile = await enrichProfileFromNotes(normalizeProfile(config.userProfile));
+  const fillFields = fieldsForFill(domScanResults);
 
   const pageStructure = buildPageStructureForVlm({
-    fields: redactNerSpansInFields(domScanResults.fields || [], sanitizeResponse.nerEntities),
+    fields: redactNerSpansInFields(fillFields, sanitizeResponse.nerEntities),
     maskedRegions: sanitizeResponse.maskedRegions || [],
     dpr: domScanResults.dpr || 1,
     viewport: domScanResults.viewport,
@@ -984,7 +1088,9 @@ ${Object.entries(userProfile)
         // Keep the synchronous provenance cache in sync for this capture's
         // parseAction()/sanitizeAction() pass.
         vaultApi.setVaultTextCache(docs.map((d) => d.text));
-        docSnippets = vaultApi.retrieveVaultSnippets(docs, task, 3);
+        const fieldLabels = fillFields.map((f) => f && f.label).filter(Boolean).join(" ");
+        const ragQuery = [task, fieldLabels].filter(Boolean).join(" ");
+        docSnippets = vaultApi.retrieveVaultSnippets(docs, ragQuery, 8);
       } else {
         // Remote path: never populate the provenance cache; clear stale texts
         // from an earlier local capture so no vault value can pass the guard.
@@ -1016,16 +1122,17 @@ Reply with a SINGLE JSON action object and nothing else.
 AVAILABLE ACTIONS:
   {"action":"click","x":N,"y":N}
   {"action":"type","selector":"<css_selector>","value":"<string>","profileKey":"<string>"}
+  {"action":"fill","fields":{"<visible field label>":"<exact value from USER PROFILE or DOCUMENT KNOWLEDGE>"}}
   {"action":"scroll","direction":"up"|"down"}
   {"action":"navigate","url":"<url>"}
   {"action":"done","summary":"<string>"}
 
-The ONLY fill action is "type". Never reply with {"action":"fill",...} or {"action":"fill_field",...} — those names do not exist.
+When the user wants a form filled, prefer ONE "fill" object that lists EVERY visible field you can match. Do not invent values. We map labels to real selectors and drop anything that is not in the profile or documents.
 
 CHOOSING THE ACTION:
 - If the user asks a question, or asks you to summarize / describe / read / explain the page, do NOT interact with the page. Reply {"action":"done","summary":"<your real answer>"} and put the actual answer text in "summary" — it is shown directly to the user. Keep it under 400 characters.
 - If the user asks you to click, press, open or select something visible, use "click".
-- If the user asks you to fill in a form field, use "type" and follow the PROFILE RULES below.
+- If the user asks you to fill a form, use "fill" with every matching label, or "type" for a single field. Follow the PROFILE RULES below.
 - If the thing the user wants is not visible in the screenshot yet, use "scroll".
 
 CLICK COORDINATES:
@@ -1039,13 +1146,14 @@ ${docKnowledgeBlock}
 
 PROFILE RULES (these govern the "type" action only):
 1. To fill a field, you MUST find the exact matching information in the USER PROFILE above${docKnowledgeRule}.
-2. If (and only if) the information is present, output: {"action": "type", "selector": "<css_selector>", "value": "<matching_value>", "profileKey": "<exact_key_from_AVAILABLE_PROFILE_KEYS>"}
+2. If (and only if) the information is present, prefer one fill of every matching field: {"action":"fill","fields":{"Full Name":"<value>","Email":"<value>"}}. A single field may still use {"action":"type","selector":"<css_selector>","value":"<matching_value>","profileKey":"<exact_key_from_AVAILABLE_PROFILE_KEYS>"}.
 3. "profileKey" should name the matching USER PROFILE entry (same words, any casing or spacing — e.g. "fullName" is fine for "Full Name"). Never invent a key that is not in the list. Never attach a real key to a field it does not belong to (e.g. do not put a "Job Title" value into a Name field). If the value comes from DOCUMENT KNOWLEDGE and no profile key matches the field, you may use a descriptive dynamic key (any key is allowed) or omit "profileKey".
 4. If the information is NOT in the USER PROFILE or DOCUMENT KNOWLEDGE (no listed key or snippet matches the field), you MUST NOT guess, invent, or use placeholder data (like "John Doe"). Output: {"action": "done", "summary": "Profile missing information. Please add it in Settings."}
 5. Every "type" action is independently re-checked against the real profile or the stored document text before execution. An action whose value or profileKey cannot be verified against either is discarded and nothing is typed — guessing never helps, it only wastes the turn. When in doubt, use "done".
 6. Never output a "type" action that targets a password field — passwords are never in the USER PROFILE. Apply "type" only to fields whose label matches a profile key.
 
 EXAMPLES:
+- "Fill this form", profile has Name "Alice" and Email "a@x.com": {"action":"fill","fields":{"Full Name":"Alice","Email":"a@x.com"}}
 - "Fill my name", profile has Name "Alice": {"action": "type", "selector": "#name", "value": "Alice", "profileKey": "Name"}
 - "Fill my address", profile is empty: {"action": "done", "summary": "Profile missing information. Please add it in Settings."}
 - "Summarize this page": {"action": "done", "summary": "A scholarship application form asking for personal and academic details. Some fields are redacted for privacy."}
@@ -1069,13 +1177,13 @@ Only use actions that do NOT require reading redacted screen regions.`;
           ],
         },
       ],
-      max_tokens: 256,
+      max_tokens: 768,
       temperature: 0.1,
     };
 
     const sessionSecrets = await chrome.storage.session.get(["vlmApiKey"]);
     const vlmHeaders = buildVlmAuthHeaders(sessionSecrets.vlmApiKey, vlmEndpoint);
-    const actionContext = { userProfile, fields: domScanResults.fields };
+    const actionContext = { userProfile, fields: fillFields };
 
     const actionRaw = await requestVlmContent(vlmEndpoint, vlmHeaders, vlmPayload);
     action = parseAction(actionRaw, actionContext);
@@ -1391,7 +1499,8 @@ function sanitizeAction(action, context = {}) {
         expectedValue.toLowerCase() === action.value.trim().toLowerCase();
 
       const vaultMatch = vaultAllowsValue(action.value);
-      if (!profileMatch && !vaultMatch) return null;
+      const profileTextMatch = profileContainsValue(action.value, userProfile);
+      if (!profileMatch && !vaultMatch && !profileTextMatch) return null;
 
       const fields = context.fields;
       if (Array.isArray(fields)) {
@@ -1403,6 +1512,11 @@ function sanitizeAction(action, context = {}) {
           // label too (catches: doc value + real key attached to wrong field).
           const claimed = profileOk ? resolveProfileKey(userProfile, action.profileKey) : null;
           if (!profileMatch && claimed && !keysCorrelate(claimed, field.label)) return null;
+          // Real structured value attached to the wrong field stays rejected
+          // even when it also appears in notes.
+          if (!profileMatch && conflictingStructuredKey(action.value, field.label, userProfile)) {
+            return null;
+          }
         }
       }
 
@@ -1411,8 +1525,26 @@ function sanitizeAction(action, context = {}) {
         selector,
         value: action.value,
         profileKey: profileKey || null,
-        source: profileMatch ? "profile" : "vault",
+        source: profileMatch ? "profile" : vaultMatch ? "vault" : "profile_text",
       };
+    }
+
+    case "fill_many": {
+      if (!Array.isArray(action.fields) || !action.fields.length) return null;
+      const seen = new Set();
+      const fields = [];
+      for (const item of action.fields) {
+        const safe = sanitizeAction(
+          item && item.action ? item : { ...item, action: "type" },
+          context
+        );
+        if (!safe || safe.action !== "type" || seen.has(safe.selector)) continue;
+        seen.add(safe.selector);
+        fields.push(safe);
+      }
+      if (!fields.length) return null;
+      if (fields.length === 1) return fields[0];
+      return { action: "fill_many", fields };
     }
 
     case "scroll": {
@@ -1508,7 +1640,129 @@ function jsonCandidatesFrom(raw) {
 // provenance, password-field label correlation) is still enforced on the
 // canonical shape. Any unknown shape is passed through untouched and
 // rejected by sanitizeAction's default case as before.
-function normalizeActionShape(action) {
+function isNameLikeKey(s) {
+  const n = normalizeKeyForMatch(s);
+  return (
+    n === "name" ||
+    n === "fullname" ||
+    n === "firstname" ||
+    n === "lastname" ||
+    n === "givenname" ||
+    n === "familyname" ||
+    n === "surname" ||
+    n.endsWith("name")
+  );
+}
+
+function labelsAlign(a, b) {
+  if (keysCorrelate(a, b)) return true;
+  return isNameLikeKey(a) && isNameLikeKey(b);
+}
+
+function findProfileKeyForLabel(userProfile, label) {
+  if (!userProfile || typeof userProfile !== "object") return null;
+  const direct = resolveProfileKey(userProfile, label);
+  if (direct) return direct;
+  for (const k of Object.keys(userProfile)) {
+    if (keysCorrelate(k, label)) return k;
+  }
+  for (const k of Object.keys(userProfile)) {
+    if (isNameLikeKey(k) && isNameLikeKey(label)) return k;
+  }
+  return null;
+}
+
+function findPageFieldForLabel(fields, label) {
+  if (!Array.isArray(fields) || !label) return null;
+  return (
+    fields.find(
+      (f) =>
+        f &&
+        f.selector &&
+        f.label &&
+        f.type !== "password_input" &&
+        keysCorrelate(label, f.label)
+    ) ||
+    fields.find(
+      (f) =>
+        f &&
+        f.selector &&
+        f.label &&
+        f.type !== "password_input" &&
+        labelsAlign(label, f.label)
+    ) ||
+    null
+  );
+}
+
+function wrapFillActions(actions) {
+  if (!actions.length) {
+    return {
+      action: "done",
+      summary: "Profile missing information. Please add it in Settings.",
+    };
+  }
+  if (actions.length === 1) return actions[0];
+  return { action: "fill_many", fields: actions };
+}
+
+// Turn fill{label:value} / fill[] / page fields into every verified type we
+// can prove from the profile or vault. Invented John Doe values are replaced
+// with the real profile value when the label matches a key.
+function collectVerifiedTypeActions(seedAttempts, context) {
+  const profile = context.userProfile;
+  const pageFields = context.fields;
+  const attempts = Array.isArray(seedAttempts) ? seedAttempts.slice() : [];
+  if (Array.isArray(pageFields)) {
+    for (const f of pageFields) {
+      if (f?.selector) attempts.push({ label: f.label, value: null, field: f });
+    }
+  }
+
+  const seen = new Set();
+  const out = [];
+  for (const attempt of attempts) {
+    const field =
+      attempt.field ||
+      findPageFieldForLabel(pageFields, attempt.label) ||
+      (attempt.selector && Array.isArray(pageFields)
+        ? pageFields.find((f) => f && f.selector === attempt.selector)
+        : null);
+    if (!field?.selector || field.type === "password_input") continue;
+    if (seen.has(field.selector)) continue;
+    const pk =
+      findProfileKeyForLabel(profile, attempt.label) ||
+      findProfileKeyForLabel(profile, field.label);
+    const profileVal = pk ? String(profile[pk] ?? "").trim() : "";
+    const modelVal = typeof attempt.value === "string" ? attempt.value.trim() : "";
+    let value = "";
+    if (profileVal) value = profileVal;
+    else if (modelVal && (vaultAllowsValue(modelVal) || profileContainsValue(modelVal, profile))) {
+      value = modelVal;
+    }
+    if (!value) continue;
+    const mapped = {
+      action: "type",
+      selector: field.selector,
+      value,
+      profileKey: pk || attempt.label,
+    };
+    if (!sanitizeAction(mapped, context)) continue;
+    seen.add(field.selector);
+    out.push(mapped);
+  }
+  return out;
+}
+
+function typeFromFillObjectMap(fieldsMap, context) {
+  const attempts = [];
+  for (const [label, value] of Object.entries(fieldsMap || {})) {
+    attempts.push({ label, value });
+  }
+  return wrapFillActions(collectVerifiedTypeActions(attempts, context));
+}
+
+function normalizeActionShape(action, context = {}) {
   if (!action || typeof action !== "object" || Array.isArray(action)) return action;
   if (action.action === "fill_field") {
     return {
@@ -1519,10 +1773,26 @@ function normalizeActionShape(action) {
     };
   }
   if (action.action === "fill" && Array.isArray(action.fields) && action.fields.length) {
-    const f = action.fields[0];
-    if (f && typeof f === "object") {
-      return { action: "type", selector: f.selector, value: f.value, profileKey: f.profileKey };
-    }
+    const attempts = action.fields
+      .filter((f) => f && typeof f === "object")
+      .map((f) => ({
+        label: f.profileKey || f.label || f.selector,
+        value: f.value,
+        selector: f.selector,
+        field:
+          Array.isArray(context.fields) && f.selector
+            ? context.fields.find((page) => page && page.selector === f.selector)
+            : null,
+      }));
+    return wrapFillActions(collectVerifiedTypeActions(attempts, context));
+  }
+  if (
+    action.action === "fill" &&
+    action.fields &&
+    !Array.isArray(action.fields) &&
+    typeof action.fields === "object"
+  ) {
+    return typeFromFillObjectMap(action.fields, context);
   }
   return action;
 }
@@ -1540,7 +1810,7 @@ function parseAction(raw, context = {}) {
     } catch {
       continue;
     }
-    const safe = sanitizeAction(normalizeActionShape(candidate), context);
+    const safe = sanitizeAction(normalizeActionShape(candidate, context), context);
     if (safe) return safe;
   }
   return null;
@@ -1620,7 +1890,7 @@ async function handleExecuteAction(action, tabId) {
   }
 
   // Validate action shape before executing
-  const VALID_ACTIONS = ["click", "type", "scroll", "navigate", "done"];
+  const VALID_ACTIONS = ["click", "type", "scroll", "navigate", "done", "fill_many"];
   if (!VALID_ACTIONS.includes(safe.action)) {
     return { error: `Unknown action: ${safe.action}. Valid: ${VALID_ACTIONS.join(", ")}` };
   }
@@ -1641,6 +1911,21 @@ async function handleExecuteAction(action, tabId) {
       execResult = await sendTabMessage(targetTab, { type: "EXECUTE_TYPE", selector: safe.selector, value: safe.value });
       break;
 
+    case "fill_many": {
+      const results = [];
+      for (const field of safe.fields) {
+        const one = await sendTabMessage(targetTab, {
+          type: "EXECUTE_TYPE",
+          selector: field.selector,
+          value: field.value,
+        });
+        results.push({ selector: field.selector, ...(one || {}) });
+      }
+      const filled = results.filter((r) => r && !r.error).length;
+      execResult = { ok: filled > 0, filled, results };
+      break;
+    }
+
     case "scroll":
       execResult = await sendTabMessage(targetTab, { type: "EXECUTE_SCROLL", direction: safe.direction });
       break;
@@ -1660,8 +1945,15 @@ async function handleExecuteAction(action, tabId) {
     const domain = tab?.url ? new URL(tab.url).hostname : "unknown";
     await writeAuditLog({
       domain,
-      action: safe.action === "type" ? `autofill (${safe.profileKey || "field"})` : safe.action === "done" ? "completed" : safe.action,
-      fields: safe.action === "type" ? 1 : 0,
+      action:
+        safe.action === "type"
+          ? `autofill (${safe.profileKey || "field"})`
+          : safe.action === "fill_many"
+            ? `autofill (${safe.fields.length} fields)`
+            : safe.action === "done"
+              ? "completed"
+              : safe.action,
+      fields: safe.action === "type" ? 1 : safe.action === "fill_many" ? safe.fields.length : 0,
       time: new Date().toLocaleString(),
     });
   }
