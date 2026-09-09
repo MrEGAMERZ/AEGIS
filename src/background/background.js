@@ -304,7 +304,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "SCAN_AND_OVERLAY") {
     // Scan the active tab's DOM and show redaction overlay — no VLM call.
-    handleScanAndOverlay()
+    handleScanAndOverlay(msg)
       .then(sendResponse)
       .catch((err) =>
         sendResponse({
@@ -602,7 +602,7 @@ async function performLocalRedaction(tab, config) {
   sendTabMessage(tab, {
     type: "SHOW_REDACTION_OVERLAY",
     fields: domScanResults.fields || [],
-    includeFaces: true,
+    includeFaces: faceDetectionEnabled,
   }).catch(() => {});
 
   await ensureOffscreen();
@@ -629,7 +629,7 @@ async function performLocalRedaction(tab, config) {
     fields: domScanResults.fields || [],
     faces: faceRegions,
     dpr: sanitizeResponse.dpr || domScanResults.dpr || 1,
-    includeFaces: true,
+    includeFaces: faceDetectionEnabled,
   }).catch(() => {});
 
   const receipt = buildPrivacyReceipt(tab, sanitizeResponse, {
@@ -656,10 +656,12 @@ async function handleFillMatchingFields() {
   if (!tab?.id) throw new Error("No active tab");
 
   const config = await chrome.storage.local.get(["userProfile", "passwordDetection", "vlmEndpoint"]);
-  const userProfile = await enrichProfileFromNotes(normalizeProfile(config.userProfile));
   const vlmEndpoint = await resolveVlmEndpoint(config.vlmEndpoint);
   vaultProvenanceLocalOnly = isLocalVlmEndpoint(vlmEndpoint);
   await refreshVaultCacheBestEffort();
+  const userProfile = await enrichProfileFromVaultText(
+    await enrichProfileFromNotes(normalizeProfile(config.userProfile))
+  );
 
   const domScan = await sendTabMessage(tab, { type: "DOM_SCAN" });
   const fillFields = filterFieldsForPasswordDetection(
@@ -686,7 +688,7 @@ async function handleFillMatchingFields() {
   };
 }
 
-async function handleScanAndOverlay() {
+async function handleScanAndOverlay(msg) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("No active tab");
 
@@ -695,6 +697,10 @@ async function handleScanAndOverlay() {
     "piiDetection",
     "passwordDetection",
   ]);
+  // Explicit "Scan faces now" — one existing scan pipeline, faces on for this pass.
+  if (msg && msg.forceFaces === true) {
+    config.faceDetection = true;
+  }
 
   const { domScanResults, sanitizeResponse, receipt } = await performLocalRedaction(tab, config);
 
@@ -953,6 +959,28 @@ async function enrichProfileFromNotes(profile) {
   const base = profile && typeof profile === "object" && !Array.isArray(profile) ? { ...profile } : {};
   try {
     const blob = [base.raw, base.notes, base.Notes].filter(Boolean).join("\n");
+    if (!String(blob).trim()) return base;
+    const mod = await import("../shared/extract-profile.js");
+    const extracted = mod.toUserProfileFields(mod.extractProfileFromText(blob));
+    return { ...extracted, ...base };
+  } catch {
+    return base;
+  }
+}
+
+// Client-first Fill Form: map vault *text* with the same extract-profile.js
+// used on upload — not a second parser. Saved profile keys win on conflict.
+// Temporary merge only; does not persist and does not put vault text on a
+// remote VLM prompt (CAPTURE_AND_SANITIZE still uses stored userProfile).
+async function enrichProfileFromVaultText(profile) {
+  const base = profile && typeof profile === "object" && !Array.isArray(profile) ? { ...profile } : {};
+  try {
+    const api = globalThis.AegisDocVault;
+    const texts =
+      api && typeof api.getCachedVaultTexts === "function" ? api.getCachedVaultTexts() : [];
+    const blob = (Array.isArray(texts) ? texts : [])
+      .filter((t) => typeof t === "string")
+      .join("\n");
     if (!String(blob).trim()) return base;
     const mod = await import("../shared/extract-profile.js");
     const extracted = mod.toUserProfileFields(mod.extractProfileFromText(blob));

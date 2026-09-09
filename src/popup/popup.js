@@ -105,6 +105,8 @@ async function loadConfig() {
   document.getElementById("vlm-endpoint").value = config.vlmEndpoint || "http://localhost:8000/v1/chat/completions";
   document.getElementById("vlm-model").value = config.vlmModel || "qwen2.5vl:7b";
   document.getElementById("face-detection").checked = config.faceDetection !== false;
+  const faceScanToggle = document.getElementById("face-scan-toggle");
+  if (faceScanToggle) faceScanToggle.checked = config.faceDetection !== false;
   document.getElementById("password-detection").checked = config.passwordDetection !== false;
   document.getElementById("pii-detection").checked = config.piiDetection !== false;
   if (config.userProfile !== undefined && config.userProfile !== null) {
@@ -147,7 +149,6 @@ function setupConfigListeners() {
   const inputs = [
     { id: "vlm-endpoint", key: "vlmEndpoint" },
     { id: "vlm-model", key: "vlmModel" },
-    { id: "face-detection", key: "faceDetection" },
     { id: "password-detection", key: "passwordDetection" },
     { id: "pii-detection", key: "piiDetection" },
   ];
@@ -155,6 +156,19 @@ function setupConfigListeners() {
     const el = document.getElementById(id);
     el.addEventListener("change", () => {
       chrome.runtime.sendMessage({ type: "SET_CONFIG", config: { [key]: el.type === "checkbox" ? el.checked : el.value } });
+    });
+  }
+  const faceIds = ["face-detection", "face-scan-toggle"];
+  for (const id of faceIds) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.addEventListener("change", () => {
+      const on = el.checked;
+      for (const otherId of faceIds) {
+        const other = document.getElementById(otherId);
+        if (other && other !== el) other.checked = on;
+      }
+      chrome.runtime.sendMessage({ type: "SET_CONFIG", config: { faceDetection: on } });
     });
   }
   document.getElementById("vlm-api-key").addEventListener("change", (e) => {
@@ -478,26 +492,48 @@ fillBtn.addEventListener("click", async () => {
   finally { fillBtn.disabled = false; scanBtn.disabled = false; runBtn.disabled = false; }
 });
 
-async function runPrivacyScan() {
+async function runPrivacyScan(opts = {}) {
+  const forceFaces = opts.forceFaces === true;
   scanBtn.disabled = true; fillBtn.disabled = true; runBtn.disabled = true; clearStatus(); previewWrap.classList.remove("visible");
   setPipeline("capture", { includeVlm: false }); setStatus("Capturing viewport and running local redaction...");
   try {
     setPipeline("redact", { includeVlm: false });
-    const result = await withStuckHint(() => chrome.runtime.sendMessage({ type: "SCAN_AND_OVERLAY" }), "Still scanning...");
+    const result = await withStuckHint(
+      () => chrome.runtime.sendMessage({ type: "SCAN_AND_OVERLAY", forceFaces }),
+      "Still scanning..."
+    );
     if (result.error) { setPipeline(null); setStatus(formatAgentError(result.errorCode || "UNKNOWN", result.error), "error"); }
     else { if (result.receipt) showReceipt(result.receipt); showSanitizedPreview(result.sanitizedImage); setPipeline(null);
       const faces = result.receipt?.masked?.faces || 0; const fields = result.fieldCount || 0;
-      setStatus(`Secured ${fields} field(s) + ${faces} face(s).`, fields > 0 || faces > 0 ? "success" : "active");
+      const facesOn = forceFaces || document.getElementById("face-scan-toggle")?.checked !== false;
+      if (facesOn) {
+        setStatus(`Secured ${fields} field(s) + ${faces} face(s).`, fields > 0 || faces > 0 ? "success" : "active");
+      } else {
+        setStatus(`Secured ${fields} field(s). Faces not scanned (toggle off).`, fields > 0 ? "success" : "active");
+      }
     }
   } catch (err) { setPipeline(null); setStatus(formatRuntimeDisconnect(err), "error"); }
   finally { scanBtn.disabled = false; fillBtn.disabled = false; runBtn.disabled = false; }
 }
 
-scanBtn.addEventListener("click", runPrivacyScan);
-document.getElementById("scan-faces-page-btn")?.addEventListener("click", () => {
+scanBtn.addEventListener("click", () => runPrivacyScan());
+
+function enableFaceScanToggles() {
+  const fillToggle = document.getElementById("face-scan-toggle");
+  const settingsToggle = document.getElementById("face-detection");
+  if (fillToggle) fillToggle.checked = true;
+  if (settingsToggle) settingsToggle.checked = true;
+  chrome.runtime.sendMessage({ type: "SET_CONFIG", config: { faceDetection: true } }).catch(() => {});
+}
+
+function scanFacesNow() {
+  enableFaceScanToggles();
   document.querySelector('.tab[data-tab="fill"]')?.click();
-  return runPrivacyScan();
-});
+  return runPrivacyScan({ forceFaces: true });
+}
+
+document.getElementById("scan-faces-page-btn")?.addEventListener("click", scanFacesNow);
+document.getElementById("scan-faces-now-btn")?.addEventListener("click", scanFacesNow);
 
 runBtn.addEventListener("click", async () => {
   const task = document.getElementById("task-input").value.trim();

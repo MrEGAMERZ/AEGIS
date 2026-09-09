@@ -21,6 +21,12 @@
     .header h1 { font-size: 15px; font-weight: 700; color: #0f172a; }
     .header .badge { font-size: 9px; background: #dbeafe; color: #1d4ed8; padding: 2px 7px; border-radius: 10px; font-weight: 700; }
     .header-actions { display: flex; gap: 4px; }
+    .face-scan-row {
+      margin-top: 8px; padding: 8px 10px; background: #ffffff;
+      border: 1px solid #e2e8f0; border-radius: 8px;
+    }
+    .face-scan-row label { margin: 0; align-items: flex-start; }
+    body.dark-mode .face-scan-row { background: #0f172a; border-color: #334155; }
     .icon-btn {
       width: 28px; height: 28px; border: none; background: #f1f5f9;
       border-radius: 6px; cursor: pointer; font-size: 13px;
@@ -265,7 +271,17 @@
         <button class="btn-sm" id="scan-btn" style="background:#2563eb; color:#fff; border-color:#2563eb; font-weight:600;">Privacy Scan</button>
         <button class="btn-sm" id="fill-btn" style="background:#2563eb; color:#fff; border-color:#2563eb; font-weight:600;">Fill Form</button>
       </div>
-      <p class="hint" id="scan-faces-hint" style="margin-top:6px;">Privacy Scan is when faces get outlined. Daily browsing does not scan photos of other people.</p>
+      <p class="hint" id="fill-form-hint" style="margin-top:6px;">Fill Form uses your saved profile and document text on this device. It does not invent names.</p>
+      <div class="face-scan-row" id="face-scan-row">
+        <label>
+          <input type="checkbox" id="face-scan-toggle" checked>
+          <span>
+            Scan human faces
+            <span class="hint" style="display:block;">Browsing does not scan other people's faces. On = Privacy Scan and Run Agent outline faces. Off = passwords and PII fields only.</span>
+          </span>
+        </label>
+        <button class="btn-sm" id="scan-faces-now-btn" style="width:100%; margin-top:8px;">Scan faces now</button>
+      </div>
     </div>
 
     <!-- Voice Input -->
@@ -303,7 +319,7 @@
 <div id="drop-zone" class="drop-zone">
         <input type="file" id="doc-file-input" accept=".pdf,.docx,.txt,.json,.csv,.md,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.png,.jpg,.jpeg" style="display:none;">
         <div style="font-size:11px; color:#334155; font-weight:600;">Drop or click to upload</div>
-        <div style="font-size:9px; color:#94a3b8; margin-top:2px;">PDF, DOCX, TXT, JSON, CSV, MD — text never leaves this device</div>
+        <div style="font-size:9px; color:#94a3b8; margin-top:2px;">PDF is read as text on this device. Optional local AI structures fields. Remote AI never sees the file.</div>
       </div>
       <label style="margin-top:8px; display:flex; align-items:flex-start; gap:6px;">
         <input type="checkbox" id="analyze-with-ai" style="margin-top:2px;">
@@ -315,8 +331,7 @@
       <label style="display:flex; align-items:center; gap:6px;">
         <input type="checkbox" id="save-to-vault"> Keep in document vault
       </label>
-      <p class="hint" style="margin-top:4px;">Document text stays on this device — remote AI is refused.</p>
-    </div>
+      <p class="hint" style="margin-top:4px;">Extracted text stays on this device. Fill Form reads the vault + profile locally.</p>
       <div class="doc-preview" id="doc-preview-wrap" style="display:none;">
         <div class="card-title" style="margin-bottom:4px;">
           <span id="doc-preview-title" style="text-transform:none; letter-spacing:0;">Extracted text</span>
