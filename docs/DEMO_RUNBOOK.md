@@ -30,6 +30,8 @@ For VLM server details and measured latencies, see [`docs/SERVER_SETUP.md`](SERV
 
 **First Privacy scan latency:** allow **30–90 s** on a cold extension load (WASM compile + NER init). Subsequent scans are faster.
 
+**Idle browsing:** the content script may outline password/PII fields as you browse, but it does **not** run BlazeFace on photos of other people. Face boxes appear only on **Privacy Scan**, **Run Agent**, or an explicit **Scan faces now** / **Scan faces on this page** action (Fill tab or Settings).
+
 ---
 
 ## Quick checklist (print this)
@@ -42,8 +44,8 @@ For VLM server details and measured latencies, see [`docs/SERVER_SETUP.md`](SERV
 | 3 | `ollama serve` + `ollama pull qwen2.5vl:7b` + pre-warm | `ollama ps` shows model loaded; warm ping < 5 s |
 | 4 | Open TP08 via `file://` (or local static server) | Page renders; yellow “How to use” box visible |
 | 5 | Paste profile JSON → **Save Profile** | Popup status: “Profile saved locally.” |
-| 6 | **Scan page** | Overlays on face, passwords, card fields; receipt counts > 0 |
-| 7 | **Run Agent** (form fill or summarize) | Sanitized preview visible; fields fill or summary returned |
+| 6 | **Privacy Scan** (face toggle ON, or **Scan faces now**) | Overlays on face, passwords, card fields; receipt counts > 0 |
+| 7 | **Fill Form** or **Run Agent** | Fill Form: local profile/vault match first, then one local-VLM pass for leftovers; Run Agent: full multi-step loop |
 | 8 | On any extension **Reload** | **Refresh the TP08 tab**, then retry |
 
 **Expected latencies (dev machine, pre-warmed Ollama):**
@@ -146,11 +148,13 @@ Open the Aegis popup and confirm (defaults are pre-filled):
 
 | Field | Value |
 |---|---|
-| VLM Endpoint | `http://localhost:11434/v1/chat/completions` |
+| VLM Endpoint | `http://localhost:8000/v1/chat/completions` (local gateway — not Ollama `:11434` directly from Chrome) |
 | VLM Model | `qwen2.5vl:7b` |
-| API key | Leave empty for local Ollama |
+| API key | Leave empty for local Ollama via gateway |
 
-Leave **Face Detection**, **Password Fields**, and **Text PII** checked unless you are deliberately testing opt-out.
+**Face detection:** Fill tab **Scan human faces** toggle (synced with Settings → Face Detection). When ON, Privacy Scan and Run Agent outline faces; when OFF, only password/PII fields. **Scan faces now** (Fill tab) or **Scan faces on this page** (Settings) forces one face pass even if the toggle was off.
+
+Leave **Password Fields** and **Text PII** checked unless you are deliberately testing opt-out.
 
 ---
 
@@ -188,7 +192,7 @@ The page loads a face image from `eval/test-pages/assets/applicant-face.jpg` (re
 
 ---
 
-## 4. Save the profile
+## 4. Save the profile (and optional documents)
 
 1. Expand **How to use this page for Aegis testing** on TP08 (yellow box)  
 2. Copy the JSON from the readonly textarea **or** open `eval/fixtures/dummy-profile-ananya.json`  
@@ -196,6 +200,8 @@ The page loads a face image from `eval/test-pages/assets/applicant-face.jpg` (re
 4. Click **Save Profile** → status **Profile saved locally.**
 
 The profile intentionally **excludes** Aadhaar, PAN, Blood Group, and Emergency Contact — those fields are hallucination traps on TP08.
+
+**Optional document vault:** Fill tab → drop a **PDF** (or DOCX/TXT). Text is extracted **on-device** (vendored pdf.js, zero network). Optionally enable **Analyze with AI** (local model only, consent per upload) to structure fields; **Keep in document vault** stores scrubbed text locally. **Fill Form** reads saved profile + vault via `FILL_MATCHING_FIELDS` before any VLM call.
 
 ---
 
@@ -214,11 +220,25 @@ The profile intentionally **excludes** Aadhaar, PAN, Blood Group, and Emergency 
 - **Privacy receipt:** `faces > 0`, `piiSpans > 0`, password/card fields counted  
 - Status: `Privacy scan complete — N sensitive field(s) overlaid, M face(s) redacted.`
 
-Privacy scan does **not** call Ollama. This is the judge hero path when the VLM is offline.
+Privacy scan does **not** call the VLM. This is the judge hero path when the gateway/Ollama is offline.
+
+With **Scan human faces** OFF, Privacy Scan still masks passwords and NER PII but skips BlazeFace; status says faces were not scanned. Use **Scan faces now** to force a one-time face pass.
 
 ### Path A2 — Scan page (legacy label)
 
-Same as Path A — the button is labeled **Privacy scan** in the popup UI.
+Same as Path A — the button is labeled **Privacy Scan** in the popup UI.
+
+### Path B0 — Fill Form (local first, then one VLM batch)
+
+1. Focus the TP08 tab  
+2. Popup → **Fill Form** (Fill tab, blue button)
+
+**Pipeline:**
+
+1. `FILL_MATCHING_FIELDS` — maps saved profile + document vault text to visible form labels (no VLM)  
+2. If fields remain → **one** local-VLM agent loop (`CAPTURE_AND_SANITIZE` → execute actions; stops on `fill_many` or `done`)
+
+**Success:** status reports N fields filled locally; any leftovers filled via local AI. Trap fields stay empty. Requires gateway at `:8000` for the VLM step.
 
 ### Path B — Run Agent — form fill
 

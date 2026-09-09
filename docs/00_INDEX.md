@@ -29,6 +29,7 @@ A privacy-preserving browser extension that intercepts screen content before it 
 | Master Task Board | **Canonical outstanding-work board (OPEN WORK A–H)** — what is not done, owners, dependencies, acceptance criteria | [TASK_MASTER.md](TASK_MASTER.md) |
 | 01 | Requirements — functional/non-functional reqs, redaction taxonomy, MVP scope | [01_REQUIREMENTS.md](01_REQUIREMENTS.md) |
 | 02 | Architecture — components, data flow, sanitization pipeline, server contract | [02_ARCHITECTURE.md](02_ARCHITECTURE.md) |
+| Profile / Fill Form | PDF → on-device text → optional local AI; face-scan idle/toggle/on-demand; Fill Form client-then-local-VLM (code-accurate) | [PROFILE_FILL_ARCHITECTURE.md](PROFILE_FILL_ARCHITECTURE.md) |
 | 03 | Tech Stack & Models — model selection matrix, ADRs, latency budgets | [03_TECH_STACK_MODELS.md](03_TECH_STACK_MODELS.md) |
 | 04 | Evaluation & Test Plan — metrics, ground-truth test pages, instrumentation | [04_EVAL_TEST_PLAN.md](04_EVAL_TEST_PLAN.md) |
 | 05 | Milestones — phased build plan, dependencies, deliverables | [05_MILESTONES.md](05_MILESTONES.md) |
@@ -45,6 +46,7 @@ A privacy-preserving browser extension that intercepts screen content before it 
 | Doc | Purpose | Link |
 |---|---|---|
 | Document Upload Trust Boundary | What may leave the device for the PDF/DOCX upload + AI-structured profile feature, never-store enforcement points, verification checklist | [PRIVACY_DOC_UPLOAD.md](PRIVACY_DOC_UPLOAD.md) |
+| Profile, vault, Fill Form | Client vs server table: ingest, face scan, Fill Form. Companion to the trust-boundary doc | [PROFILE_FILL_ARCHITECTURE.md](PROFILE_FILL_ARCHITECTURE.md) |
 
 ## Operator, measurement, and backlog
 

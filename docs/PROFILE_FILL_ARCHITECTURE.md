@@ -1,0 +1,113 @@
+# Profile, document vault, and Fill Form — where work runs
+
+**SIH26171 (Aegis).** This is the code-accurate map of three product flows. Trust-boundary rules for document upload live in [PRIVACY_DOC_UPLOAD.md](PRIVACY_DOC_UPLOAD.md). Do not treat this as a roadmap: every box is a real function or storage key.
+
+Companion: [02_ARCHITECTURE.md](02_ARCHITECTURE.md) (sanitization + VLM agent). Storage shapes: [STORAGE_CONTRACT.md](STORAGE_CONTRACT.md). Vault cap in code is **5 docs / 256 KB** (`src/background/doc-vault.js`).
+
+---
+
+## 1. Who runs what
+
+| Work | Content script | Service worker | Offscreen | Local gateway `:8000` | Remote VLM |
+|---|---|---|---|---|---|
+| Idle browse overlays | DOM password/PII only (`includeFaces: false`) | — | — | — | **never** |
+| Privacy Scan / Run Agent (faces **on**) | `DOM_SCAN`, face overlays | `SCAN_AND_OVERLAY` / `CAPTURE_AND_SANITIZE` | BlazeFace + NER + mask | Agent leftovers / Run Agent if endpoint is loopback | Sanitized image + page structure + **profile** only. **No vault document text.** |
+| Privacy Scan / Run Agent (faces **off**) | Field overlays only | Same handlers; `faceDetection: false` | NER + password masks; **no** BlazeFace | Same as above | Same as above; face gate skipped |
+| “Scan faces now” | Same as faces-on scan | `SCAN_AND_OVERLAY` with `forceFaces: true` | BlazeFace + NER | — (scan has no VLM) | **never** |
+| PDF/DOCX/TXT extract | — | `EXTRACT_DOCUMENT_TEXT` (relay) | pdf.js / zip+XML / UTF-8 → `{ text }` | **never** (bytes never leave the device) | **never** |
+| Optional AI structure | — | `STRUCTURE_DOCUMENT_TEXT` (consent + loopback guard) | — | Extracted **text** only, after per-upload consent | **refused** (`isLocalVlmEndpoint`) |
+| Vault write | — | `ADD_DOC_TO_VAULT` → `aegisDocVault` | — | — | **never** |
+| Fill Form, step 1 | `DOM_SCAN` (`fillableFields`) | `FILL_MATCHING_FIELDS` — no VLM | — | — | **never** |
+| Fill Form, step 2 (leftovers) | Execute `type` / `fill_many` | `CAPTURE_AND_SANITIZE` | Sanitize capture | `DOCUMENT KNOWLEDGE` snippets **only if loopback** | Profile + sanitized image; vault cache cleared |
+
+Raw PDF/DOCX bytes never go to the gateway or a remote model. Never-store IDs (Aadhaar/PAN/licence/UPI/passport/bank) are stripped **before** local VLM structure and **before** vault write.
+
+---
+
+## 2. Document ingest — PDF → local text → optional local AI → device save
+
+```mermaid
+flowchart TD
+  A["Popup drop / file picker"] --> B["popup.js: File → base64"]
+  B --> C["SW: EXTRACT_DOCUMENT_TEXT"]
+  C --> D["Offscreen: pdf.js / DOCX / UTF-8"]
+  D --> E["{ text, format } only — bytes not echoed"]
+  E --> F["stripNeverStore on vault / STRUCTURE input"]
+  F --> G{"Keep in document vault?"}
+  G -->|yes| H["chrome.storage.local aegisDocVault\n≤5 docs / 256 KB"]
+  G -->|no| I["Preview + regex extractProfileFromText"]
+  F --> J{"Analyze with AI checked?\nper-upload consented:true"}
+  J -->|no| I
+  J -->|yes| K{"Resolved endpoint loopback?"}
+  K -->|no| L["STRUCTURE_REMOTE_REJECTED — no fetch"]
+  K -->|yes| M["POST text to localhost:8000\nnever Gemini / remote"]
+  M --> N["merge fields → userProfile / aegisProfiles"]
+  H --> O["Fill Form + local RAG-lite"]
+  N --> O
+```
+
+**Client vs server (honest):**
+
+- **On device:** parse, preview, regex profile fields, vault text, never-store strip.
+- **Local process the user runs:** optional structure via `http://localhost:<port>` (Chrome uses gateway `:8000`, not Ollama `:11434` directly).
+- **Not claimed:** “the document never exists outside the browser.” With consent it transits loopback to the local model. Remote Gemini **cannot** receive document text.
+
+---
+
+## 3. Face-scan policy — idle off / toggle / on-demand
+
+```
+Idle MutationObserver (every page)
+  → scanDOMForSensitiveFields + passwordDetection filter
+  → SHOW overlays with includeFaces: false
+  → no BlazeFace, no photo-alt “Secured” boxes
+
+Fill-tab toggle  ──sync──  Settings checkbox  →  chrome.storage.local faceDetection
+        │
+        ├─ OFF → Privacy Scan / Run Agent: includeFaces false, SANITIZE faceDetection false
+        └─ ON  → Privacy Scan / Run Agent: BlazeFace + face overlays (fail-closed before VLM)
+
+“Scan faces now” / Settings “Scan faces on this page”
+  → forceFaces: true for that SCAN_AND_OVERLAY (on-demand, one pipeline)
+```
+
+Everyday pages with many human faces do **not** all get “Secured”. That badge is for explicit scan / agent / “scan faces now”, and only while the face toggle is on (or force-scan).
+
+---
+
+## 4. Fill Form — client match, then local VLM leftovers
+
+```mermaid
+flowchart TD
+  A["Fill Form"] --> B["persistProfileFromTextarea / aegisProfiles → userProfile"]
+  B --> C["FILL_MATCHING_FIELDS — no VLM"]
+  C --> D["enrichProfileFromNotes + enrichProfileFromVaultText\nextract-profile.js on vault cache"]
+  D --> E["collectVerifiedTypeActions → wrapFillActions"]
+  E --> F{"matched visible inputs?"}
+  F -->|all matched| G["Execute fill_many / type — done"]
+  F -->|leftovers| H["CAPTURE_AND_SANITIZE"]
+  H --> I{"isLocalVlmEndpoint?"}
+  I -->|yes| J["System prompt: USER PROFILE +\nDOCUMENT KNOWLEDGE snippets"]
+  I -->|no| K["USER PROFILE only; vault cache cleared"]
+  J --> L["sanitizeAction / resolveProfileKey\nvalue must match profile or vault"]
+  K --> M["sanitizeAction profile-only\nJohn Doe rejected"]
+  L --> N["EXECUTE_ACTION"]
+  M --> N
+```
+
+**Step 1 (client):** maps labels to values already on device (structured profile, notes, regex fields from vault text). Invented names never enter this path.
+
+**Step 2 (optional VLM):** leftover empty controls. Still one existing pipeline (`CAPTURE_AND_SANITIZE`), not a second extractor. Typed values must survive `sanitizeAction` (`profileKey` / `vaultAllowsValue` / notes substring). Remote VLM must not receive vault document text (D9).
+
+---
+
+## 5. Storage keys (device)
+
+| Key | What | Leaves device? |
+|---|---|---|
+| `userProfile` / `aegisProfiles` | Field map (never-store IDs omitted) | Values may appear in a VLM **system prompt** (profile). Vault text does not ride along on remote. |
+| `aegisDocVault` | Pre-stripped document **text** | Local VLM snippets only; never remote; never raw PDF. |
+| `faceDetection` | Boolean, default on | No |
+| `docConsent` | Optional stored consent; popup also sends per-upload `consented` | No |
+
+Vault and profile are plaintext in `chrome.storage.local` (honest UI: stored unencrypted on this device).
