@@ -222,6 +222,36 @@ check("idle rescan does not send DETECT_FACES", (() => {
   return start !== -1 && end > start && !contentSrc.slice(start, end).includes("DETECT_FACES");
 })());
 
+console.log("\n7. Face-scan toggle + Fill Form copy (Fill tab)");
+check("Fill tab has Scan human faces toggle", popupHtml.includes('id="face-scan-toggle"') && popupHtml.includes("Scan human faces"));
+check("Fill tab copy says browsing does not scan other people's faces", /Browsing does not scan other people's faces/.test(popupHtml));
+check("Fill tab has Scan faces now control", popupHtml.includes('id="scan-faces-now-btn"'));
+check("popup syncs Fill-tab toggle with faceDetection storage", popupJs.includes("face-scan-toggle") && popupJs.includes("faceDetection"));
+check("Privacy Scan / Scan faces now send forceFaces on SCAN_AND_OVERLAY", popupJs.includes("forceFaces") && popupJs.includes("SCAN_AND_OVERLAY"));
+check("Fill Form copy says profile and document text stay on device", popupHtml.includes('id="fill-form-hint"') && /saved profile and document text on this device/.test(popupHtml));
+check("upload copy says PDF is read as text on this device", popupHtml.includes("PDF is read as text on this device"));
+check("overlay includeFaces follows faceDetectionEnabled", backgroundSrc.includes("includeFaces: faceDetectionEnabled"));
+check("FILL_MATCHING_FIELDS consumes vault via extract-profile", backgroundSrc.includes("enrichProfileFromVaultText"));
+check(
+  "Fill Form click sends exact FILL_MATCHING_FIELDS message",
+  /fillBtn\.addEventListener\([\s\S]*?sendMessage\(\{\s*type:\s*"FILL_MATCHING_FIELDS"\s*\}\)/.test(popupJs)
+);
+check("Settings tab has scan-faces-page-btn", popupHtml.includes('id="scan-faces-page-btn"'));
+check(
+  "scan-faces-page-btn wired to scanFacesNow (forceFaces path)",
+  popupJs.includes('getElementById("scan-faces-page-btn")') &&
+    popupJs.includes('getElementById("scan-faces-now-btn")') &&
+    /function scanFacesNow[\s\S]*runPrivacyScan\(\{\s*forceFaces:\s*true\s*\}\)/.test(popupJs)
+);
+check(
+  "runPrivacyScan forwards forceFaces on SCAN_AND_OVERLAY",
+  /runPrivacyScan[\s\S]*sendMessage\(\{\s*type:\s*"SCAN_AND_OVERLAY",\s*forceFaces\s*\}\)/.test(popupJs)
+);
+check(
+  "background SCAN_AND_OVERLAY honors forceFaces for faceDetection",
+  /handleScanAndOverlay[\s\S]*msg\.forceFaces === true[\s\S]*config\.faceDetection = true/.test(backgroundSrc)
+);
+
 console.log("");
 if (fail) {
   console.log(`${pass} passed, ${fail} failed.`);

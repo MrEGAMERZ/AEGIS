@@ -30,6 +30,7 @@
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { pathToFileURL } = require("url");
 
 const ROOT = path.join(__dirname, "..", "..");
 const VAULT_PATH = path.join(ROOT, "src", "background", "doc-vault.js");
@@ -161,27 +162,53 @@ const sandbox = {
   console,
 };
 
-vm.createContext(sandbox);
-vm.runInContext(vaultSrc, sandbox, { filename: VAULT_PATH });
-vm.runInContext(
-  backgroundSrc +
-    "\n;globalThis.__EXPORTS__ = { sanitizeAction, parseAction, normalizeProfile, isLocalVlmEndpoint, classifyError, handleStructureDocumentText, handleGetDocVault, handleCaptureAndSanitize, handleClearDocVault };",
-  sandbox,
-  { filename: BACKGROUND_PATH }
-);
+let V;
+let sanitizeAction;
+let parseAction;
+let normalizeProfile;
+let isLocalVlmEndpoint;
+let classifyError;
+let handleStructureDocumentText;
+let handleGetDocVault;
+let handleCaptureAndSanitize;
+let handleClearDocVault;
+let collectVerifiedTypeActions;
+let enrichProfileFromVaultText;
+let fieldsForFill;
 
-const V = sandbox.AegisDocVault;
-const {
-  sanitizeAction,
-  parseAction,
-  normalizeProfile,
-  isLocalVlmEndpoint,
-  classifyError,
-  handleStructureDocumentText,
-  handleGetDocVault,
-  handleCaptureAndSanitize,
-  handleClearDocVault,
-} = sandbox.__EXPORTS__;
+async function bootHarness() {
+  const extractProfileMod = await import(
+    pathToFileURL(path.join(ROOT, "src", "shared", "extract-profile.js")).href
+  );
+  sandbox.__extractProfileMod = extractProfileMod;
+  const patchedBackground = backgroundSrc.replace(
+    /const mod = await import\("\.\.\/shared\/extract-profile\.js"\);/g,
+    "const mod = globalThis.__extractProfileMod;"
+  );
+  vm.createContext(sandbox);
+  vm.runInContext(vaultSrc, sandbox, { filename: VAULT_PATH });
+  vm.runInContext(
+    patchedBackground +
+      "\n;globalThis.__EXPORTS__ = { sanitizeAction, parseAction, normalizeProfile, isLocalVlmEndpoint, classifyError, handleStructureDocumentText, handleGetDocVault, handleCaptureAndSanitize, handleClearDocVault, collectVerifiedTypeActions, enrichProfileFromVaultText, fieldsForFill };",
+    sandbox,
+    { filename: BACKGROUND_PATH }
+  );
+  V = sandbox.AegisDocVault;
+  ({
+    sanitizeAction,
+    parseAction,
+    normalizeProfile,
+    isLocalVlmEndpoint,
+    classifyError,
+    handleStructureDocumentText,
+    handleGetDocVault,
+    handleCaptureAndSanitize,
+    handleClearDocVault,
+    collectVerifiedTypeActions,
+    enrichProfileFromVaultText,
+    fieldsForFill,
+  } = sandbox.__EXPORTS__);
+}
 
 let pass = 0;
 let fail = 0;
@@ -232,6 +259,7 @@ function memStore(seed) {
 }
 
 async function main() {
+  await bootHarness();
   console.log("doc-vault.test.js — AI structuring + dynamic profile + RAG-lite\n");
 
   // ── A. STRUCTURE validation (pure) ─────────────────────────────────
@@ -684,8 +712,67 @@ async function main() {
     check("D9: local path still ALLOWS a vault-traceable 'type' value", accepted && accepted.source === "vault", JSON.stringify(accepted));
   }
 
-  // ── F. D6 — CLEAR_DOC_VAULT full purge ───────────────────────────
-  console.log("\nF. D6 — vault caps + CLEAR_DOC_VAULT purge");
+  // ── F. enrichProfileFromVaultText + FILL field mapping ───────────
+  console.log("\nF. enrichProfileFromVaultText runtime + vault-enriched fill");
+
+  {
+    V.setVaultTextCache([RESUME_TEXT]);
+    const enriched = await enrichProfileFromVaultText({});
+    check(
+      "enrichProfileFromVaultText extracts Email from vault cache",
+      enriched.Email === "ananya@example.com",
+      JSON.stringify(enriched)
+    );
+    check(
+      "enrichProfileFromVaultText extracts College from vault cache",
+      enriched.College && enriched.College.includes("IIT Bombay"),
+      JSON.stringify(enriched)
+    );
+    const withSaved = await enrichProfileFromVaultText({ Email: "saved@example.com" });
+    check(
+      "enrichProfileFromVaultText: saved profile wins on key conflict",
+      withSaved.Email === "saved@example.com" && withSaved.College && withSaved.College.includes("IIT Bombay"),
+      JSON.stringify(withSaved)
+    );
+    const emailField = [{ type: "text_input", label: "Email", selector: "#email_input" }];
+    const types = collectVerifiedTypeActions([], { userProfile: enriched, fields: emailField });
+    check(
+      "collectVerifiedTypeActions fills Email from vault-enriched profile",
+      types.length === 1 && types[0].selector === "#email_input" && types[0].value === "ananya@example.com",
+      JSON.stringify(types)
+    );
+    V.setVaultTextCache([]);
+  }
+
+  {
+    const fillable = [{ selector: "#uni_input", label: "University", type: "text_input" }];
+    const sensitive = [{ selector: "#pwd", label: "Password", type: "password_input" }];
+    const merged = fieldsForFill({ fields: sensitive, fillableFields: fillable });
+    check(
+      "fieldsForFill merges fillable controls with sensitive-only extras",
+      merged.length === 2 && merged[0].selector === "#uni_input" && merged[1].selector === "#pwd",
+      JSON.stringify(merged)
+    );
+  }
+
+  console.log("\nG. VLM fill prompt + RAG fieldLabels (static contract)");
+  check(
+    "CAPTURE system prompt instructs form fill via fill action",
+    backgroundSrc.includes('If the user asks you to fill a form') &&
+      backgroundSrc.includes('prefer ONE "fill" object')
+  );
+  check(
+    "RAG builds fieldLabels from fillFields labels",
+    backgroundSrc.includes("const fieldLabels = fillFields.map((f) => f && f.label).filter(Boolean).join")
+  );
+  check(
+    "RAG query joins task with fieldLabels for retrieveVaultSnippets",
+    backgroundSrc.includes("const ragQuery = [task, fieldLabels].filter(Boolean).join") &&
+      backgroundSrc.includes("retrieveVaultSnippets(docs, ragQuery")
+  );
+
+  // ── H. D6 — CLEAR_DOC_VAULT full purge ───────────────────────────
+  console.log("\nH. D6 — vault caps + CLEAR_DOC_VAULT purge");
 
   check("D6: VAULT_MAX_DOCS = 5", V.VAULT_MAX_DOCS === 5, `got ${V.VAULT_MAX_DOCS}`);
   check("D6: VAULT_MAX_BYTES = 256 KB", V.VAULT_MAX_BYTES === 256 * 1024, `got ${V.VAULT_MAX_BYTES}`);

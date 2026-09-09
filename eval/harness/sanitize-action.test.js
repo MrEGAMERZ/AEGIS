@@ -56,11 +56,11 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 vm.runInContext(
-  source + "\n;globalThis.__EXPORTS__ = { sanitizeAction, parseAction, normalizeProfile, classifyError };",
+  source + "\n;globalThis.__EXPORTS__ = { sanitizeAction, parseAction, normalizeProfile, classifyError, collectVerifiedTypeActions, fieldsForFill };",
   sandbox,
   { filename: SRC_PATH }
 );
-const { sanitizeAction, parseAction, normalizeProfile, classifyError } = sandbox.__EXPORTS__;
+const { sanitizeAction, parseAction, normalizeProfile, classifyError, collectVerifiedTypeActions, fieldsForFill } = sandbox.__EXPORTS__;
 
 const PAGE_FIELDS = [
   { type: "text_input", label: "Full Name", selector: "#name_input" },
@@ -515,6 +515,62 @@ const BATCH_CTX = {
   const raw = '{"action":"autofill_everything"}';
   const result = parseAction(raw, SHAPE_CTX);
   check("unknown action names still fail closed", result === null, JSON.stringify(result));
+}
+
+{
+  const types = collectVerifiedTypeActions([], BATCH_CTX);
+  const bySel = Object.fromEntries(types.map((t) => [t.selector, t.value]));
+  check(
+    "client FILL_MATCHING_FIELDS maps profile onto visible fields with no VLM seed",
+    types.length === 3 &&
+      bySel["#name_input"] === "Alice Smith" &&
+      bySel["#email_input"] === "alice@example.com" &&
+      bySel["#title_input"] === "Software Engineer",
+    JSON.stringify(types)
+  );
+}
+
+check(
+  "FILL_MATCHING_FIELDS enriches from vault text via extract-profile",
+  /handleFillMatchingFields[\s\S]*enrichProfileFromVaultText/.test(source) &&
+    /async function enrichProfileFromVaultText[\s\S]*extract-profile\.js/.test(source)
+);
+
+// ── 6. fieldsForFill — sensitive + fillable merge (DOM_SCAN contract) ───────
+
+{
+  const sensitive = [{ selector: "#pwd", label: "Password", type: "password_input" }];
+  const merged = fieldsForFill({ fields: sensitive, fillableFields: [] });
+  check(
+    "fieldsForFill: empty fillableFields → sensitive list only",
+    merged.length === 1 && merged[0].selector === "#pwd",
+    JSON.stringify(merged)
+  );
+}
+
+{
+  const fillable = [{ selector: "#name", label: "Full Name", type: "text_input" }];
+  const sensitive = [{ selector: "#pwd", label: "Password", type: "password_input" }];
+  const merged = fieldsForFill({ fields: sensitive, fillableFields: fillable });
+  check(
+    "fieldsForFill: merges fillable first then extra sensitive selectors",
+    merged.length === 2 && merged[0].selector === "#name" && merged[1].selector === "#pwd",
+    JSON.stringify(merged)
+  );
+}
+
+{
+  const fillable = [{ selector: "#name", label: "Full Name", type: "text_input" }];
+  const sensitive = [
+    { selector: "#name", label: "Full Name", type: "text_input" },
+    { selector: "#pwd", label: "Password", type: "password_input" },
+  ];
+  const merged = fieldsForFill({ fields: sensitive, fillableFields: fillable });
+  check(
+    "fieldsForFill: dedupes overlapping selector (no duplicate name field)",
+    merged.length === 2 && merged.filter((f) => f.selector === "#name").length === 1,
+    JSON.stringify(merged)
+  );
 }
 
 console.log(`\n${pass}/${pass + fail} passed, ${fail} failed.`);
