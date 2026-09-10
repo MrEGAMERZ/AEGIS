@@ -1,5 +1,7 @@
 # Aegis — On-device Visual Perception for Light-weight Browser Agents
 
+Public overview and install path: **[README.md](../README.md)** (repo root).
+
 ## Project Overview
 
 A privacy-preserving browser extension that intercepts screen content before it leaves the device, runs local vision inference to detect and redact sensitive elements (faces, passwords, PII text), and sends only a sanitized version to a cloud VLM for agentic action.
