@@ -106,6 +106,15 @@
     .vault-list { font-size: 11px; color: #475569; margin-top: 8px; }
     .vault-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid #e2e8f0; }
     .vault-row:last-child { border-bottom: none; }
+    .doc-save-card {
+      margin-top: 10px; padding: 10px; background: #eff6ff; border: 1px solid #bfdbfe;
+      border-radius: 8px;
+    }
+    .field-preview { max-height: 140px; overflow-y: auto; margin: 8px 0; }
+    .fp-row { display: flex; gap: 8px; font-size: 12px; padding: 4px 0; border-bottom: 1px solid #dbeafe; }
+    .fp-row:last-child { border-bottom: none; }
+    .fp-key { color: #64748b; min-width: 92px; flex-shrink: 0; font-weight: 600; }
+    .fp-val { color: #0f172a; word-break: break-word; }
 
     .drop-zone {
       border: 2px dashed #e2e8f0; border-radius: 8px; padding: 16px; text-align: center;
@@ -144,6 +153,10 @@
     body.dark-mode .p-row input { background: #0f172a; color: #f1f5f9; border-color: #334155; }
     body.dark-mode .drop-zone { background: #0f172a; border-color: #334155; }
     body.dark-mode .doc-preview-text { background: #0f172a; border-color: #334155; color: #e2e8f0; }
+    body.dark-mode .doc-save-card { background: #0f172a; border-color: #1d4ed8; }
+    body.dark-mode .fp-row { border-color: #334155; }
+    body.dark-mode .fp-key { color: #94a3b8; }
+    body.dark-mode .fp-val { color: #f1f5f9; }
     body.dark-mode label { color: #cbd5e1; }
     body.dark-mode .model-status { background: #1e293b; border-color: #334155; color: #94a3b8; }
     body.dark-mode .vault-row { border-color: #334155; }
@@ -212,18 +225,14 @@
       <div id="drop-zone" class="drop-zone">
         <input type="file" id="doc-file-input" accept=".pdf,.docx,.txt,.json,.csv,.md,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;">
         <div style="font-size:12px; color:#334155; font-weight:600;">Drop or click to upload</div>
-        <div style="font-size:10px; color:#94a3b8; margin-top:4px;">Read on this device. Local AI turns it into profile fields.</div>
+        <div style="font-size:10px; color:#94a3b8; margin-top:4px;">Read on this device. Review fields, then Save to your profile and local knowledge.</div>
       </div>
       <label style="margin-top:8px;">
         <input type="checkbox" id="analyze-with-ai" checked>
         <span>
           Structure with local AI
-          <span class="hint" style="display:block;">Sends extracted text only to http://localhost. Remote AI is blocked.</span>
+          <span class="hint" style="display:block;">Sends extracted text only to http://localhost. Remote AI is blocked. Nothing is stored until you Save.</span>
         </span>
-      </label>
-      <label>
-        <input type="checkbox" id="save-to-vault" checked>
-        <span>Keep a copy in the document vault for later fill</span>
       </label>
       <div class="doc-preview" id="doc-preview-wrap" style="display:none;">
         <div class="card-title" style="margin-bottom:4px;">
@@ -232,6 +241,23 @@
         </div>
         <pre class="doc-preview-text" id="doc-preview-text"></pre>
       </div>
+      <div class="doc-save-card" id="doc-save-card" style="display:none;">
+        <div class="card-title" style="margin-bottom:4px;">
+          <span>Save this?</span>
+          <span class="hint">On this device only</span>
+        </div>
+        <p class="hint" style="display:block; margin-bottom:4px;">Save writes phone, email, and other fields into the list below, and keeps the document text as local knowledge for Fill Form.</p>
+        <div id="doc-field-preview" class="field-preview"></div>
+        <div class="btn-row">
+          <button class="btn-sm btn-accent" id="save-extracted-btn" type="button">Save</button>
+          <button class="btn-sm" id="discard-extracted-btn" type="button">Don't save</button>
+        </div>
+      </div>
+      <div class="card-title" style="margin-top:10px; margin-bottom:4px;">
+        <span>Local knowledge</span>
+        <span class="hint">Document text on this machine</span>
+      </div>
+      <p class="hint" style="display:block;">Saved text stays on this device so Fill Form — and later personal memory — can use it without uploading again.</p>
       <div id="vault-list" class="vault-list"></div>
     </div>
 

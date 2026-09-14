@@ -235,7 +235,8 @@ check("Settings has Scan faces on this page", popupHtml.includes('id="scan-faces
 check("popup persists faceDetection from Settings", popupJs.includes("face-detection") && popupJs.includes("faceDetection"));
 check("Privacy Scan / Scan faces send forceFaces on SCAN_AND_OVERLAY", popupJs.includes("forceFaces") && popupJs.includes("SCAN_AND_OVERLAY"));
 check("Fill Form copy says profile and documents stay on device", popupHtml.includes('id="fill-form-hint"') && /profile and documents you saved on this device/.test(popupHtml));
-check("upload copy says local AI structures fields", popupHtml.includes("Local AI turns it into profile fields"));
+check("upload copy asks to Save after review", /Review fields, then Save to your profile and local knowledge/.test(popupHtml));
+check("nothing stored until Save", /Nothing is stored until you Save/.test(popupHtml));
 check("overlay includeFaces follows faceDetectionEnabled", backgroundSrc.includes("includeFaces: faceDetectionEnabled"));
 check("FILL_MATCHING_FIELDS consumes vault via extract-profile", backgroundSrc.includes("enrichProfileFromVaultText"));
 check(

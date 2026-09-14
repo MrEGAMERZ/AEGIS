@@ -24,7 +24,7 @@ Raw PDF/DOCX bytes never go to the gateway or a remote model. Never-store IDs (A
 
 ---
 
-## 2. Document ingest — PDF → local text → optional local AI → device save
+## 2. Document ingest — PDF → local text → optional local AI → Save confirm → device save
 
 ```mermaid
 flowchart TD
@@ -32,16 +32,19 @@ flowchart TD
   B --> C["SW: EXTRACT_DOCUMENT_TEXT"]
   C --> D["Offscreen: pdf.js / DOCX / UTF-8"]
   D --> E["{ text, format } only — bytes not echoed"]
-  E --> F["stripNeverStore on vault / STRUCTURE input"]
-  F --> G{"Keep in document vault?"}
-  G -->|yes| H["chrome.storage.local aegisDocVault\n≤5 docs / 256 KB"]
-  G -->|no| I["Preview + regex extractProfileFromText"]
+  E --> F["stripNeverStore on STRUCTURE input"]
   F --> J{"Analyze with AI checked?\nper-upload consented:true"}
-  J -->|no| I
+  J -->|no| I["Preview + regex extractProfileFromText"]
   J -->|yes| K{"Resolved endpoint loopback?"}
   K -->|no| L["STRUCTURE_REMOTE_REJECTED — no fetch"]
   K -->|yes| M["POST text to localhost:8000\nnever Gemini / remote"]
-  M --> N["merge fields → userProfile / aegisProfiles"]
+  L --> I
+  M --> P["Review fields in RAM — nothing stored"]
+  I --> P
+  P --> Q{"User clicks Save?"}
+  Q -->|no| R["Discard — RAM only"]
+  Q -->|yes| N["merge fields → userProfile / aegisProfiles"]
+  Q -->|yes| H["chrome.storage.local aegisDocVault\n≤5 docs / 256 KB"]
   H --> O["Fill Form + local RAG-lite"]
   N --> O
 ```

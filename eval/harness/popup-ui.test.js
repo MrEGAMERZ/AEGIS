@@ -37,7 +37,9 @@ check("doc-file-input is on Profile tab", profileHtml.includes('id="doc-file-inp
 check("Fill tab has no drop-zone", !fillHtml.includes('id="drop-zone"'));
 check("PDF accepted on doc input", html.includes(".pdf") && html.includes('id="doc-file-input"'));
 check("analyze-with-ai defaults checked", /id="analyze-with-ai"[^>]*checked/.test(html));
-check("save-to-vault defaults checked", /id="save-to-vault"[^>]*checked/.test(html));
+check("save is an explicit post-extract button", html.includes('id="save-extracted-btn"') && html.includes('id="discard-extracted-btn"'));
+check("auto vault checkbox removed", !html.includes("save-to-vault"));
+check("Save prompt exists", html.includes('id="doc-save-card"') && html.includes('id="doc-field-preview"'));
 check("tour banner removed", !html.includes("tour-card"));
 check("voice mic removed from popup HTML", !html.includes("voice-start-btn"));
 check("Fill Form button present", html.includes('id="fill-btn"'));
@@ -49,6 +51,15 @@ check("falls back to extractProfileFromText", js.includes("extractProfileFromTex
 check("merges via toUserProfileFields", js.includes("toUserProfileFields"));
 check("Import file uses document pipeline", js.includes("handleUploadedFile(file)"));
 check("vault list refresh after save", js.includes("renderVaultList"));
+check("pending upload held in RAM until Save", js.includes("pendingUpload"));
+check("Save writes ADD_DOC_TO_VAULT", /function confirmSaveExtracted[\s\S]*ADD_DOC_TO_VAULT/.test(js));
+check("Save writes saveProfileData", /function confirmSaveExtracted[\s\S]*saveProfileData/.test(js));
+
+const extractStart = js.indexOf("async function handleUploadedFile");
+const extractEnd = js.indexOf("dropZone?.addEventListener");
+const extractFn = extractStart !== -1 && extractEnd > extractStart ? js.slice(extractStart, extractEnd) : "";
+check("extract path does not ADD_DOC_TO_VAULT", extractFn.includes("EXTRACT_DOCUMENT_TEXT") && !extractFn.includes("ADD_DOC_TO_VAULT"));
+check("extract path does not saveProfileData", extractFn.includes("EXTRACT_DOCUMENT_TEXT") && !extractFn.includes("saveProfileData"));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

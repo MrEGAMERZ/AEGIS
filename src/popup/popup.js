@@ -197,12 +197,6 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 function labelFor(k) { return KEY_LABELS[k] || k; }
 
-function mergeFieldsIntoProfile(profile, fields) {
-  const labeled = toUserProfileFields(fields || {});
-  Object.assign(profile, labeled);
-  return Object.keys(labeled).length;
-}
-
 function parseUserProfile(raw) {
   const text = raw.trim();
   if (text.startsWith("{") || text.startsWith("[")) {
@@ -498,16 +492,14 @@ runBtn.addEventListener("click", async () => {
 });
 
 // ── Document Drop ─────────────────────────────────────────────────
-// Every dropped file goes through the SAME on-device extraction pipeline
-// (popup → background → offscreen document → { text, format }), so PDFs and
-// DOCX files — which file.text() cannot read — extract exactly like text
-// formats. The extracted text is shown in a preview; profile fields are then
-// auto-extracted exactly as before (JSON auto-parses immediately; TXT/CSV/MD
-// keep their regex extraction; PDF/DOCX now work instead of failing).
+// Extract on-device, then ASK before anything is persisted. Save writes
+// structured fields into the Profile list and the document text into
+// aegisDocVault (local knowledge on this machine). Discard drops RAM only.
 const dropZone = document.getElementById("drop-zone");
 const fileInput = document.getElementById("doc-file-input");
 
 const MAX_PREVIEW_CHARS = 4000;
+let pendingUpload = null;
 
 function formatBytes(n) {
   if (!Number.isFinite(n)) return "";
@@ -538,6 +530,84 @@ function clearDocPreview() {
   if (wrap) wrap.style.display = "none";
 }
 
+function showFieldPreview(fields) {
+  const el = document.getElementById("doc-field-preview");
+  if (!el) return;
+  el.textContent = "";
+  const entries = Object.entries(fields || {}).sort((a, b) => a[0].localeCompare(b[0]));
+  if (!entries.length) {
+    el.innerHTML = '<div class="p-empty">No phone, email, or other fields found. Save still keeps the document text as local knowledge.</div>';
+    return;
+  }
+  for (const [key, val] of entries) {
+    const row = document.createElement("div");
+    row.className = "fp-row";
+    const k = document.createElement("span");
+    k.className = "fp-key";
+    k.textContent = key;
+    const v = document.createElement("span");
+    v.className = "fp-val";
+    v.textContent = String(val);
+    row.appendChild(k);
+    row.appendChild(v);
+    el.appendChild(row);
+  }
+}
+
+function showSavePrompt() {
+  const card = document.getElementById("doc-save-card");
+  if (card) card.style.display = "block";
+}
+
+function hideSavePrompt() {
+  pendingUpload = null;
+  const card = document.getElementById("doc-save-card");
+  if (card) card.style.display = "none";
+  const el = document.getElementById("doc-field-preview");
+  if (el) el.textContent = "";
+}
+
+async function confirmSaveExtracted() {
+  if (!pendingUpload) {
+    setStatus("Nothing to save. Drop a document first.", "warn");
+    return;
+  }
+  const { name, format, text, fields, usedAi, aiError } = pendingUpload;
+  const fieldCount = Object.keys(fields || {}).length;
+  const profile = await getProfile();
+  if (fieldCount) Object.assign(profile, fields);
+  await saveProfileData(profile);
+
+  const v = await chrome.runtime.sendMessage({
+    type: "ADD_DOC_TO_VAULT",
+    docName: name,
+    format,
+    text,
+  });
+  if (v?.error) {
+    setStatus(`Profile saved, but local knowledge failed: ${v.error}`, "warn");
+  }
+
+  await renderProfile();
+  await renderVaultList();
+  hideSavePrompt();
+  clearDocPreview();
+  document.querySelector('.tab[data-tab="profile"]')?.click();
+  const how = usedAi ? "Local AI" : "on-device extract";
+  const extra = aiError && !usedAi ? ` AI skipped: ${aiError}` : "";
+  const vaultOk = !v?.error;
+  setStatus(
+    `${how}: saved ${fieldCount} field(s) from ${name}.${vaultOk ? " Document text kept as local knowledge." : ""}${extra}`,
+    usedAi || !aiError ? "success" : "warn"
+  );
+}
+
+function discardExtracted() {
+  hideSavePrompt();
+  clearDocPreview();
+  setStatus("Not saved. Nothing stored on this device.", "active");
+}
+
 async function handleUploadedFile(file) {
   if (!file) return;
 
@@ -551,6 +621,7 @@ async function handleUploadedFile(file) {
     return;
   }
 
+  hideSavePrompt();
   clearDocPreview();
   setStatus(`Extracting text from ${file.name}…`, "active");
   try {
@@ -569,29 +640,12 @@ async function handleUploadedFile(file) {
     const text = String(res.text || "");
     showDocPreview(text, { format: res.format || format, name: file.name, size: file.size });
 
-    // ── AI structuring + local vault (backend contract) ─────────────
-    // The extracted TEXT (already produced on-device above) is sent ONLY to
-    // the LOCAL VLM via STRUCTURE_DOCUMENT_TEXT — the backend refuses remote
-    // endpoints before any request. Returned dynamic-key fields merge into the
-    // active profile. The vault (aegisDocVault) keeps a scrubbed copy locally
-    // for RAG-lite fill; nothing here ever leaves the device.
+    // Structure in RAM only. Persistence waits for confirmSaveExtracted.
+    // Extracted TEXT goes to the LOCAL VLM via STRUCTURE_DOCUMENT_TEXT —
+    // the backend refuses remote endpoints before any request.
     const analyzeChecked = document.getElementById("analyze-with-ai")?.checked !== false;
-    const toVault = document.getElementById("save-to-vault")?.checked !== false;
-
-    if (toVault) {
-      const v = await chrome.runtime.sendMessage({
-        type: "ADD_DOC_TO_VAULT",
-        docName: file.name,
-        format: res.format || format,
-        text,
-      });
-      if (v?.ok) await renderVaultList();
-      else if (v?.error) setStatus(`Vault: ${v.error}`, "warn");
-    }
-
-    const profile = await getProfile();
+    const profileFields = {};
     let usedAi = false;
-    let fieldCount = 0;
     let aiError = "";
 
     if (analyzeChecked) {
@@ -604,30 +658,33 @@ async function handleUploadedFile(file) {
       if (r?.error) {
         aiError = formatAgentError(r.errorCode || "UNKNOWN", r.error);
       } else {
-        fieldCount = mergeFieldsIntoProfile(profile, r.fields || {});
-        usedAi = fieldCount > 0;
+        Object.assign(profileFields, toUserProfileFields(r.fields || {}));
+        usedAi = Object.keys(profileFields).length > 0;
       }
     }
 
     if (!usedAi) {
-      fieldCount = mergeFieldsIntoProfile(profile, extractProfileFromText(text));
+      Object.assign(profileFields, toUserProfileFields(extractProfileFromText(text)));
     }
 
-    if (fieldCount > 0) {
-      await saveProfileData(profile);
-      renderProfile();
-      document.querySelector('.tab[data-tab="profile"]')?.click();
-      const how = usedAi ? "Local AI" : "on-device extract";
-      const extra = aiError && !usedAi ? ` AI skipped: ${aiError}` : "";
-      setStatus(`${how}: saved ${fieldCount} field(s) from ${file.name}.${toVault ? " Vault copy kept." : ""}${extra}`, usedAi || !aiError ? "success" : "warn");
-      return;
-    }
-
-    if (aiError) {
-      setStatus(aiError, "error");
-      return;
-    }
-    setStatus(`No profile fields found in ${file.name} (${text.length.toLocaleString()} chars extracted).`, "warn");
+    pendingUpload = {
+      name: file.name,
+      format: res.format || format,
+      size: file.size,
+      text,
+      fields: profileFields,
+      usedAi,
+      aiError,
+    };
+    showFieldPreview(profileFields);
+    showSavePrompt();
+    const n = Object.keys(profileFields).length;
+    const how = usedAi ? "Local AI" : "on-device extract";
+    const extra = aiError && !usedAi ? ` AI skipped: ${aiError}` : "";
+    setStatus(
+      `${how}: ${n} field(s) from ${file.name}. Review and click Save to keep them.${extra}`,
+      usedAi || !aiError ? "active" : "warn"
+    );
   } catch (err) {
     const msg = String(err && err.message ? err.message : err || "");
     if (/Receiving end does not exist|Could not establish connection|message port closed/i.test(msg)) {
@@ -643,6 +700,8 @@ fileInput?.addEventListener("change", (e) => { const f = e.target.files?.[0]; if
 dropZone?.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("dragover"); });
 dropZone?.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
 dropZone?.addEventListener("drop", (e) => { e.preventDefault(); dropZone.classList.remove("dragover"); const f = e.dataTransfer?.files?.[0]; if (f) handleUploadedFile(f); });
+document.getElementById("save-extracted-btn")?.addEventListener("click", () => confirmSaveExtracted());
+document.getElementById("discard-extracted-btn")?.addEventListener("click", discardExtracted);
 
 async function renderVaultList() {
   const el = document.getElementById("vault-list");
@@ -651,6 +710,10 @@ async function renderVaultList() {
   try {
     const res = await chrome.runtime.sendMessage({ type: "GET_DOC_VAULT" });
     const docs = Array.isArray(res?.docs) ? res.docs : [];
+    if (!docs.length) {
+      el.textContent = "No documents saved yet.";
+      return;
+    }
     for (const d of docs) {
       const row = document.createElement("div");
       row.className = "vault-row";

@@ -16,8 +16,8 @@ The extension may transmit **extracted text of the user's own uploaded document*
 - **F2 extraction:** offscreen pdf.js (lazy) / zip+DOCX XML / TXT → **text only**, no rendered doc image.
 - **F3 pre-strip:** `stripNeverStore(text)` BEFORE F4 and BEFORE vault write (**input-side strip**).
 - **F4 structuring:** `STRUCTURE_DOCUMENT_TEXT` → background → HTTP POST. **Only permitted device exit — loopback only**: `isLocalVlmEndpoint(resolved)` else refuse; then consent re-checked at fetch time (`consented === true` or `docConsent`); fail closed like `assertReadyForVlm`.
-- **F5 fields:** structured fields → `aegisProfiles[name]` + `userProfile` via shared `mergeIntoUserProfile()` (output strip = defense-in-depth).
-- **F6 vault:** `aegisDocVault` (pre-stripped text only; capped ≤5 docs / ≤256 KB; purge on revocation via `CLEAR_DOC_VAULT`).
+- **F5 fields:** structured fields stay in popup RAM until the user clicks **Save**. Then they write to `aegisProfiles[name]` + `userProfile` via `toUserProfileFields` + `saveProfileData` (output strip = defense-in-depth). **Don't save** persists nothing.
+- **F6 vault:** `aegisDocVault` is written only on that same **Save** click (pre-stripped text only; capped ≤5 docs / ≤256 KB; purge on revocation via `CLEAR_DOC_VAULT`). This is the on-device document-text store used by Fill Form and later personal knowledge.
 
 ## 3. Never-store: input AND output
 

@@ -1,6 +1,6 @@
 # Aegis Demo Runbook — Chrome E2E on TP08
 
-**LIVE CARD (real Chrome):** extension name is **AGs**. Load unpacked from **`dist/` only** (never the repo root). Preferred TP08: `http://127.0.0.1:8765/tp08-kitchen-sink-registration.html`. Popup → **Profile** → drop `eval/fixtures/Aegis-Demo-Profile-Mohammad-Rehan.pdf` (or Import `dummy-profile-rehan.json`). **Fill** → **Fill Form** (Mohammad Rehan, not John Doe). **Privacy Scan** on Fill; face scan is under **Settings**. Reload unpacked after every rebuild. One-pager: [`LIVE_DEMO.md`](LIVE_DEMO.md).
+**LIVE CARD (real Chrome):** extension name is **AGs**. Load unpacked from **`dist/` only** (never the repo root). Preferred TP08: `http://127.0.0.1:8765/tp08-kitchen-sink-registration.html`. Popup → **Profile** → drop `eval/fixtures/Aegis-Demo-Profile-Mohammad-Rehan.pdf` → review fields → **Save** (or Import `dummy-profile-rehan.json`). **Fill** → **Fill Form** (Mohammad Rehan, not John Doe). **Privacy Scan** on Fill; face scan is under **Settings**. Reload unpacked after every rebuild. One-pager: [`LIVE_DEMO.md`](LIVE_DEMO.md).
 
 **Audience:** judges, evaluators, and developers running the live demo.  
 **Goal:** load the extension from `dist/`, open TP08, and complete **Scan page** or **Run Agent** without hitting known footguns.  
@@ -203,7 +203,7 @@ The page loads a face image from `eval/test-pages/assets/applicant-face.jpg` (re
 
 The profile intentionally **excludes** Aadhaar, PAN, Blood Group, and Emergency Contact — those fields are hallucination traps on TP08.
 
-**Optional document vault:** Fill tab → drop a **PDF** (or DOCX/TXT). Text is extracted **on-device** (vendored pdf.js, zero network). Optionally enable **Analyze with AI** (local model only, consent per upload) to structure fields; **Keep in document vault** stores scrubbed text locally. **Fill Form** reads saved profile + vault via `FILL_MATCHING_FIELDS` before any VLM call.
+**Optional document upload:** Profile tab → drop a **PDF** (or DOCX/TXT). Text is extracted **on-device** (vendored pdf.js, zero network). Optionally **Structure with local AI** (localhost only). Nothing is stored until **Save**: fields go into the Profile list; document text stays in `aegisDocVault` as local knowledge. **Don't save** discards RAM only. **Fill Form** reads saved profile + vault via `FILL_MATCHING_FIELDS` before any VLM call.
 
 ---
 
