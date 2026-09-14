@@ -240,7 +240,7 @@ chrome.commands?.onCommand?.addListener(async (command) => {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus?.create({
     id: "aegis_autofill_context",
-    title: "Fill Form with Aegis Profile",
+    title: "Fill Form with AGs Profile",
     contexts: ["page", "editable"],
   });
 });
@@ -2004,7 +2004,7 @@ chrome.runtime.onInstalled.addListener(() => {
   try {
     chrome.contextMenus?.create?.({
       id: "aegis_autofill_context",
-      title: "Fill form from Aegis profile",
+      title: "Fill form from AGs profile",
       contexts: ["page", "editable"],
     });
   } catch {

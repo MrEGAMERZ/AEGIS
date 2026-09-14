@@ -1,9 +1,11 @@
 # Aegis Demo Runbook — Chrome E2E on TP08
 
+**LIVE CARD (real Chrome):** extension name is **AGs**. Load unpacked from **`dist/` only** (never the repo root). Preferred TP08: `http://127.0.0.1:8765/tp08-kitchen-sink-registration.html`. Popup → **Profile** → drop `eval/fixtures/Aegis-Demo-Profile-Mohammad-Rehan.pdf` (or Import `dummy-profile-rehan.json`). **Fill** → **Fill Form** (Mohammad Rehan, not John Doe). **Privacy Scan** on Fill; face scan is under **Settings**. Reload unpacked after every rebuild. One-pager: [`LIVE_DEMO.md`](LIVE_DEMO.md).
+
 **Audience:** judges, evaluators, and developers running the live demo.  
 **Goal:** load the extension from `dist/`, open TP08, and complete **Scan page** or **Run Agent** without hitting known footguns.  
 **Test page:** `eval/test-pages/tp08-kitchen-sink-registration.html`  
-**Profile fixture:** `eval/fixtures/dummy-profile-ananya.json`
+**Profile fixture:** `eval/fixtures/dummy-profile-rehan.json` + `eval/fixtures/Aegis-Demo-Profile-Mohammad-Rehan.pdf`
 
 For VLM server details and measured latencies, see [`docs/SERVER_SETUP.md`](SERVER_SETUP.md).
 

@@ -1,6 +1,12 @@
 // Popup script — Controls extension settings, voice, documents, profiles, and triggers agent
 
 import { toBase64, detectDocFormat, MAX_DOCUMENT_BYTES } from "../shared/file-helpers.js";
+import {
+  PROFILE_KEYS,
+  KEY_LABELS,
+  extractProfileFromText,
+  toUserProfileFields,
+} from "../shared/extract-profile.js";
 
 // ── Tab Navigation ────────────────────────────────────────────────
 document.querySelectorAll(".tab").forEach((tab) => {
@@ -105,14 +111,9 @@ async function loadConfig() {
   document.getElementById("vlm-endpoint").value = config.vlmEndpoint || "http://localhost:8000/v1/chat/completions";
   document.getElementById("vlm-model").value = config.vlmModel || "qwen2.5vl:7b";
   document.getElementById("face-detection").checked = config.faceDetection !== false;
-  const faceScanToggle = document.getElementById("face-scan-toggle");
-  if (faceScanToggle) faceScanToggle.checked = config.faceDetection !== false;
   document.getElementById("password-detection").checked = config.passwordDetection !== false;
   document.getElementById("pii-detection").checked = config.piiDetection !== false;
-  if (config.userProfile !== undefined && config.userProfile !== null) {
-    const el = document.getElementById("profile-input");
-    if (el) el.value = typeof config.userProfile === "string" ? config.userProfile : JSON.stringify(config.userProfile, null, 2);
-  }
+  // Profile fields render from aegisProfiles / userProfile via renderProfile().
   await loadApiKeyStatus();
   await syncGatewayEndpoint();
 }
@@ -158,19 +159,9 @@ function setupConfigListeners() {
       chrome.runtime.sendMessage({ type: "SET_CONFIG", config: { [key]: el.type === "checkbox" ? el.checked : el.value } });
     });
   }
-  const faceIds = ["face-detection", "face-scan-toggle"];
-  for (const id of faceIds) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    el.addEventListener("change", () => {
-      const on = el.checked;
-      for (const otherId of faceIds) {
-        const other = document.getElementById(otherId);
-        if (other && other !== el) other.checked = on;
-      }
-      chrome.runtime.sendMessage({ type: "SET_CONFIG", config: { faceDetection: on } });
-    });
-  }
+  document.getElementById("face-detection")?.addEventListener("change", (e) => {
+    chrome.runtime.sendMessage({ type: "SET_CONFIG", config: { faceDetection: e.target.checked } });
+  });
   document.getElementById("vlm-api-key").addEventListener("change", (e) => {
     const vlmApiKey = e.target.value;
     e.target.value = "";
@@ -204,47 +195,12 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
-// ── Profile Parsing ───────────────────────────────────────────────
-const PROFILE_KEYS = [
-  "fullName", "firstName", "lastName", "email", "phone", "dob", "gender",
-  "addressLine1", "addressLine2", "city", "state", "pincode", "country",
-  "nationality", "college", "rollNumber", "course", "branch", "guardianName",
-  "occupation", "annualIncome",
-];
-const KEY_LABELS = {
-  fullName: "Full name", firstName: "First name", lastName: "Last name",
-  email: "Email", phone: "Phone", dob: "Date of birth", gender: "Gender",
-  addressLine1: "Address line 1", addressLine2: "Address line 2",
-  city: "City", state: "State", pincode: "PIN code", country: "Country",
-  nationality: "Nationality", college: "College / institution",
-  rollNumber: "Roll number", course: "Course", branch: "Branch",
-  guardianName: "Guardian name", occupation: "Occupation", annualIncome: "Annual income",
-};
 function labelFor(k) { return KEY_LABELS[k] || k; }
 
-function extractProfileFromText(text) {
-  const extracted = {};
-  if (!text) return extracted;
-  try { const j = JSON.parse(text); for (const k of PROFILE_KEYS) { if (j[k]) extracted[k] = String(j[k]).trim(); else if (j[KEY_LABELS[k]]) extracted[k] = String(j[KEY_LABELS[k]]).trim(); } if (Object.keys(extracted).length > 0) return extracted; } catch {}
-  const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-  if (emailMatch) extracted.email = emailMatch[0];
-  const phoneMatch = text.match(/(?:\+91[\s-]?)?[6-9]\d{9}/);
-  if (phoneMatch) extracted.phone = phoneMatch[0].replace(/\D/g, "").slice(-10);
-  const dobMatch = text.match(/(?:DOB|Date of Birth|Birth\s*Date)[\s:]*(\d{2}[-/.]\d{2}[-/.]\d{4}|\d{4}[-/.]\d{2}[-/.]\d{2})/i);
-  if (dobMatch) extracted.dob = dobMatch[1];
-  const nameMatch = text.match(/(?:Full\s*Name|Name|Mera\s*naam|My\s*name\s*is)[\s:]*([A-Za-z\s]{3,35})/i);
-  if (nameMatch) { const n = nameMatch[1].replace(/hai|is|and|email|phone/gi, "").trim(); if (n.length >= 3) extracted.fullName = n; }
-  const cityMatch = text.match(/(?:City|Location|Rehta\s*hoon|Raho)[\s:]*([A-Za-z\s]{3,20})/i);
-  if (cityMatch) { const c = cityMatch[1].replace(/hai|in|is/gi, "").trim(); if (c) extracted.city = c; }
-  const stateMatch = text.match(/(?:State)[\s:]*([A-Za-z\s]{3,20})/i);
-  if (stateMatch) extracted.state = stateMatch[1].trim();
-  const pinMatch = text.match(/(?:PIN|Pincode|Zip)[\s:]*(\d{6})/i);
-  if (pinMatch) extracted.pincode = pinMatch[1];
-  const collegeMatch = text.match(/(?:College|University|Institution)[\s:]*([A-Za-z\s]{3,40})/i);
-  if (collegeMatch) extracted.college = collegeMatch[1].trim();
-  const incomeMatch = text.match(/(?:Income|Salary)[\s:]*(\d{5,10})/i);
-  if (incomeMatch) extracted.annualIncome = incomeMatch[1];
-  return extracted;
+function mergeFieldsIntoProfile(profile, fields) {
+  const labeled = toUserProfileFields(fields || {});
+  Object.assign(profile, labeled);
+  return Object.keys(labeled).length;
 }
 
 function parseUserProfile(raw) {
@@ -289,7 +245,7 @@ async function renderProfile() {
   const profileList = document.getElementById("profile-list");
   profileList.innerHTML = "";
   const entries = Object.keys(profile).filter((k) => k !== "_skipped").map((k) => [k, profile[k]]).sort((a, b) => a[0].localeCompare(b[0]));
-  if (entries.length === 0) { profileList.innerHTML = '<div class="p-empty">No details saved yet. Use Voice, Demo, or Upload!</div>'; }
+  if (entries.length === 0) { profileList.innerHTML = '<div class="p-empty">No details yet. Drop a PDF or text file above.</div>'; }
   for (const [key, val] of entries) {
     const row = document.createElement("div"); row.className = "p-row";
     const input = document.createElement("input"); input.type = "text"; input.value = typeof val === "object" ? val.value : val; input.placeholder = labelFor(key);
@@ -355,30 +311,29 @@ document.getElementById("export-profile-btn")?.addEventListener("click", async (
 });
 document.getElementById("import-profile-btn")?.addEventListener("click", () => document.getElementById("import-file-input")?.click());
 document.getElementById("import-file-input")?.addEventListener("change", async (e) => {
-  const file = e.target.files?.[0]; if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async (evt) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  e.target.value = "";
+  const format = detectDocFormat(file.name, file.type);
+  if (format === "json") {
     try {
-      const json = JSON.parse(evt.target.result); const data = json.data || json;
-      const profile = await getProfile();
-      for (const [k, v] of Object.entries(data)) { profile[k] = typeof v === "object" && v.value ? v : typeof v === "string" ? v : String(v); }
-      await saveProfileData(profile); setStatus(`Imported from ${file.name}!`, "success"); renderProfile();
-    } catch { setStatus("Invalid JSON file.", "error"); }
-  };
-  reader.readAsText(file);
-});
-
-// ── Quick Task Chips ──────────────────────────────────────────────
-document.getElementById("chip-loan")?.addEventListener("click", () => { const el = document.getElementById("task-input"); if (el) el.value = "Fill out this loan application form"; });
-document.getElementById("chip-contact")?.addEventListener("click", () => { const el = document.getElementById("task-input"); if (el) el.value = "Fill in the personal details"; });
-
-// ── Save Profile (textarea) ───────────────────────────────────────
-document.getElementById("save-profile-btn").addEventListener("click", async () => {
-  const raw = document.getElementById("profile-input").value;
-  const result = parseUserProfile(raw);
-  if (!result.profile) { setStatus(result.error, "error"); return; }
-  await chrome.runtime.sendMessage({ type: "SET_CONFIG", config: { userProfile: result.profile } });
-  setStatus("Profile saved.", "success"); setTimeout(() => clearStatus(), 2000);
+      const json = JSON.parse(await file.text());
+      const data = json.data || json;
+      if (data && typeof data === "object" && !Array.isArray(data) && (json.profileName || json.data)) {
+        const profile = await getProfile();
+        for (const [k, v] of Object.entries(data)) {
+          profile[k] = typeof v === "object" && v && v.value ? v.value : typeof v === "string" ? v : String(v);
+        }
+        await saveProfileData(profile);
+        setStatus(`Imported ${file.name}.`, "success");
+        renderProfile();
+        return;
+      }
+    } catch {
+      // fall through to the document pipeline
+    }
+  }
+  await handleUploadedFile(file);
 });
 
 // ── Error Formatting ──────────────────────────────────────────────
@@ -401,7 +356,7 @@ function formatAgentError(code, message) {
   if (code === "STRUCTURE_TOO_LARGE") return `[${code}] ${t}`;
   if (code === "STRUCTURE_RATE_LIMITED") return `[${code}] ${t}`;
   if (code === "STRUCTURE_CONSENT_REQUIRED") {
-    return "[consent] Re-enable 'Analyze with AI' and try again.";
+    return "[consent] Check 'Structure with local AI' and try again.";
   }
   return `[${code}] ${t}`;
 }
@@ -505,7 +460,7 @@ async function runPrivacyScan(opts = {}) {
     if (result.error) { setPipeline(null); setStatus(formatAgentError(result.errorCode || "UNKNOWN", result.error), "error"); }
     else { if (result.receipt) showReceipt(result.receipt); showSanitizedPreview(result.sanitizedImage); setPipeline(null);
       const faces = result.receipt?.masked?.faces || 0; const fields = result.fieldCount || 0;
-      const facesOn = forceFaces || document.getElementById("face-scan-toggle")?.checked !== false;
+      const facesOn = forceFaces || document.getElementById("face-detection")?.checked !== false;
       if (facesOn) {
         setStatus(`Secured ${fields} field(s) + ${faces} face(s).`, fields > 0 || faces > 0 ? "success" : "active");
       } else {
@@ -519,9 +474,7 @@ async function runPrivacyScan(opts = {}) {
 scanBtn.addEventListener("click", () => runPrivacyScan());
 
 function enableFaceScanToggles() {
-  const fillToggle = document.getElementById("face-scan-toggle");
   const settingsToggle = document.getElementById("face-detection");
-  if (fillToggle) fillToggle.checked = true;
   if (settingsToggle) settingsToggle.checked = true;
   chrome.runtime.sendMessage({ type: "SET_CONFIG", config: { faceDetection: true } }).catch(() => {});
 }
@@ -533,7 +486,6 @@ function scanFacesNow() {
 }
 
 document.getElementById("scan-faces-page-btn")?.addEventListener("click", scanFacesNow);
-document.getElementById("scan-faces-now-btn")?.addEventListener("click", scanFacesNow);
 
 runBtn.addEventListener("click", async () => {
   const task = document.getElementById("task-input").value.trim();
@@ -543,43 +495,6 @@ runBtn.addEventListener("click", async () => {
   runBtn.disabled = true; scanBtn.disabled = true; fillBtn.disabled = true; clearStatus(); previewWrap.classList.remove("visible");
   try { await runAgentLoop(task); } catch (err) { setPipeline(null); setStatus(formatRuntimeDisconnect(err), "error"); }
   finally { runBtn.disabled = false; scanBtn.disabled = false; fillBtn.disabled = false; }
-});
-
-// ── Voice Input ───────────────────────────────────────────────────
-const voiceStartBtn = document.getElementById("voice-start-btn");
-const voiceLangSelect = document.getElementById("voice-lang-select");
-const voiceBox = document.getElementById("voice-box");
-const voiceTranscript = document.getElementById("voice-transcript");
-let recognition = null; let isRecording = false;
-
-function initVoiceRecognition() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) { if (voiceStartBtn) voiceStartBtn.disabled = true; return null; }
-  const rec = new SpeechRecognition(); rec.continuous = false; rec.interimResults = true;
-  rec.onstart = () => { isRecording = true; voiceStartBtn?.classList.add("recording"); if (voiceBox) voiceBox.style.display = "block"; if (voiceTranscript) voiceTranscript.textContent = "Listening..."; };
-  rec.onresult = (e) => { let t = ""; for (let i = e.resultIndex; i < e.results.length; ++i) t += e.results[i][0].transcript; if (voiceTranscript) voiceTranscript.textContent = `"${t}"`; if (e.results[e.results.length - 1].isFinal) processVoiceTranscript(t); };
-  rec.onerror = (e) => { isRecording = false; voiceStartBtn?.classList.remove("recording"); if (voiceTranscript) voiceTranscript.textContent = `Error: ${e.error}`; };
-  rec.onend = () => { isRecording = false; voiceStartBtn?.classList.remove("recording"); };
-  return rec;
-}
-
-async function processVoiceTranscript(speechText) {
-  const extracted = extractProfileFromText(speechText);
-  if (Object.keys(extracted).length > 0) {
-    const profile = await getProfile(); Object.assign(profile, extracted); await saveProfileData(profile);
-    setStatus(`Voice: extracted ${Object.keys(extracted).length} field(s)!`, "success"); renderProfile();
-  } else {
-    const el = document.getElementById("task-input"); if (el) el.value = speechText;
-    setStatus("Voice: used as task.", "active");
-  }
-}
-
-voiceStartBtn?.addEventListener("click", async () => {
-  try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); s.getTracks().forEach((t) => t.stop()); }
-  catch { chrome.tabs.create({ url: chrome.runtime.getURL("src/voice/voice.html") }); return; }
-  if (isRecording) { recognition?.stop(); return; }
-  if (!recognition) recognition = initVoiceRecognition();
-  if (recognition) { recognition.lang = voiceLangSelect?.value || "en-US"; try { recognition.start(); } catch { chrome.tabs.create({ url: chrome.runtime.getURL("src/voice/voice.html") }); } }
 });
 
 // ── Document Drop ─────────────────────────────────────────────────
@@ -660,8 +575,8 @@ async function handleUploadedFile(file) {
     // endpoints before any request. Returned dynamic-key fields merge into the
     // active profile. The vault (aegisDocVault) keeps a scrubbed copy locally
     // for RAG-lite fill; nothing here ever leaves the device.
-    const analyzeChecked = document.getElementById("analyze-with-ai")?.checked === true;
-    const toVault = document.getElementById("save-to-vault")?.checked === true;
+    const analyzeChecked = document.getElementById("analyze-with-ai")?.checked !== false;
+    const toVault = document.getElementById("save-to-vault")?.checked !== false;
 
     if (toVault) {
       const v = await chrome.runtime.sendMessage({
@@ -670,43 +585,49 @@ async function handleUploadedFile(file) {
         format: res.format || format,
         text,
       });
-      if (v?.ok) setStatus(`Saved "${file.name}" to vault (${v.vault?.count ?? 0} docs).`, "success");
-      else setStatus(`Vault: ${v?.error || "failed"}`, "error");
+      if (v?.ok) await renderVaultList();
+      else if (v?.error) setStatus(`Vault: ${v.error}`, "warn");
     }
 
+    const profile = await getProfile();
+    let usedAi = false;
+    let fieldCount = 0;
+    let aiError = "";
+
     if (analyzeChecked) {
-      setStatus(`Analyzing ${file.name} with local AI…`, "active");
-      // Per-upload consent: the backend refuses STRUCTURE_DOCUMENT_TEXT unless
-      // msg.consented === true (or an explicit docConsent storage flag). The
-      // popup never persists this — every upload starts from "off", so consent
-      // is explicit per upload and revocable by simply leaving the box clear.
+      setStatus(`Structuring ${file.name} with local AI…`, "active");
       const r = await chrome.runtime.sendMessage({
         type: "STRUCTURE_DOCUMENT_TEXT",
         text,
-        consented: analyzeChecked,
+        consented: true,
       });
-      if (r?.error) { setStatus(formatAgentError(r.errorCode || "UNKNOWN", r.error), "error"); return; }
-      const fields = r.fields || {};
-      const keys = Object.keys(fields);
-      if (keys.length === 0) { setStatus(`AI found no fields in ${file.name}.`, "warn"); return; }
-      const profile = await getProfile();
-      let added = 0;
-      for (const [k, v] of Object.entries(fields)) { if (profile[k] === undefined) added++; profile[k] = v; }
-      await saveProfileData(profile); renderProfile();
-      setStatus(`AI extracted ${keys.length} field(s) from ${file.name}${toVault ? " (also in vault)" : ""}.`, "success");
-      return; // the AI path is authoritative — skip the legacy regex merge
+      if (r?.error) {
+        aiError = formatAgentError(r.errorCode || "UNKNOWN", r.error);
+      } else {
+        fieldCount = mergeFieldsIntoProfile(profile, r.fields || {});
+        usedAi = fieldCount > 0;
+      }
     }
 
-    const extracted = extractProfileFromText(text);
-    if (Object.keys(extracted).length === 0) {
-      setStatus(`No profile fields found in ${file.name} (${text.length.toLocaleString()} chars extracted).`, "warn");
+    if (!usedAi) {
+      fieldCount = mergeFieldsIntoProfile(profile, extractProfileFromText(text));
+    }
+
+    if (fieldCount > 0) {
+      await saveProfileData(profile);
+      renderProfile();
+      document.querySelector('.tab[data-tab="profile"]')?.click();
+      const how = usedAi ? "Local AI" : "on-device extract";
+      const extra = aiError && !usedAi ? ` AI skipped: ${aiError}` : "";
+      setStatus(`${how}: saved ${fieldCount} field(s) from ${file.name}.${toVault ? " Vault copy kept." : ""}${extra}`, usedAi || !aiError ? "success" : "warn");
       return;
     }
-    const profile = await getProfile();
-    Object.assign(profile, extracted);
-    await saveProfileData(profile);
-    setStatus(`Extracted ${Object.keys(extracted).length} field(s) from ${file.name}!`, "success");
-    renderProfile();
+
+    if (aiError) {
+      setStatus(aiError, "error");
+      return;
+    }
+    setStatus(`No profile fields found in ${file.name} (${text.length.toLocaleString()} chars extracted).`, "warn");
   } catch (err) {
     const msg = String(err && err.message ? err.message : err || "");
     if (/Receiving end does not exist|Could not establish connection|message port closed/i.test(msg)) {
@@ -723,10 +644,29 @@ dropZone?.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.cla
 dropZone?.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
 dropZone?.addEventListener("drop", (e) => { e.preventDefault(); dropZone.classList.remove("dragover"); const f = e.dataTransfer?.files?.[0]; if (f) handleUploadedFile(f); });
 
-// ── Dashboard Link ────────────────────────────────────────────────
-document.getElementById("dashboard-btn")?.addEventListener("click", () => {
-  chrome.tabs.create({ url: chrome.runtime.getURL("src/dashboard/dashboard.html") });
-});
+async function renderVaultList() {
+  const el = document.getElementById("vault-list");
+  if (!el) return;
+  el.textContent = "";
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "GET_DOC_VAULT" });
+    const docs = Array.isArray(res?.docs) ? res.docs : [];
+    for (const d of docs) {
+      const row = document.createElement("div");
+      row.className = "vault-row";
+      const name = document.createElement("span");
+      name.textContent = String(d.docName || d.name || "document");
+      const meta = document.createElement("span");
+      const chars = d.charCount ?? d.chars;
+      meta.textContent = chars ? `${chars} chars` : "";
+      row.appendChild(name);
+      row.appendChild(meta);
+      el.appendChild(row);
+    }
+  } catch {
+    el.textContent = "";
+  }
+}
 
 // ── Theme Switcher ────────────────────────────────────────────────
 const themeToggleBtn = document.getElementById("theme-toggle-btn");
@@ -740,36 +680,10 @@ themeToggleBtn?.addEventListener("click", async () => {
   await chrome.storage.local.set({ aegisTheme: isDark ? "dark" : "light" });
 });
 
-// ── Onboarding Tour ───────────────────────────────────────────────
-const TOUR_STEPS = [
-  { title: "Welcome to Aegis!", body: "Privacy Scan outlines faces and redacts PII on-device before any AI analysis. Daily browsing does not scan photos of other people." },
-  { title: "Setup Your Profile", body: "Click Demo or speak in your native language to save details." },
-  { title: "Instant Autofill", body: "Open any web form and press Ctrl+Shift+F or click Fill Form!" },
-];
-let currentTourStep = 1;
-async function initTour() {
-  const stored = await chrome.storage.local.get("aegisTourDone");
-  if (!stored.aegisTourDone) { document.getElementById("tour-card").style.display = "block"; updateTourUI(); }
-}
-function updateTourUI() {
-  const step = TOUR_STEPS[currentTourStep - 1];
-  document.getElementById("tour-title").textContent = step.title;
-  document.getElementById("tour-step-badge").textContent = `Step ${currentTourStep}/3`;
-  document.getElementById("tour-body-text").textContent = step.body;
-  document.getElementById("tour-next-btn").textContent = currentTourStep === 3 ? "Got It!" : "Next";
-}
-document.getElementById("tour-next-btn")?.addEventListener("click", async () => {
-  if (currentTourStep < 3) { currentTourStep++; updateTourUI(); }
-  else { document.getElementById("tour-card").style.display = "none"; await chrome.storage.local.set({ aegisTourDone: true }); }
-});
-document.getElementById("tour-skip-btn")?.addEventListener("click", async () => {
-  document.getElementById("tour-card").style.display = "none"; await chrome.storage.local.set({ aegisTourDone: true });
-});
-
 // ── Init ──────────────────────────────────────────────────────────
 initTheme();
-initTour();
 loadConfig();
 setupConfigListeners();
 loadLastReceipt();
 renderProfile();
+renderVaultList();

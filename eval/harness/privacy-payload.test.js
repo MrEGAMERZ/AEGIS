@@ -221,15 +221,21 @@ check("idle rescan does not send DETECT_FACES", (() => {
   const end = contentSrc.indexOf("function mutationTouchesOverlay");
   return start !== -1 && end > start && !contentSrc.slice(start, end).includes("DETECT_FACES");
 })());
+check(
+  "overlay covers hide private regions (not transparent)",
+  contentSrc.includes('fill: "rgba(15, 23, 42, 0.92)"') &&
+    contentSrc.includes("backdropFilter") &&
+    !/backgroundColor:\s*"transparent"/.test(contentSrc)
+);
 
-console.log("\n7. Face-scan toggle + Fill Form copy (Fill tab)");
-check("Fill tab has Scan human faces toggle", popupHtml.includes('id="face-scan-toggle"') && popupHtml.includes("Scan human faces"));
-check("Fill tab copy says browsing does not scan other people's faces", /Browsing does not scan other people's faces/.test(popupHtml));
-check("Fill tab has Scan faces now control", popupHtml.includes('id="scan-faces-now-btn"'));
-check("popup syncs Fill-tab toggle with faceDetection storage", popupJs.includes("face-scan-toggle") && popupJs.includes("faceDetection"));
-check("Privacy Scan / Scan faces now send forceFaces on SCAN_AND_OVERLAY", popupJs.includes("forceFaces") && popupJs.includes("SCAN_AND_OVERLAY"));
-check("Fill Form copy says profile and document text stay on device", popupHtml.includes('id="fill-form-hint"') && /saved profile and document text on this device/.test(popupHtml));
-check("upload copy says PDF is read as text on this device", popupHtml.includes("PDF is read as text on this device"));
+console.log("\n7. Face-scan + Fill Form copy");
+check("Settings has face detection toggle", popupHtml.includes('id="face-detection"') && /Face detection on Privacy Scan/.test(popupHtml));
+check("Settings copy says browsing does not scan other people's faces", /Browsing does not scan other people's faces/.test(popupHtml));
+check("Settings has Scan faces on this page", popupHtml.includes('id="scan-faces-page-btn"'));
+check("popup persists faceDetection from Settings", popupJs.includes("face-detection") && popupJs.includes("faceDetection"));
+check("Privacy Scan / Scan faces send forceFaces on SCAN_AND_OVERLAY", popupJs.includes("forceFaces") && popupJs.includes("SCAN_AND_OVERLAY"));
+check("Fill Form copy says profile and documents stay on device", popupHtml.includes('id="fill-form-hint"') && /profile and documents you saved on this device/.test(popupHtml));
+check("upload copy says local AI structures fields", popupHtml.includes("Local AI turns it into profile fields"));
 check("overlay includeFaces follows faceDetectionEnabled", backgroundSrc.includes("includeFaces: faceDetectionEnabled"));
 check("FILL_MATCHING_FIELDS consumes vault via extract-profile", backgroundSrc.includes("enrichProfileFromVaultText"));
 check(
@@ -240,7 +246,6 @@ check("Settings tab has scan-faces-page-btn", popupHtml.includes('id="scan-faces
 check(
   "scan-faces-page-btn wired to scanFacesNow (forceFaces path)",
   popupJs.includes('getElementById("scan-faces-page-btn")') &&
-    popupJs.includes('getElementById("scan-faces-now-btn")') &&
     /function scanFacesNow[\s\S]*runPrivacyScan\(\{\s*forceFaces:\s*true\s*\}\)/.test(popupJs)
 );
 check(

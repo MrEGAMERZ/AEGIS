@@ -41,7 +41,8 @@ A privacy-preserving browser extension that intercepts screen content before it 
 | Doc | Purpose | Link |
 |---|---|---|
 | Deep Structured Analysis | Problem understanding, feasibility, competitor landscape, evaluator lens | [Aegis_Deep_Structured_Analysis.md](../docs/Aegis_Deep_Structured_Analysis.md) |
-| Pitch Storytelling Framework | Narrative arc for the final pitch | [Aegis_Pitch_Storytelling_Framework.md](../Aegis_Pitch_Storytelling_Framework.md) |
+| Pitch Storytelling Framework | Narrative arc for the final pitch | [Aegis_Pitch_Storytelling_Framework.md](Aegis_Pitch_Storytelling_Framework.md) |
+| Industry review script | **Canonical spoken pitch** — gunshot lines, split seats, live TP08 demo, Q&A, copy-table for slides | [INDUSTRY_PITCH_SCRIPT.md](INDUSTRY_PITCH_SCRIPT.md) |
 
 ## Privacy & Security Documents
 
@@ -54,6 +55,7 @@ A privacy-preserving browser extension that intercepts screen content before it 
 
 | Doc | Purpose | Link |
 |---|---|---|
+| Live demo card | 10-line install path for **real Chrome**: load `dist/`, name **AGs**, TP08 Fill + Privacy Scan | [LIVE_DEMO.md](LIVE_DEMO.md) |
 | Demo runbook | Judge Chrome E2E on TP08 (load `dist/`, scan / Run Agent, recovery codes) | [DEMO_RUNBOOK.md](DEMO_RUNBOOK.md) |
 | VLM server setup | Measured Ollama install, `qwen2.5vl:7b`, cold/warm smoke tests on `:11434` | [SERVER_SETUP.md](SERVER_SETUP.md) |
 | Backend deploy | Operator path: Node gateway `:8000` → Ollama; Chrome 403 if you hit `:11434` directly | [BACKEND_DEPLOY.md](BACKEND_DEPLOY.md) |

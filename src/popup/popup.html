@@ -2,58 +2,44 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <title>AGs</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-    @keyframes pulseMic {
-      0% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.5); }
-      70% { box-shadow: 0 0 0 10px rgba(225, 29, 72, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0); }
-    }
     body {
       width: 360px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       font-size: 13px; color: #0f172a; background: #ffffff;
     }
-
-    /* ── Header ── */
     .header { padding: 14px 16px 0; display: flex; justify-content: space-between; align-items: center; }
     .header-left { display: flex; align-items: center; gap: 8px; }
     .header h1 { font-size: 15px; font-weight: 700; color: #0f172a; }
     .header .badge { font-size: 9px; background: #dbeafe; color: #1d4ed8; padding: 2px 7px; border-radius: 10px; font-weight: 700; }
-    .header-actions { display: flex; gap: 4px; }
-    .face-scan-row {
-      margin-top: 8px; padding: 8px 10px; background: #ffffff;
-      border: 1px solid #e2e8f0; border-radius: 8px;
-    }
-    .face-scan-row label { margin: 0; align-items: flex-start; }
-    body.dark-mode .face-scan-row { background: #0f172a; border-color: #334155; }
+    .header-actions { display: flex; gap: 4px; align-items: center; }
     .icon-btn {
       width: 28px; height: 28px; border: none; background: #f1f5f9;
       border-radius: 6px; cursor: pointer; font-size: 13px;
-      display: flex; justify-content: center; align-items: center; transition: background 0.15s;
+      display: flex; justify-content: center; align-items: center;
     }
     .icon-btn:hover { background: #e2e8f0; }
     .model-status {
-      font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 999px;
+      font-size: 9px; font-weight: 600; padding: 3px 8px; border-radius: 999px;
       background: #fff; border: 1px solid #e2e8f0; color: #64748b;
     }
     .model-status.ready { border-color: #86efac; background: #f0fdf4; color: #15803d; }
     .model-status.failed { border-color: #fca5a5; background: #fef2f2; color: #dc2626; }
     .model-status.loading { border-color: #fcd34d; background: #fffbeb; color: #b45309; }
 
-    /* ── Tabs ── */
     .tab-bar { display: flex; padding: 10px 16px 0; gap: 2px; }
     .tab {
       flex: 1; padding: 8px 0; text-align: center; font-size: 11px; font-weight: 600;
       color: #64748b; border: none; background: none; cursor: pointer;
-      border-bottom: 2px solid transparent; transition: all 0.15s;
+      border-bottom: 2px solid transparent;
     }
     .tab:hover { color: #334155; }
     .tab.active { color: #2563eb; border-bottom-color: #2563eb; }
     .tab-content { display: none; padding: 12px 16px 16px; animation: fadeIn 0.2s ease; }
     .tab-content.active { display: block; }
 
-    /* ── Cards ── */
     .card {
       background: #f8fafc; border: 1px solid #e2e8f0;
       border-radius: 10px; padding: 12px; margin-bottom: 10px;
@@ -65,7 +51,6 @@
     }
     .hint { font-size: 10px; color: #94a3b8; font-weight: 500; text-transform: none; letter-spacing: 0; }
 
-    /* ── Receipt ── */
     .receipt { display: none; }
     .receipt.visible { display: block; }
     .receipt-row { display: flex; justify-content: space-between; font-size: 12px; color: #64748b; margin-bottom: 4px; }
@@ -77,103 +62,73 @@
     }
     .badge-pill.warn { border-color: #fed7aa; background: #fff7ed; color: #c2410c; }
 
-    /* ── Pipeline ── */
     .pipeline { display: none; font-size: 11px; color: #64748b; }
     .pipeline.visible { display: block; }
     .pipeline-step { margin-bottom: 3px; padding-left: 4px; }
     .pipeline-step.done { color: #15803d; }
     .pipeline-step.active { color: #2563eb; font-weight: 600; }
 
-    /* ── Preview ── */
     .preview-wrap { display: none; }
     .preview-wrap.visible { display: block; }
     .preview-wrap img { width: 100%; max-height: 160px; object-fit: contain; border-radius: 8px; background: #f1f5f9; border: 1px solid #e2e8f0; }
 
-    /* ── Inputs ── */
-    input[type="text"], input[type="url"], select, textarea {
+    input[type="text"], input[type="url"], input[type="password"], select, textarea {
       width: 100%; padding: 8px 10px; background: #ffffff; border: 1px solid #e2e8f0;
       border-radius: 8px; color: #0f172a; font-size: 12px; margin-bottom: 6px;
-      transition: all 0.15s; font-family: inherit;
+      font-family: inherit;
     }
     input:focus, select:focus, textarea:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.08); }
     textarea { min-height: 50px; resize: vertical; }
-    label { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; cursor: pointer; font-weight: 500; color: #334155; font-size: 12px; }
-    input[type="checkbox"] { accent-color: #2563eb; width: 14px; height: 14px; }
+    label { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 5px; cursor: pointer; font-weight: 500; color: #334155; font-size: 12px; }
+    input[type="checkbox"] { accent-color: #2563eb; width: 14px; height: 14px; margin-top: 2px; }
 
-    /* ── Buttons ── */
-    .btn-primary { width: 100%; padding: 10px; background: #2563eb; color: #fff; border: none; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; transition: all 0.15s; }
+    .btn-primary { width: 100%; padding: 10px; background: #2563eb; color: #fff; border: none; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; }
     .btn-primary:hover { background: #1d4ed8; }
     .btn-row { display: flex; gap: 6px; }
     .btn-sm {
       flex: 1; padding: 7px 6px; background: #ffffff; color: #334155;
       border: 1px solid #e2e8f0; border-radius: 7px; font-size: 11px;
-      font-weight: 500; cursor: pointer; transition: all 0.15s; text-align: center;
-      width: auto; margin: 0; box-shadow: none;
+      font-weight: 500; cursor: pointer; text-align: center;
     }
     .btn-sm:hover { background: #f1f5f9; }
     .btn-accent { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; font-weight: 600; }
     .btn-accent:hover { background: #dcfce7; }
-    .btn-voice {
-      width: 100%; padding: 10px; background: #fff1f2; color: #e11d48;
-      border: 1px solid #fecdd3; border-radius: 8px; font-weight: 600;
-      font-size: 12px; cursor: pointer; box-shadow: none; margin: 0;
-    }
-    .btn-voice:hover { background: #ffe4e6; }
-    .btn-voice.recording { background: #e11d48; color: #fff; animation: pulseMic 1.5s infinite; }
-    button:disabled { background: #f1f5f9 !important; color: #94a3b8 !important; cursor: not-allowed; border-color: #e2e8f0 !important; box-shadow: none !important; }
+    button:disabled { background: #f1f5f9 !important; color: #94a3b8 !important; cursor: not-allowed; border-color: #e2e8f0 !important; }
 
-    /* ── Profile ── */
     .profile-list { max-height: 180px; overflow-y: auto; padding: 2px; margin-bottom: 6px; }
-    .p-row { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; animation: fadeIn 0.15s ease; }
+    .p-row { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; }
     .p-row input[type="text"] { flex: 1; margin: 0; }
     .p-row .p-del {
       width: auto; padding: 5px 8px; font-size: 10px; background: #fef2f2; color: #dc2626;
-      border: 1px solid #fecaca; border-radius: 6px; cursor: pointer; box-shadow: none; margin: 0;
+      border: 1px solid #fecaca; border-radius: 6px; cursor: pointer;
     }
-    .p-row .p-del:hover { background: #fee2e2; }
     .p-empty { font-size: 12px; color: #94a3b8; padding: 12px; text-align: center; }
+    .vault-list { font-size: 11px; color: #475569; margin-top: 8px; }
+    .vault-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid #e2e8f0; }
+    .vault-row:last-child { border-bottom: none; }
 
-    /* ── Drop Zone ── */
     .drop-zone {
-      border: 2px dashed #e2e8f0; border-radius: 8px; padding: 14px; text-align: center;
-      background: #ffffff; cursor: pointer; transition: all 0.15s;
+      border: 2px dashed #e2e8f0; border-radius: 8px; padding: 16px; text-align: center;
+      background: #ffffff; cursor: pointer;
     }
     .drop-zone:hover, .drop-zone.dragover { border-color: #2563eb; background: #eff6ff; }
 
-    /* ── Document extract preview ── */
     .doc-preview { margin-top: 8px; }
     .doc-preview-text {
-      max-height: 150px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+      max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
       font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       color: #0f172a; background: #ffffff; border: 1px solid #e2e8f0;
       border-radius: 6px; padding: 8px; margin: 0;
     }
 
-    /* ── Chips ── */
-    .chip-row { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; }
-    .chip {
-      font-size: 10px; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
-      padding: 4px 9px; border-radius: 12px; cursor: pointer; font-weight: 500; transition: all 0.15s;
-    }
-    .chip:hover { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .add-field-card { padding: 10px; background: #f8fafc; border: 1px solid #2563eb; border-radius: 8px; margin-bottom: 6px; }
 
-    /* ── Status ── */
-    .status { margin: 0 16px 12px; padding: 8px 12px; border-radius: 8px; font-size: 12px; display: none; animation: fadeIn 0.2s ease; line-height: 1.5; word-break: break-word; }
+    .status { margin: 0 16px 12px; padding: 8px 12px; border-radius: 8px; font-size: 12px; display: none; line-height: 1.5; word-break: break-word; }
     .status.active { display: block; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
     .status.success { display: block; background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
     .status.error { display: block; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
     .status.warn { display: block; background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
 
-    /* ── Tour ── */
-    .tour-banner { margin: 12px 16px 0; padding: 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; animation: fadeIn 0.3s ease; }
-
-    /* ── Add Field Card ── */
-    .add-field-card { padding: 10px; background: #f8fafc; border: 1px solid #2563eb; border-radius: 8px; animation: fadeIn 0.2s ease; margin-bottom: 6px; }
-
-    /* ── Voice Box ── */
-    .voice-box { margin-top: 6px; padding: 8px; background: #fdf2f8; border: 1px solid #fbcfe8; border-radius: 6px; font-size: 11px; color: #831843; }
-
-    /* ── Dark Mode ── */
     body.dark-mode { background: #0f172a; color: #f1f5f9; }
     body.dark-mode .header h1 { color: #f1f5f9; }
     body.dark-mode .icon-btn { background: #1e293b; color: #f1f5f9; }
@@ -182,7 +137,7 @@
     body.dark-mode .tab.active { color: #60a5fa; border-bottom-color: #60a5fa; }
     body.dark-mode .card { background: #1e293b; border-color: #334155; }
     body.dark-mode .card-title { color: #94a3b8; }
-    body.dark-mode input[type="text"], body.dark-mode input[type="url"],
+    body.dark-mode input[type="text"], body.dark-mode input[type="url"], body.dark-mode input[type="password"],
     body.dark-mode select, body.dark-mode textarea { background: #0f172a; border-color: #334155; color: #f1f5f9; }
     body.dark-mode .btn-sm { background: #1e293b; color: #cbd5e1; border-color: #334155; }
     body.dark-mode .btn-sm:hover { background: #334155; }
@@ -190,53 +145,32 @@
     body.dark-mode .drop-zone { background: #0f172a; border-color: #334155; }
     body.dark-mode .doc-preview-text { background: #0f172a; border-color: #334155; color: #e2e8f0; }
     body.dark-mode label { color: #cbd5e1; }
-    body.dark-mode .profile-list { background: transparent; }
     body.dark-mode .model-status { background: #1e293b; border-color: #334155; color: #94a3b8; }
+    body.dark-mode .vault-row { border-color: #334155; }
   </style>
 </head>
 <body>
-
-  <!-- ── Tour Banner ── -->
-  <div id="tour-card" class="tour-banner" style="display:none;">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-      <span id="tour-title" style="font-weight:700; font-size:13px; color:#1d4ed8;">Welcome to Aegis!</span>
-      <span id="tour-step-badge" class="badge-pill" style="background:#2563eb; color:#fff; font-size:9px; padding:2px 7px; border-radius:10px;">Step 1/3</span>
-    </div>
-    <div id="tour-body-text" style="font-size:12px; color:#1e40af; margin-bottom:8px;">
-      Aegis redacts PII on-device before any AI analysis. Faces are outlined only when you run Privacy Scan or Run Agent — not while you browse.
-    </div>
-    <div style="display:flex; gap:6px;">
-      <button class="btn-sm" id="tour-skip-btn" style="color:#64748b;">Skip</button>
-      <button class="btn-sm" id="tour-next-btn" style="background:#2563eb; color:#fff; border-color:#2563eb;">Next</button>
-    </div>
-  </div>
-
-  <!-- ── Header ── -->
   <div class="header">
     <div class="header-left">
-      <h1>Aegis</h1>
-      <span class="badge">Privacy MV3</span>
+      <h1>AGs</h1>
+      <span class="badge">On-device</span>
     </div>
     <div class="header-actions">
-      <span class="model-status loading" id="model-status" style="font-size:9px;">Loading...</span>
-      <button class="icon-btn" id="dashboard-btn" title="Privacy Dashboard">D</button>
-      <button class="icon-btn" id="theme-toggle-btn" title="Toggle Theme">T</button>
+      <span class="model-status loading" id="model-status">Loading...</span>
+      <button class="icon-btn" id="theme-toggle-btn" title="Toggle theme">T</button>
     </div>
   </div>
 
-  <!-- ── Tab Bar ── -->
   <div class="tab-bar">
     <button class="tab active" data-tab="fill">Fill</button>
     <button class="tab" data-tab="profile">Profile</button>
     <button class="tab" data-tab="settings">Settings</button>
   </div>
 
-  <!-- ═══════════ TAB 1: Fill ═══════════ -->
+  <!-- Fill -->
   <div class="tab-content active" id="tab-fill">
-
-    <!-- Receipt -->
     <div class="card receipt" id="receipt">
-      <div class="card-title">Last Privacy Receipt</div>
+      <div class="card-title">Last privacy receipt</div>
       <div class="receipt-row"><span>Fields masked</span><span id="r-fields">--</span></div>
       <div class="receipt-row"><span>Faces detected</span><span id="r-faces">--</span></div>
       <div class="receipt-row"><span>PII spans</span><span id="r-pii">--</span></div>
@@ -244,94 +178,53 @@
       <div class="receipt-badges" id="r-badges"></div>
     </div>
 
-    <!-- Pipeline -->
     <div class="card pipeline" id="pipeline">
       <div class="card-title">Pipeline</div>
       <div class="pipeline-step" id="step-capture">1. Capture viewport</div>
-      <div class="pipeline-step" id="step-redact">2. Local redaction (faces + NER)</div>
-      <div class="pipeline-step" id="step-vlm">3. VLM on sanitized context</div>
+      <div class="pipeline-step" id="step-redact">2. Local redaction</div>
+      <div class="pipeline-step" id="step-vlm">3. Local model on sanitized context</div>
     </div>
 
-    <!-- Preview -->
     <div class="card preview-wrap" id="preview-wrap">
-      <div class="card-title">Sanitized preview (redacted)</div>
+      <div class="card-title">Sanitized preview</div>
       <img id="sanitize-preview" alt="Sanitized screenshot preview">
     </div>
 
-    <!-- Quick Actions -->
     <div class="card">
-      <div class="card-title">Quick Actions</div>
-      <div class="chip-row">
-        <span class="chip" id="chip-loan">Fill Loan Form</span>
-        <span class="chip" id="chip-contact">Personal Info</span>
-      </div>
-      <textarea class="task-input" id="task-input" placeholder="Describe what to do on this page..." style="min-height:50px;"></textarea>
-      <button class="btn-primary" id="run-btn">Run Agent</button>
+      <div class="card-title">This page</div>
+      <textarea id="task-input" placeholder="Optional: what to fill on this page"></textarea>
+      <button class="btn-primary" id="fill-btn">Fill Form</button>
       <div class="btn-row" style="margin-top:6px;">
-        <button class="btn-sm" id="scan-btn" style="background:#2563eb; color:#fff; border-color:#2563eb; font-weight:600;">Privacy Scan</button>
-        <button class="btn-sm" id="fill-btn" style="background:#2563eb; color:#fff; border-color:#2563eb; font-weight:600;">Fill Form</button>
+        <button class="btn-sm" id="scan-btn">Privacy Scan</button>
+        <button class="btn-sm" id="run-btn">Run Agent</button>
       </div>
-      <p class="hint" id="fill-form-hint" style="margin-top:6px;">Fill Form uses your saved profile and document text on this device. It does not invent names.</p>
-      <div class="face-scan-row" id="face-scan-row">
-        <label>
-          <input type="checkbox" id="face-scan-toggle" checked>
-          <span>
-            Scan human faces
-            <span class="hint" style="display:block;">Browsing does not scan other people's faces. On = Privacy Scan and Run Agent outline faces. Off = passwords and PII fields only.</span>
-          </span>
-        </label>
-        <button class="btn-sm" id="scan-faces-now-btn" style="width:100%; margin-top:8px;">Scan faces now</button>
-      </div>
+      <p class="hint" id="fill-form-hint" style="margin-top:8px;">Uses the profile and documents you saved on this device. Missing fields stay blank.</p>
     </div>
+  </div>
 
-    <!-- Voice Input -->
+  <!-- Profile -->
+  <div class="tab-content" id="tab-profile">
     <div class="card">
       <div class="card-title">
-        <span>Voice Input</span>
-        <span class="hint">10 languages</span>
+        <span>Upload document</span>
+        <span class="hint">PDF, Word, text</span>
       </div>
-      <div style="display:flex; gap:6px;">
-        <select id="voice-lang-select" style="flex:1; margin:0;">
-          <option value="en-US">English</option>
-          <option value="hi-IN">Hindi</option>
-          <option value="bn-IN">Bengali</option>
-          <option value="ta-IN">Tamil</option>
-          <option value="te-IN">Telugu</option>
-          <option value="mr-IN">Marathi</option>
-          <option value="kn-IN">Kannada</option>
-          <option value="gu-IN">Gujarati</option>
-          <option value="ml-IN">Malayalam</option>
-          <option value="pa-IN">Punjabi</option>
-        </select>
-        <button class="btn-voice" id="voice-start-btn" style="width:auto; padding:8px 14px;">Mic</button>
+      <div id="drop-zone" class="drop-zone">
+        <input type="file" id="doc-file-input" accept=".pdf,.docx,.txt,.json,.csv,.md,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;">
+        <div style="font-size:12px; color:#334155; font-weight:600;">Drop or click to upload</div>
+        <div style="font-size:10px; color:#94a3b8; margin-top:4px;">Read on this device. Local AI turns it into profile fields.</div>
       </div>
-      <div id="voice-box" class="voice-box" style="display:none;">
-        <div id="voice-transcript" style="font-weight:500;">Listening...</div>
-      </div>
-    </div>
-
-    <!-- Upload Document -->
-    <div class="card">
-      <div class="card-title">
-        <span>Upload Document</span>
-        <span class="hint">On-device only</span>
-      </div>
-<div id="drop-zone" class="drop-zone">
-        <input type="file" id="doc-file-input" accept=".pdf,.docx,.txt,.json,.csv,.md,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.png,.jpg,.jpeg" style="display:none;">
-        <div style="font-size:11px; color:#334155; font-weight:600;">Drop or click to upload</div>
-        <div style="font-size:9px; color:#94a3b8; margin-top:2px;">PDF is read as text on this device. Optional local AI structures fields. Remote AI never sees the file.</div>
-      </div>
-      <label style="margin-top:8px; display:flex; align-items:flex-start; gap:6px;">
-        <input type="checkbox" id="analyze-with-ai" style="margin-top:2px;">
+      <label style="margin-top:8px;">
+        <input type="checkbox" id="analyze-with-ai" checked>
         <span>
-          Analyze with AI (local model only)
-          <span class="hint" style="display:block;">Extracted text is sent only to your local model (http://localhost). Never stored raw.</span>
+          Structure with local AI
+          <span class="hint" style="display:block;">Sends extracted text only to http://localhost. Remote AI is blocked.</span>
         </span>
       </label>
-      <label style="display:flex; align-items:center; gap:6px;">
-        <input type="checkbox" id="save-to-vault"> Keep in document vault
+      <label>
+        <input type="checkbox" id="save-to-vault" checked>
+        <span>Keep a copy in the document vault for later fill</span>
       </label>
-      <p class="hint" style="margin-top:4px;">Extracted text stays on this device. Fill Form reads the vault + profile locally.</p>
       <div class="doc-preview" id="doc-preview-wrap" style="display:none;">
         <div class="card-title" style="margin-bottom:4px;">
           <span id="doc-preview-title" style="text-transform:none; letter-spacing:0;">Extracted text</span>
@@ -339,15 +232,13 @@
         </div>
         <pre class="doc-preview-text" id="doc-preview-text"></pre>
       </div>
+      <div id="vault-list" class="vault-list"></div>
     </div>
-  </div>
 
-  <!-- ═══════════ TAB 2: Profile ═══════════ -->
-  <div class="tab-content" id="tab-profile">
     <div class="card">
       <div class="card-title">
-        <span>Profile Manager</span>
-        <span class="hint">On-device only</span>
+        <span>Saved fields</span>
+        <span class="hint">On-device</span>
       </div>
       <select id="profile-switcher" style="font-weight:600; background:#f1f5f9; margin-bottom:8px;">
         <option value="Personal">Personal</option>
@@ -357,10 +248,9 @@
       <div id="profile-list" class="profile-list">
         <div class="p-empty">Loading profile...</div>
       </div>
-
       <div id="add-field-card" class="add-field-card" style="display:none;">
         <select id="profile-select-key">
-          <option value="">-- Choose Field --</option>
+          <option value="">-- Choose field --</option>
         </select>
         <input type="text" id="profile-input-val" placeholder="Enter value">
         <div class="btn-row">
@@ -368,58 +258,39 @@
           <button class="btn-sm" id="profile-cancel-btn">Cancel</button>
         </div>
       </div>
-
-      <div class="btn-row" id="profile-action-btns" style="margin-top:6px;">
+      <div class="btn-row" id="profile-action-btns">
         <button class="btn-sm btn-accent" id="profile-sample-btn">Demo</button>
         <button class="btn-sm" id="profile-add-btn">+ Add</button>
         <button class="btn-sm" id="profile-clear-btn">Clear</button>
       </div>
-
       <div class="btn-row" style="margin-top:6px;">
-        <button class="btn-sm" id="export-profile-btn">Export</button>
-        <button class="btn-sm" id="import-profile-btn">Import</button>
-        <input type="file" id="import-file-input" accept=".json" style="display:none;">
+        <button class="btn-sm" id="export-profile-btn">Export JSON</button>
+        <button class="btn-sm" id="import-profile-btn">Import file</button>
+        <input type="file" id="import-file-input" accept=".pdf,.docx,.txt,.json,.csv,.md,application/pdf,application/json" style="display:none;">
       </div>
-    </div>
-
-    <!-- Legacy textarea for backward compat -->
-    <div class="card">
-      <div class="card-title">Quick Profile Edit</div>
-      <textarea id="profile-input" placeholder="Free text or JSON..." style="min-height:45px;"></textarea>
-      <button class="btn-sm" id="save-profile-btn" style="width:100%; margin-top:4px;">Save Profile</button>
     </div>
   </div>
 
-  <!-- ═══════════ TAB 3: Settings ═══════════ -->
+  <!-- Settings -->
   <div class="tab-content" id="tab-settings">
     <div class="card">
-      <div class="card-title">Privacy Shield</div>
-      <label><input type="checkbox" id="face-detection" checked> Face Detection (BlazeFace) on Privacy Scan / Run Agent</label>
-      <label><input type="checkbox" id="password-detection" checked> Password Redaction</label>
-      <label><input type="checkbox" id="pii-detection" checked> PII Masking (NER)</label>
-      <p class="hint" style="margin-top:6px;">Daily browsing does not run face detection on photos of other people. Use Privacy Scan, Run Agent, or the button below.</p>
+      <div class="card-title">Privacy</div>
+      <label><input type="checkbox" id="face-detection" checked> Face detection on Privacy Scan / Run Agent</label>
+      <label><input type="checkbox" id="password-detection" checked> Password redaction</label>
+      <label><input type="checkbox" id="pii-detection" checked> PII masking</label>
+      <p class="hint" style="margin-top:6px;">Browsing does not scan other people's faces. Scan only when you ask.</p>
       <button class="btn-sm" id="scan-faces-page-btn" style="width:100%; margin-top:6px;">Scan faces on this page</button>
     </div>
-
     <div class="card">
-      <div class="card-title">VLM Server</div>
+      <div class="card-title">Local model</div>
       <input type="url" id="vlm-endpoint" placeholder="http://localhost:8000/v1/chat/completions">
       <input type="text" id="vlm-model" placeholder="qwen2.5vl:7b">
-      <input type="password" id="vlm-api-key" placeholder="API key (Gemini / hosted VLM)" autocomplete="off">
-      <p class="hint" id="api-key-hint">Session-only. Leave empty for local Ollama.</p>
-    </div>
-
-    <div class="card">
-      <div class="card-title">Shortcuts</div>
-      <div style="font-size:11px; color:#64748b; line-height:1.6;">
-        <strong>Ctrl+Shift+F</strong> -- Autofill active page<br>
-        <strong>Right-click</strong> -- Fill with Aegis Profile<br>
-      </div>
+      <input type="password" id="vlm-api-key" placeholder="API key (hosted only)" autocomplete="off">
+      <p class="hint" id="api-key-hint">Leave empty for local Ollama / gateway on :8000.</p>
     </div>
   </div>
 
   <div class="status" id="status"></div>
-
   <script src="popup.js" type="module"></script>
 </body>
 </html>
