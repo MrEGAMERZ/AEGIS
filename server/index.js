@@ -1,6 +1,6 @@
-// Aegis Backend — local VLM gateway
+// AEGIS Backend — local VLM gateway
 // Runs on the operator's laptop. Exposes an OpenAI-compatible endpoint that
-// the Aegis extension talks to. Forwards requests to a local VLM runtime
+// the AEGIS extension talks to. Forwards requests to a local VLM runtime
 // (Ollama / LM Studio / llama.cpp server / vLLM) and normalizes the VLM's
 // output into the single-action JSON contract the extension expects.
 
@@ -406,7 +406,7 @@ const server = http.createServer(async (req, res) => {
 // as a module (eval harness), expose the pure helpers without side effects.
 if (require.main === module) {
   server.listen(CONFIG.port, CONFIG.host, () => {
-    log("INFO", "Aegis backend listening", {
+    log("INFO", "AEGIS backend listening", {
       host: CONFIG.host,
       port: CONFIG.port,
       mock: CONFIG.mock,

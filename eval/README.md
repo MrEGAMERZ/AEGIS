@@ -1,4 +1,4 @@
-# Aegis — Evaluation Framework
+# AEGIS — Evaluation Framework
 
 **QA, Benchmark & Evaluation System for the Privacy-Preserving Browser Agent**
 
@@ -61,7 +61,7 @@ eval/
 
 ### Option A — Benchmark Runner (Recommended)
 
-1. Load the extension in Chrome (`chrome://extensions → Load unpacked → Aegis/`)
+1. Load the extension in Chrome (`chrome://extensions → Load unpacked → dist/`)
 2. Open `eval/harness/benchmark-runner.html` in Chrome
 3. Click **▶ Run All Tests**
 4. Wait ~30 seconds for all 7 pages to be evaluated

@@ -1,6 +1,6 @@
-# Aegis Backend
+# AEGIS Backend
 
-Local VLM gateway for the Aegis extension. Runs on the operator's laptop — no
+Local VLM gateway for the AEGIS extension. Runs on the operator's laptop — no
 cloud needed for development. It implements the VLM contract from
 `docs/02_ARCHITECTURE.md` (section 4) as an OpenAI-compatible HTTP API.
 

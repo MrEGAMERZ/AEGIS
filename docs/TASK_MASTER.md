@@ -1,4 +1,4 @@
-# Aegis — Master Task Board (SIH26171)
+# AEGIS — Master Task Board (SIH26171)
 
 **How this works:**
 - `## OPEN WORK` is the single source of truth for what is NOT done. Everything in it is actionable with an owner, a dependency, and measurable acceptance criteria.

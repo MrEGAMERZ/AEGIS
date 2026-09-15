@@ -1,6 +1,6 @@
-# Aegis Demo Runbook — Chrome E2E on TP08
+# AEGIS Demo Runbook — Chrome E2E on TP08
 
-**LIVE CARD (real Chrome):** extension name is **AGs**. Load unpacked from **`dist/` only** (never the repo root). Preferred TP08: `http://127.0.0.1:8765/tp08-kitchen-sink-registration.html`. Popup → **Profile** → drop `eval/fixtures/Aegis-Demo-Profile-Mohammad-Rehan.pdf` → review fields → **Save** (or Import `dummy-profile-rehan.json`). **Fill** → **Fill Form** (Mohammad Rehan, not John Doe). **Privacy Scan** on Fill; face scan is under **Settings**. Reload unpacked after every rebuild. One-pager: [`LIVE_DEMO.md`](LIVE_DEMO.md).
+**LIVE CARD (real Chrome):** extension name is **AEGIS**. Load unpacked from **`dist/` only** (never the repo root). Preferred TP08: `http://127.0.0.1:8765/tp08-kitchen-sink-registration.html`. Popup → **Profile** → drop `eval/fixtures/Aegis-Demo-Profile-Mohammad-Rehan.pdf` → review fields → **Save** (or Import `dummy-profile-rehan.json`). **Fill** → **Fill Form** (Mohammad Rehan, not John Doe). **Privacy Scan** on Fill; face scan is under **Settings**. Reload unpacked after every rebuild. One-pager: [`LIVE_DEMO.md`](LIVE_DEMO.md).
 
 **Audience:** judges, evaluators, and developers running the live demo.  
 **Goal:** load the extension from `dist/`, open TP08, and complete **Scan page** or **Run Agent** without hitting known footguns.  
@@ -19,7 +19,7 @@ For VLM server details and measured latencies, see [`docs/SERVER_SETUP.md`](SERV
 |---|---|---|
 | 0 | `bash scripts/build-dist.sh` | `dist/` exists (~79 MB with NER) |
 | 1 | Load **unpacked** from **`dist/`** | Extension size 15–80 MB in `chrome://extensions` |
-| 2 | Enable **Allow access to file URLs** | Checkbox ON on the Aegis card |
+| 2 | Enable **Allow access to file URLs** | Checkbox ON on the AEGIS card |
 | 3 | Open TP08 (`file://…/eval/test-pages/tp08-kitchen-sink-registration.html`) | Page renders; sidebar face photo visible |
 | 4 | Open popup → wait for **BlazeFace ready (WASM)** badge | Badge turns green (first open may take up to 60 s while WASM compiles) |
 | 5 | Click **Privacy scan** (primary blue button) | Orange overlays on password/card fields; status success |
@@ -88,7 +88,7 @@ Re-run `build-dist.sh` after any change under `src/vendor/`.
 1. Open `chrome://extensions`
 2. Turn on **Developer mode**
 3. **Load unpacked** → select **`/path/to/SIH26/dist`** (the folder that contains `manifest.json`)
-4. On the Aegis card, enable **Allow access to file URLs** (required for `file://` eval pages)
+4. On the AEGIS card, enable **Allow access to file URLs** (required for `file://` eval pages)
 5. Confirm reported size is in the **15–80 MB** range, not hundreds of MB
 
 > **Footgun:** loading the repo root makes Chrome scan `node_modules/` and breaks the Resource criterion (~629 MB reported historically).
@@ -146,7 +146,7 @@ ollama ps
 
 ### Extension popup defaults
 
-Open the Aegis popup and confirm (defaults are pre-filled):
+Open the AEGIS popup and confirm (defaults are pre-filled):
 
 | Field | Value |
 |---|---|
@@ -183,7 +183,7 @@ cd eval/test-pages && python3 -m http.server 8765
 
 If **Scan page** or **Run Agent** shows `[NO_CONTENT_SCRIPT]` on a `file://` tab:
 
-1. `chrome://extensions` → Aegis → **Allow access to file URLs** → ON  
+1. `chrome://extensions` → AEGIS → **Allow access to file URLs** → ON  
 2. **Reload** the extension (↻ on the card)  
 3. **Refresh the TP08 tab** (mandatory after extension reload)  
 4. Retry
@@ -196,10 +196,9 @@ The page loads a face image from `eval/test-pages/assets/applicant-face.jpg` (re
 
 ## 4. Save the profile (and optional documents)
 
-1. Expand **How to use this page for Aegis testing** on TP08 (yellow box)  
-2. Copy the JSON from the readonly textarea **or** open `eval/fixtures/dummy-profile-ananya.json`  
-3. Aegis popup → **My Profile Data** → paste JSON  
-4. Click **Save Profile** → status **Profile saved locally.**
+1. Open `eval/fixtures/dummy-profile-rehan.json` (or the Rehan demo PDF on the Profile tab).
+2. AEGIS popup → **Profile** → paste JSON or drop the PDF → **Save**.
+3. Status should confirm the profile is saved on this device.
 
 The profile intentionally **excludes** Aadhaar, PAN, Blood Group, and Emergency Contact — those fields are hallucination traps on TP08.
 
@@ -295,7 +294,7 @@ Popup errors use a **`[CODE]`** prefix. Match the code, then follow the fix.
 
 **Fix:**
 
-1. `chrome://extensions` → **Reload** Aegis (ensures latest `dist/` build, especially after `src/vendor/` changes)  
+1. `chrome://extensions` → **Reload** AEGIS (ensures latest `dist/` build, especially after `src/vendor/` changes)  
 2. **Refresh TP08 tab**  
 3. Wait up to **90 s** on first Run Agent (13 MB WASM compile + NER load)  
 4. Close other heavy apps if memory is tight (Chrome + Ollama + WASM on 16 GB is thin)  

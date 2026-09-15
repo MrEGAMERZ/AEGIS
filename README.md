@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" width="720" alt="Aegis — the screen leaves last">
+  <img src="docs/assets/banner.svg" width="720" alt="AEGIS — the screen leaves last">
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 
 If you just joined: this file is the tour. Not the spec. Specs live in [`docs/`](docs/00_INDEX.md). Read this first, click around, then pick a folder.
 
-Aegis is a Chrome extension that looks at the page **on your laptop**, covers up the private bits, and only then — if you ask it to — lets a vision model help fill the form. Privacy Scan never calls a server. Fill Form and Run Agent talk to a process you start on `localhost`. Raw screenshots do not leave the browser.
+AEGIS is a Chrome extension that looks at the page **on your laptop**, covers up the private bits, and only then — if you ask it to — lets a vision model help fill the form. The name is from Greek: a shield, a **protector or defender**. Privacy Scan never calls a server. Fill Form and Run Agent talk to a process you start on `localhost`. Raw screenshots do not leave the browser.
 
 ---
 
@@ -90,7 +90,7 @@ Everyday browsing may outline password and PII fields. It does **not** run face 
 | Run Agent | Same redaction, then a loop of actions | Sanitized image + page structure + the task |
 | Drop a PDF | Extract text here. Strip Aadhaar, PAN, and friends | Only if you tick local AI — and only to `localhost` |
 
-The popup says **AGs**. That is the product name in the chrome. The repo, the docs, and the team still say Aegis.
+The toolbar, the popup, and this file all say **AEGIS**. That is the product name.
 
 ---
 

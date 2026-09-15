@@ -1,4 +1,4 @@
-# Aegis — Benchmark Report
+# AEGIS — Benchmark Report
 
 **Date:** <!-- FILL: e.g. 2026-08-26 -->  
 **Evaluator:** <!-- FILL: name/role -->  

@@ -236,11 +236,11 @@ chrome.commands?.onCommand?.addListener(async (command) => {
   }
 });
 
-// ── Context Menu (Right-Click "Fill with Aegis Profile") ─────────
+// ── Context Menu (Right-Click "Fill with AEGIS Profile") ─────────
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus?.create({
     id: "aegis_autofill_context",
-    title: "Fill Form with AGs Profile",
+    title: "Fill Form with AEGIS Profile",
     contexts: ["page", "editable"],
   });
 });
@@ -2046,7 +2046,7 @@ chrome.runtime.onInstalled.addListener(() => {
   try {
     chrome.contextMenus?.create?.({
       id: "aegis_autofill_context",
-      title: "Fill form from AGs profile",
+      title: "Fill form from AEGIS profile",
       contexts: ["page", "editable"],
     });
   } catch {

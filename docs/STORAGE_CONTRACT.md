@@ -1,4 +1,4 @@
-# Aegis — Storage Contract
+# AEGIS — Storage Contract
 
 **Owner:** Database & Persistence Engineer
 **Status:** Living document — any storage-key or schema change MUST update every consumer in the same change and be reported to the Lead.

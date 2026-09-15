@@ -11,6 +11,7 @@ const path = require("path");
 const ROOT = path.join(__dirname, "..", "..");
 const html = fs.readFileSync(path.join(ROOT, "src/popup/popup.html"), "utf8");
 const js = fs.readFileSync(path.join(ROOT, "src/popup/popup.js"), "utf8");
+const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8"));
 
 let pass = 0;
 let fail = 0;
@@ -43,6 +44,16 @@ check("Save prompt exists", html.includes('id="doc-save-card"') && html.includes
 check("tour banner removed", !html.includes("tour-card"));
 check("voice mic removed from popup HTML", !html.includes("voice-start-btn"));
 check("Fill Form button present", html.includes('id="fill-btn"'));
+check("Product name is AEGIS in the popup header", html.includes("<h1>AEGIS</h1>") && html.includes("<title>AEGIS</title>"));
+check("Popup does not use the AGs short label", !/\bAGs\b/.test(html));
+check("Chrome card name is AEGIS", manifest.name === "AEGIS" && manifest.short_name === "AEGIS" && manifest.action.default_title === "AEGIS");
+const dashboardHtml = fs.readFileSync(path.join(ROOT, "src/dashboard/dashboard.html"), "utf8");
+const voiceHtml = fs.readFileSync(path.join(ROOT, "src/voice/voice.html"), "utf8");
+const autofillJs = fs.readFileSync(path.join(ROOT, "src/content/autofill.js"), "utf8");
+check("Dashboard chrome says AEGIS", dashboardHtml.includes("<title>AEGIS") && dashboardHtml.includes("<h1>AEGIS"));
+check("Voice page title is AEGIS", voiceHtml.includes("<title>AEGIS"));
+check("Autofill overlay uses AEGIS, not Aegis", autofillJs.includes("AEGIS — complete your profile") && autofillJs.includes("`AEGIS: ${fieldsCount} fields`") && !autofillJs.includes("<h2>Aegis"));
+check("Exported profile filename uses AEGIS", js.includes("`AEGIS_${name}.json`"));
 check("Privacy Scan present", html.includes('id="scan-btn"'));
 check("Stop scan button present and starts disabled", html.includes('id="stop-scan-btn"') && /id="stop-scan-btn"[^>]*disabled/.test(html));
 check("Theme button present", html.includes('id="theme-toggle-btn"') && html.includes("theme-btn"));

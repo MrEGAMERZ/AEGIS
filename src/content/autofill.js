@@ -283,7 +283,7 @@
     const badge = document.createElement("div");
     badge.className = "badge";
     const icon = isSuspicious ? "⚠️" : "🛡️";
-    const label = isSuspicious ? `Shield Alert: ${safetyWarnings[0]}` : `Aegis: ${fieldsCount} fields`;
+    const label = isSuspicious ? `Shield Alert: ${safetyWarnings[0]}` : `AEGIS: ${fieldsCount} fields`;
 
     badge.innerHTML = `
       <span>${icon} ${label}</span>
@@ -428,7 +428,7 @@
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML =
-      '<h2>Aegis — complete your profile</h2>' +
+      '<h2>AEGIS — complete your profile</h2>' +
       '<p>Answer once, saved on your device only. Never asked again.</p>';
 
     const inputsByKey = {};

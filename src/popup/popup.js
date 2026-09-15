@@ -303,7 +303,7 @@ document.getElementById("export-profile-btn")?.addEventListener("click", async (
   const stored = await chrome.storage.local.get("aegisCurrentProfile");
   const name = stored.aegisCurrentProfile || "Personal";
   const blob = new Blob([JSON.stringify({ profileName: name, data: profile }, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `Aegis_${name}.json`; a.click(); URL.revokeObjectURL(url);
+  const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `AEGIS_${name}.json`; a.click(); URL.revokeObjectURL(url);
   setStatus(`Exported ${name} profile!`, "success");
 });
 document.getElementById("import-profile-btn")?.addEventListener("click", () => document.getElementById("import-file-input")?.click());

@@ -1,6 +1,6 @@
 # 01 — Requirements
 
-**Aegis: On-device Visual Perception for Light-weight Browser Agents**
+**AEGIS: On-device Visual Perception for Light-weight Browser Agents**
 
 ---
 

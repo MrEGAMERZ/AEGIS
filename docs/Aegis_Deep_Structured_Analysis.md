@@ -1,4 +1,4 @@
-# 🎯 Aegis — Deep Structured Analysis
+# 🎯 AEGIS — Deep Structured Analysis
 ### On-device Visual Perception for Light-weight Browser Agents
 **Organization:** Indian Space Research Organisation (ISRO) | **Department:** Department of Space | **Category:** Software | **Theme:** Miscellaneous
 
@@ -224,14 +224,14 @@ Could your team make this live? **Only if your redaction logic generalizes** (e.
 
 ## 7. FUTURE SCOPE & COMPETITIVE DIFFERENTIATION (For Pitch Deck)
 
-While the MVP focuses strictly on the core privacy redaction pipeline (BlazeFace + DistilBERT), the long-term vision for Aegis includes several advanced capabilities designed specifically for the ISRO/SIH context. These should be highlighted in the pitch to demonstrate foresight regarding compliance and user experience.
+While the MVP focuses strictly on the core privacy redaction pipeline (BlazeFace + DistilBERT), the long-term vision for AEGIS includes several advanced capabilities designed specifically for the ISRO/SIH context. These should be highlighted in the pitch to demonstrate foresight regarding compliance and user experience.
 
 ### 7.1 Progressive "Lazy" Profile Setup (RAG)
-Instead of forcing users to fill out a master profile upfront, Aegis will build a user profile incrementally. When encountering an unknown form field, it asks once, saves the answer locally, and uses Retrieval-Augmented Generation (RAG) to generate plausible answers for future forms. This gives the agent "smart memory" without relying on cloud synchronization.
+Instead of forcing users to fill out a master profile upfront, AEGIS will build a user profile incrementally. When encountering an unknown form field, it asks once, saves the answer locally, and uses Retrieval-Augmented Generation (RAG) to generate plausible answers for future forms. This gives the agent "smart memory" without relying on cloud synchronization.
 
 ### 7.2 "Extract-and-Discard" Document Parsing
 To accelerate profile setup safely, users will be able to upload Government IDs (PAN, Driving Licence, Aadhaar) or resumes. 
-- **The Compliance Rule:** Aegis will run OCR locally in the browser to extract safe, non-identifying fields (Name, DOB).
+- **The Compliance Rule:** AEGIS will run OCR locally in the browser to extract safe, non-identifying fields (Name, DOB).
 - It will **immediately discard** the sensitive ID number and document photo.
 - This strict "extract-and-discard" architecture directly respects regulations like the Aadhaar Act, 2016, proving to judges that the system is designed for real-world legal compliance, not just a technical proof-of-concept.
 

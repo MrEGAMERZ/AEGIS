@@ -1,7 +1,7 @@
-# Aegis Demo Applicant Pack
+# AEGIS Demo Applicant Pack
 
 **Name:** Mohammad Rehan
-**Use:** Drop this PDF into the Aegis extension (document vault) or paste the field list into My Profile Data. Then open TP08 and click Fill Form.
+**Use:** Drop this PDF into the AEGIS extension (document vault) or paste the field list into My Profile Data. Then open TP08 and click Fill Form.
 
 Fields marked **RESUME** come from Mohammad Rehan's real resume. Fields marked **DEMO** are synthetic extras so scholarship / KYC / checkout forms have something to fill. Identity numbers (Aadhaar, PAN, passport, card, UPI, bank) are **intentionally omitted** so the vault will not redact the whole pack, and so those fields stay empty on purpose.
 
@@ -60,7 +60,7 @@ Languages: English, Hindi, Arabic
 
 ## Project to paste into open-ended fields (RESUME)
 
-Project description: Built Aegis, an on-device visual perception and PII redaction layer for AI browser agents using BlazeFace, DistilBERT NER, regex, ONNX/WASM, and canvas masking. Sanitized visual context is sent to a VLM while sensitive data stays on the device.
+Project description: Built AEGIS, an on-device visual perception and PII redaction layer for AI browser agents using BlazeFace, DistilBERT NER, regex, ONNX/WASM, and canvas masking. Sanitized visual context is sent to a VLM while sensitive data stays on the device.
 
 ---
 

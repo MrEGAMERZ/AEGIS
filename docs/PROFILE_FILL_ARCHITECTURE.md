@@ -1,6 +1,6 @@
 # Profile, document vault, and Fill Form — where work runs
 
-**SIH26171 (Aegis).** This is the code-accurate map of three product flows. Trust-boundary rules for document upload live in [PRIVACY_DOC_UPLOAD.md](PRIVACY_DOC_UPLOAD.md). Do not treat this as a roadmap: every box is a real function or storage key.
+**SIH26171 (AEGIS).** This is the code-accurate map of three product flows. Trust-boundary rules for document upload live in [PRIVACY_DOC_UPLOAD.md](PRIVACY_DOC_UPLOAD.md). Do not treat this as a roadmap: every box is a real function or storage key.
 
 Companion: [02_ARCHITECTURE.md](02_ARCHITECTURE.md) (sanitization + VLM agent). Storage shapes: [STORAGE_CONTRACT.md](STORAGE_CONTRACT.md). Vault cap in code is **5 docs / 256 KB** (`src/background/doc-vault.js`).
 

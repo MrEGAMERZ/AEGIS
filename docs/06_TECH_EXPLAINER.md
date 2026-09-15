@@ -1,4 +1,4 @@
-# 🧠 Plain-Language Tech Explainer — Aegis
+# 🧠 Plain-Language Tech Explainer — AEGIS
 
 > Read this before touching any code. Every library we use is here, explained simply.
 
@@ -331,7 +331,7 @@ BACKGROUND (background.js)  ← the manager
 | Ollama | Your machine | `curl http://localhost:11434/api/tags` |
 | Vision model | Inside Ollama | `ollama list` → look for llava/qwen2-vl |
 | Chrome | Browser | Already have it |
-| Extension loaded | `chrome://extensions` | Load unpacked → Aegis folder |
+| Extension loaded | `chrome://extensions` | Load unpacked → AEGIS folder |
 | ONNX Runtime Web | Loaded by code | Will verify once inference.worker.js is built |
 | Transformers.js | Loaded by code | Will verify once NER pipeline is built |
 

@@ -1,4 +1,4 @@
-# Aegis — Industry review script
+# AEGIS — Industry review script
 
 **Use this as the single source of spoken truth.** Same words for the industry call, SIH, and any teammate who has to intro the product. Do not invent a second story.
 
@@ -13,7 +13,7 @@
 
 If the call dies, if you are nervous, if they interrupt — this is the product.
 
-1. **What it is.** Aegis is a Chrome extension that sits between your screen and any AI agent.
+1. **What it is.** AEGIS is a Chrome extension that sits between your screen and any AI agent. The name is from Greek: a shield — protector, defender.
 2. **What it does.** Before a screenshot leaves the laptop, it redacts faces, passwords, and personal data *on the device*. Only the cleaned picture is allowed to go to a model.
 3. **What it helps.** People get the convenience of an AI that can fill forms and click around the web — without handing a raw screenshot of their PAN, salary, or face to a server they will never see.
 4. **Where it comes from.** Smart India Hackathon 2026, problem **SIH26171**, given by **ISRO / Department of Space**: build a privacy-preserving vision agent that runs in the browser and sanitizes PII **before any network request**.
@@ -45,10 +45,10 @@ Do this on the machine that will be shared. Full click-path is in [`DEMO_RUNBOOK
 
 1. `bash scripts/build-dist.sh`
 2. Chrome → `chrome://extensions` → Load unpacked → **`dist/`** (never the repo root)
-3. On the Aegis card: **Allow access to file URLs** = ON
+3. On the AEGIS card: **Allow access to file URLs** = ON
 4. Open `eval/test-pages/tp08-kitchen-sink-registration.html`
 5. Confirm the sidebar face photo actually renders
-6. Open the Aegis popup once. Wait until the badge says **BlazeFace ready (WASM)**. First time can take up to a minute. Leave the popup open.
+6. Open the AEGIS popup once. Wait until the badge says **BlazeFace ready (WASM)**. First time can take up to a minute. Leave the popup open.
 7. Paste `eval/fixtures/dummy-profile-ananya.json` → **Save Profile**
 8. Turn **Scan human faces** ON
 9. Optional but better: `ollama serve` + `cd server && node index.js` + `curl http://localhost:8000/health` shows `"mock": false` and `"upstreamReachable": true`. Pre-warm with one Ollama request.
@@ -74,9 +74,9 @@ Spoken text is written to be read as-is. Short sentences on purpose.
 
 **SAY:**
 
-Thank you for making time. We are the team behind Aegis.
+Thank you for making time. We are the team behind AEGIS.
 
-In one sentence: Aegis is a Chrome extension that redacts your screen on the device, before any AI agent is allowed to see it.
+In one sentence: AEGIS is a Chrome extension that redacts your screen on the device, before any AI agent is allowed to see it.
 
 The problem statement is SIH 26171, from ISRO. They asked for a privacy-preserving vision agent in the browser that sanitizes PII before any network request.
 
@@ -148,7 +148,7 @@ What is not reasonable is sending the *secrets* along with the layout.
 
 The closest prior experiment we found was text-only, a BERT filter before ChatGPT. It never became a shipped screen agent. Nobody is doing real-time, on-device, visual plus DOM redaction before the screenshot leaves.
 
-That is the gap. Aegis is the layer that goes in front of any agent.
+That is the gap. AEGIS is the layer that goes in front of any agent.
 
 Concretely, it is a Chrome Manifest V3 extension.
 
@@ -213,7 +213,7 @@ This is a fake scholarship registration. Treat it as the loan form from the open
 On the left: an applicant photo — a real face.  
 In the form: passwords, card number, CVV, Aadhaar, PAN, name, college.
 
-If a normal agent screenshots this tab, all of that leaves the device. Watch what Aegis does instead.
+If a normal agent screenshots this tab, all of that leaves the device. Watch what AEGIS does instead.
 
 ---
 
@@ -282,7 +282,7 @@ That is actually the architecture. The privacy layer does not depend on the visi
 
 End to end: page with secrets, on-device detect, on-device mask, optional local agent on the *cleaned* frame, actions on the live DOM, trap fields left blank.
 
-Raw screenshot never left. That is Aegis.
+Raw screenshot never left. That is AEGIS.
 
 ---
 
@@ -352,7 +352,7 @@ Read this and then Privacy-scan only (Beats A and B). No Fill Form.
 
 **SAY:**
 
-Aegis is a Chrome extension that redacts your screen on the device before any AI agent sees it.
+AEGIS is a Chrome extension that redacts your screen on the device before any AI agent sees it.
 
 ISRO’s SIH problem 26171 asked for a privacy-preserving browser vision agent that sanitizes PII before any network request. Today’s agents screenshot everything and send it to the cloud. We put a local filter in front of that.
 
@@ -392,7 +392,7 @@ Read §0. Stop. Offer the demo.
 Use these words. If you don’t know, say “we have not measured that live yet” — do not guess a number.
 
 **“Isn’t this just a blur extension?”**  
-No. Blur-for-screenshots is a filter. Aegis is a gate in front of an *agent*. The model still has to click and type. We give it structure without secrets, then execute on the real DOM, where the password still exists locally.
+No. Blur-for-screenshots is a filter. AEGIS is a gate in front of an *agent*. The model still has to click and type. We give it structure without secrets, then execute on the real DOM, where the password still exists locally.
 
 **“Why not run the whole agent on device?”**  
 The redaction models are small enough for a tab. A general computer-use model is not, not at a quality that fills a messy form. Split: small models for secrets, large model for actions, and the large model is not allowed to see the secrets.
@@ -432,7 +432,7 @@ Use this table when you make slides, a one-pager, a LinkedIn post, or the SIH fo
 
 | Field | Canonical text |
 |---|---|
-| Product name | Aegis |
+| Product name | AEGIS |
 | One-liner | On-device visual perception for lightweight browser agents — redact the screen before the agent sees it. |
 | Category | Chrome extension (Manifest V3) + optional local vision-language model |
 | Problem code | SIH26171 |

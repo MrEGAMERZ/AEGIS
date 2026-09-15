@@ -1,4 +1,4 @@
-// Simulates the Aegis extension calling the backend:
+// Simulates the AEGIS extension calling the backend:
 // sends a sanitized image + page structure, expects a single action JSON.
 const BASE = process.env.BASE_URL || "http://127.0.0.1:8000";
 

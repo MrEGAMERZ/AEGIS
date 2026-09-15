@@ -263,6 +263,7 @@ check("popup still maps STRUCTURE_CONSENT_REQUIRED", popupJs.includes("STRUCTURE
 check("Stop scan restores idle overlays", contentSrc.includes("REFRESH_IDLE_OVERLAY") && contentSrc.includes("scheduleSensitiveRescan"));
 check("Theme is light, dark, or system (not binary only)", popupJs.includes("prefers-color-scheme") && popupHtml.includes("theme-toggle-btn"));
 check("Stop scan control exists in popup", popupHtml.includes('id="stop-scan-btn"'));
+check("Popup chrome says AEGIS, not AGs", popupHtml.includes("<h1>AEGIS</h1>") && !/\bAGs\b/.test(popupHtml));
 
 console.log("");
 if (fail) {

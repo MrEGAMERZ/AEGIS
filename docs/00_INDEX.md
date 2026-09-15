@@ -1,10 +1,10 @@
-# Aegis — On-device Visual Perception for Light-weight Browser Agents
+# AEGIS — On-device Visual Perception for Light-weight Browser Agents
 
 Public overview and install path: **[README.md](../README.md)** (repo root).
 
 ## Project Overview
 
-A privacy-preserving browser extension that intercepts screen content before it leaves the device, runs local vision inference to detect and redact sensitive elements (faces, passwords, PII text), and sends only a sanitized version to a cloud VLM for agentic action.
+A privacy-preserving browser extension that intercepts screen content before it leaves the device, runs local vision inference to detect and redact sensitive elements (faces, passwords, PII text), and sends only a sanitized version to a local or optional vision model. The product name is **AEGIS** (Greek: a shield — protector, defender).
 
 **Organization:** Indian Space Research Organisation (ISRO)
 **Problem Statement Code:** SIH26171
@@ -56,7 +56,7 @@ A privacy-preserving browser extension that intercepts screen content before it 
 
 | Doc | Purpose | Link |
 |---|---|---|
-| Live demo card | 10-line install path for **real Chrome**: load `dist/`, name **AGs**, TP08 Fill + Privacy Scan | [LIVE_DEMO.md](LIVE_DEMO.md) |
+| Live demo card | 10-line install path for **real Chrome**: load `dist/`, name **AEGIS**, TP08 Fill + Privacy Scan | [LIVE_DEMO.md](LIVE_DEMO.md) |
 | Demo runbook | Judge Chrome E2E on TP08 (load `dist/`, scan / Run Agent, recovery codes) | [DEMO_RUNBOOK.md](DEMO_RUNBOOK.md) |
 | VLM server setup | Measured Ollama install, `qwen2.5vl:7b`, cold/warm smoke tests on `:11434` | [SERVER_SETUP.md](SERVER_SETUP.md) |
 | Backend deploy | Operator path: Node gateway `:8000` → Ollama; Chrome 403 if you hit `:11434` directly | [BACKEND_DEPLOY.md](BACKEND_DEPLOY.md) |

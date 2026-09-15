@@ -99,7 +99,7 @@ On the **browser** machine, set VLM Endpoint to `http://<host-LAN-IP>:8000/v1/ch
 **Firewall:** the gateway port must be allowed inbound on the **host**. Windows helper prints:
 
 ```text
-New-NetFirewallRule -DisplayName 'Aegis' -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName 'AEGIS' -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
 ```
 
 On macOS, allow Node/Python incoming for that port if the client times out. Ollama can stay bound to localhost; only `:8000` needs to be reachable from the other device.

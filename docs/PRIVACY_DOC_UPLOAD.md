@@ -1,6 +1,6 @@
 # PRIVACY_DOC_UPLOAD.md — Document Upload Trust Boundary
 
-**SIH26171 (Aegis). Source:** privacy-engineer audit 2026-09-06 (findings D1–D10, `engineers/privacy/work_done.md`). Status: **enforced in code + harness** (D9/D3/D4/D6 closed 2026-09-06).
+**SIH26171 (AEGIS). Source:** privacy-engineer audit 2026-09-06 (findings D1–D10, `engineers/privacy/work_done.md`). Status: **enforced in code + harness** (D9/D3/D4/D6 closed 2026-09-06).
 
 ---
 

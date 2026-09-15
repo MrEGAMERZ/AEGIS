@@ -1,4 +1,4 @@
-# ENGINEERING RULES — Aegis
+# ENGINEERING RULES — AEGIS
 
 **Binding for all engineers, all agents, all decisions.**
 
@@ -128,5 +128,5 @@ The Lead Engineer owns enforcement. If the Lead Engineer violates these rules, a
 ---
 
 *Adopted: 2026-08-26*
-*Scope: All engineering work on Aegis*
+*Scope: All engineering work on AEGIS*
 *Supersedes: Any implicit assumption that "impressive" is a goal*

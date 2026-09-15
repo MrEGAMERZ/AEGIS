@@ -9,7 +9,7 @@ Builds on: rehan-main-design-20260902-230447.md
 
 ## Problem Statement
 
-AGs is a Chrome MV3 extension for SIH26171: redact faces, passwords, and PII on-device before any optional local VLM sees a capture. Scan, vault Fill, and idle DOM covers already exist, but idle never runs on first paint and there is no Protected cue. This week’s reviewer needs a demo that works and a live loop they can see without a Scan click. Company / prompt-firewall work is out.
+AEGIS is a Chrome MV3 extension for SIH26171: redact faces, passwords, and PII on-device before any optional local VLM sees a capture. Scan, vault Fill, and idle DOM covers already exist, but idle never runs on first paint and there is no Protected cue. This week’s reviewer needs a demo that works and a live loop they can see without a Scan click. Company / prompt-firewall work is out.
 
 ## What Makes This Cool
 

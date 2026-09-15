@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="200" viewBox="0 0 960 200" role="img" aria-label="Aegis">
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="200" viewBox="0 0 960 200" role="img" aria-label="AEGIS — protector, defender">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#07111c"/>
@@ -18,7 +18,7 @@
     <path d="M54 18 C78 18 86 22 86 36 L86 64 C86 82 72 94 54 102 C36 94 22 82 22 64 L22 36 C22 22 30 18 54 18 Z" fill="url(#shield)"/>
   </g>
 
-  <text x="184" y="92" fill="#f8fafc" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="48" font-weight="700" letter-spacing="1.5">Aegis</text>
+  <text x="184" y="92" fill="#f8fafc" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="48" font-weight="700" letter-spacing="4">AEGIS</text>
   <text x="184" y="128" fill="#93c5fd" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="18">The screen leaves last.</text>
 
   <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" font-weight="600">

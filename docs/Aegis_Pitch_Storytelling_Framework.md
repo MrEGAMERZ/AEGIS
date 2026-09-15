@@ -1,4 +1,4 @@
-# 🎤 Pitch Storytelling Framework — Aegis
+# 🎤 Pitch Storytelling Framework — AEGIS
 ### On-device Visual Perception for Light-weight Browser Agents
 
 ---

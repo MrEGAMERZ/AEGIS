@@ -9,6 +9,9 @@
 ### Fixed
 - `classifyError` still maps VLM `timed out` to `TIMEOUT`. Consent copy for document structure is unchanged.
 
+### Changed
+- Product name is **AEGIS** everywhere Chrome and docs show it (not AGs). Greek: a shield — protector, defender.
+
 ## [0.1.0] - 2026-09-09
 
 ### Added
