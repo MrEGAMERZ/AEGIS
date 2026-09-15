@@ -22,6 +22,8 @@
 
 If you just joined: this file is the tour. Not the spec. Specs live in [`docs/`](docs/00_INDEX.md). Read this first, click around, then pick a folder.
 
+**Sharing with teammates for the hackathon:** send [`docs/TEAMMATE_REFERENCE.md`](docs/TEAMMATE_REFERENCE.md) — one short file that covers the whole system.
+
 AEGIS is a Chrome extension that looks at the page **on your laptop**, covers up the private bits, and only then — if you ask it to — lets a vision model help fill the form. The name is from Greek: a shield, a **protector or defender**. Privacy Scan never calls a server. Fill Form and Run Agent talk to a process you start on `localhost`. Raw screenshots do not leave the browser.
 
 ---

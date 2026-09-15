@@ -241,6 +241,11 @@ check(
     !/localModelPath\s*=\s*MODELS_DIR\.href/.test(workerSrc)
 );
 check(
+  "INIT_DONE waits for loadNERModel (Ready includes names)",
+  /await loadNERModel\(\);[\s\S]{0,500}type: 'INIT_DONE'/.test(workerSrc) &&
+    offscreenSrc.includes("nerModelReady: data.nerModelReady")
+);
+check(
   "ensureCallableTokenizer fails closed when tokenizer is missing",
   workerSrc.includes("tokenizer missing after pipeline load")
 );

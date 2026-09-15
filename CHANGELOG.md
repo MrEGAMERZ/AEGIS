@@ -12,6 +12,8 @@
 ### Changed
 - Product name is **AEGIS** everywhere Chrome and docs show it (not AGs). Greek: a shield — protector, defender.
 - Repo hygiene: dropped unused ORT jsep WASM (~28 MB), stale `BRANCHES.md` / OpenCode config / one-off debug scripts. Root `package.json` is eval-only (`adm-zip`); models stay in `src/vendor/`.
+- **Ready** means faces **and** name-hiding are loaded. The popup only shows **Loading models** while Chrome starts them, then hides the badge (or **Not loaded** if they fail).
+- Fill Form writes every matching profile/document field, then warns **Not enough data available to fill the rest** for leftovers. It does not call the local model. Empty save still stops with **Save a profile first.**
 
 ## [0.1.0] - 2026-09-09
 

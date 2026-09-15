@@ -299,6 +299,10 @@ check(
     workerSrc.includes("await import('../vendor/transformers.min.js')")
 );
 check(
+  "INIT_DONE waits for NER so Ready is not faces-only",
+  /await loadNERModel\(\);[\s\S]{0,500}type: 'INIT_DONE'/.test(workerSrc)
+);
+check(
   "CSP allows wasm-unsafe-eval on extension pages",
   !!(manifest.content_security_policy &&
     String(manifest.content_security_policy.extension_pages || "").includes("wasm-unsafe-eval"))

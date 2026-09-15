@@ -76,6 +76,51 @@ const extractEnd = js.indexOf("dropZone?.addEventListener");
 const extractFn = extractStart !== -1 && extractEnd > extractStart ? js.slice(extractStart, extractEnd) : "";
 check("extract path does not ADD_DOC_TO_VAULT", extractFn.includes("EXTRACT_DOCUMENT_TEXT") && !extractFn.includes("ADD_DOC_TO_VAULT"));
 check("extract path does not saveProfileData", extractFn.includes("EXTRACT_DOCUMENT_TEXT") && !extractFn.includes("saveProfileData"));
+check("Ready requires faces and names", js.includes("faceModelReady") && js.includes("nerModelReady") && js.includes("applyInitDone"));
+check("Popup warms models on open", js.includes('type: "WARM_MODELS"') && js.includes("warmOnDeviceModels()"));
+check("Startup copy is Loading models only", html.includes(">Loading models</span>") && js.includes('"Loading models"'));
+check("Loaded hides the badge; fail says Not loaded", js.includes('type === "ready"') && js.includes("Not loaded") && !js.includes("On-device ready") && !js.includes("Faces failed"));
+const fillClick = js.slice(js.indexOf("fillBtn.addEventListener"), js.indexOf("async function runPrivacyScan"));
+check("Fill Form stops when nothing is saved", fillClick.includes("hasSavedFillData") && fillClick.includes("Save a profile first."));
+check(
+  "Fill Form leftovers do not call the laptop brain",
+  fillClick.includes("statusForLocalFill") &&
+    !fillClick.includes("runAgentLoop") &&
+    !fillClick.includes("Asking local AI")
+);
+check(
+  "Fill Form always sends FILL_MATCHING_FIELDS before leftover copy",
+  fillClick.indexOf("FILL_MATCHING_FIELDS") !== -1 &&
+    fillClick.indexOf("FILL_MATCHING_FIELDS") < fillClick.indexOf("statusForLocalFill")
+);
+
+const statusFnMatch = js.match(/function statusForLocalFill\([\s\S]*?\n\}/);
+let statusForLocalFill;
+if (statusFnMatch) {
+  const ctx = {};
+  require("vm").createContext(ctx);
+  require("vm").runInContext(statusFnMatch[0] + "\nthis.statusForLocalFill = statusForLocalFill;", ctx);
+  statusForLocalFill = ctx.statusForLocalFill;
+}
+check("statusForLocalFill is a pure helper", typeof statusForLocalFill === "function");
+check(
+  "partial fill keeps written fields and warns about the rest",
+  typeof statusForLocalFill === "function" &&
+    statusForLocalFill(4, 3).kind === "warn" &&
+    statusForLocalFill(4, 3).text === "Filled 4 field(s). Not enough data available to fill the rest."
+);
+check(
+  "complete fill is success, not a leftover warning",
+  typeof statusForLocalFill === "function" &&
+    statusForLocalFill(6, 0).kind === "success" &&
+    /Filled 6 field\(s\)/.test(statusForLocalFill(6, 0).text)
+);
+check(
+  "zero matches warn without claiming a fill",
+  typeof statusForLocalFill === "function" &&
+    statusForLocalFill(0, 8).text === "Not enough data available to fill form." &&
+    statusForLocalFill(0, 8).kind === "warn"
+);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -78,29 +78,22 @@ Everyday pages with many human faces do **not** all get “Secured”. That badg
 
 ---
 
-## 4. Fill Form — client match, then local VLM leftovers
+## 4. Fill Form — client match only
 
 ```mermaid
 flowchart TD
   A["Fill Form"] --> B["persistProfileFromTextarea / aegisProfiles → userProfile"]
-  B --> C["FILL_MATCHING_FIELDS — no VLM"]
-  C --> D["enrichProfileFromNotes + enrichProfileFromVaultText\nextract-profile.js on vault cache"]
-  D --> E["collectVerifiedTypeActions → wrapFillActions"]
-  E --> F{"matched visible inputs?"}
-  F -->|all matched| G["Execute fill_many / type — done"]
-  F -->|leftovers| H["CAPTURE_AND_SANITIZE"]
-  H --> I{"isLocalVlmEndpoint?"}
-  I -->|yes| J["System prompt: USER PROFILE +\nDOCUMENT KNOWLEDGE snippets"]
-  I -->|no| K["USER PROFILE only; vault cache cleared"]
-  J --> L["sanitizeAction / resolveProfileKey\nvalue must match profile or vault"]
-  K --> M["sanitizeAction profile-only\nJohn Doe rejected"]
-  L --> N["EXECUTE_ACTION"]
-  M --> N
+  B --> C{"saved profile or vault docs?"}
+  C -->|no| D["Save a profile first. Stop."]
+  C -->|yes| E["FILL_MATCHING_FIELDS — no VLM"]
+  E --> F["enrichProfileFromNotes + enrichProfileFromVaultText"]
+  F --> G["collectVerifiedTypeActions → wrapFillActions → execute"]
+  G --> H{"leftover empty fields?"}
+  H -->|no| I["Filled N field(s)…"]
+  H -->|yes| J["Filled N field(s). Not enough data available to fill the rest."]
 ```
 
-**Step 1 (client):** maps labels to values already on device (structured profile, notes, regex fields from vault text). Invented names never enter this path.
-
-**Step 2 (optional VLM):** leftover empty controls. Still one existing pipeline (`CAPTURE_AND_SANITIZE`), not a second extractor. Typed values must survive `sanitizeAction` (`profileKey` / `vaultAllowsValue` / notes substring). Remote VLM must not receive vault document text (D9).
+**Client only:** maps labels to values already on device (structured profile, notes, regex fields from vault text). Matching fields are written even when others stay empty. Invented names never enter this path. Leftovers are a status warning, not a VLM call. Run Agent is the path that talks to the local model.
 
 ---
 

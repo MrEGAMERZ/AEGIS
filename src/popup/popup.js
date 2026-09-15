@@ -172,6 +172,14 @@ function setupConfigListeners() {
 
 // ── Model Status ──────────────────────────────────────────────────
 function updateModelStatus(status, type) {
+  if (!modelStatus) return;
+  if (type === "ready") {
+    modelStatus.hidden = true;
+    modelStatus.textContent = "";
+    modelStatus.className = "model-status";
+    return;
+  }
+  modelStatus.hidden = false;
   modelStatus.textContent = status;
   modelStatus.className = `model-status ${type}`;
 }
@@ -186,16 +194,30 @@ function formatVlmOfflineMessage(vlmError) {
   return "VLM unavailable: " + msg;
 }
 
+function applyInitDone(msg) {
+  const faces = msg && msg.faceModelReady === true;
+  const names = msg && msg.nerModelReady === true;
+  if (faces && names) updateModelStatus("", "ready");
+  else updateModelStatus("Not loaded", "failed");
+}
+
 if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === "INIT_PROGRESS") {
-      updateModelStatus("Loading...", "loading");
-      setStatus(msg.status || "Loading on-device models...", "active");
-    }
-    if (msg.type === "INIT_DONE") {
-      updateModelStatus(msg.faceModelReady ? "On-device ready" : "On-device failed", msg.faceModelReady ? "ready" : "failed");
-    }
+    if (msg.type === "INIT_PROGRESS") updateModelStatus("Loading models", "loading");
+    if (msg.type === "INIT_DONE") applyInitDone(msg);
   });
+}
+
+function warmOnDeviceModels() {
+  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
+  chrome.runtime.sendMessage({ type: "WARM_MODELS" }).then((res) => {
+    if (!res) return;
+    if (res.ok === false) {
+      updateModelStatus("Not loaded", "failed");
+      return;
+    }
+    if ("faceModelReady" in res || "nerModelReady" in res) applyInitDone(res);
+  }).catch(() => {});
 }
 
 function labelFor(k) { return KEY_LABELS[k] || k; }
@@ -367,8 +389,6 @@ function formatRuntimeDisconnect(err) {
 }
 
 // ── Agent Loop ────────────────────────────────────────────────────
-const DEFAULT_FILL_TASK = "Fill the visible form using my saved profile. Leave blank any field not in the profile.";
-
 async function persistProfileFromTextarea() {
   const raw = document.getElementById("profile-input")?.value || "";
   if (raw.trim()) {
@@ -387,6 +407,39 @@ async function persistProfileFromTextarea() {
     await chrome.runtime.sendMessage({ type: "SET_CONFIG", config: { userProfile: profile } });
   }
   return null;
+}
+
+function profileHasFillValues(profile) {
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) return false;
+  return Object.entries(profile).some(([k, v]) => {
+    if (k === "_skipped") return false;
+    const val = typeof v === "object" && v && "value" in v ? v.value : v;
+    return String(val ?? "").trim().length > 0;
+  });
+}
+
+async function hasSavedFillData() {
+  if (profileHasFillValues(await getProfile())) return true;
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "GET_DOC_VAULT" });
+    return Array.isArray(res?.docs) && res.docs.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+// Fill Form always writes every matching field first. This only describes
+// the result: leftover empty controls are a warning, never a reason to skip.
+function statusForLocalFill(filled, remaining) {
+  const n = Math.max(0, Number(filled) || 0);
+  const left = Math.max(0, Number(remaining) || 0);
+  if (n > 0 && left === 0) {
+    return { text: `Filled ${n} field(s) from your profile and documents.`, kind: "success" };
+  }
+  if (n > 0) {
+    return { text: `Filled ${n} field(s). Not enough data available to fill the rest.`, kind: "warn" };
+  }
+  return { text: "Not enough data available to fill form.", kind: "warn" };
 }
 
 async function runAgentLoop(task) {
@@ -443,8 +496,10 @@ stopScanBtn?.addEventListener("click", () => abortPrivacyScan());
 fillBtn.addEventListener("click", async () => {
   const saveErr = await persistProfileFromTextarea();
   if (saveErr) { setStatus(saveErr, "error"); return; }
-  const task = document.getElementById("task-input").value.trim() || DEFAULT_FILL_TASK;
-  document.getElementById("task-input").value = task;
+  if (!(await hasSavedFillData())) {
+    setStatus("Save a profile first.", "warn");
+    return;
+  }
   fillBtn.disabled = true; scanBtn.disabled = true; runBtn.disabled = true; clearStatus(); previewWrap.classList.remove("visible");
   try {
     setStatus("Filling matching fields from your profile and documents…", "active");
@@ -455,14 +510,8 @@ fillBtn.addEventListener("click", async () => {
     }
     const filled = local?.filled || 0;
     const remaining = local?.remaining ?? 0;
-    if (filled > 0 && remaining === 0) {
-      setStatus(`Filled ${filled} field(s) from your profile and documents.`, "success");
-      return;
-    }
-    if (filled > 0) {
-      setStatus(`Filled ${filled} field(s). Asking local AI for the rest…`, "active");
-    }
-    await runAgentLoop(task);
+    const result = statusForLocalFill(filled, remaining);
+    setStatus(result.text, result.kind);
   } catch (err) { setPipeline(null); setStatus(formatRuntimeDisconnect(err), "error"); }
   finally { fillBtn.disabled = false; scanBtn.disabled = false; runBtn.disabled = false; }
 });
@@ -837,3 +886,4 @@ setupConfigListeners();
 loadLastReceipt();
 renderProfile();
 renderVaultList();
+warmOnDeviceModels();

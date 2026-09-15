@@ -535,6 +535,14 @@ check(
   /handleFillMatchingFields[\s\S]*enrichProfileFromVaultText/.test(source) &&
     /async function enrichProfileFromVaultText[\s\S]*extract-profile\.js/.test(source)
 );
+check(
+  "FILL_MATCHING_FIELDS executes mapped fields even when leftovers remain",
+  /async function handleFillMatchingFields[\s\S]*handleExecuteAction\(action[\s\S]*remaining:\s*Math\.max\(0,\s*remainingBase - filled\)/.test(source)
+);
+check(
+  "fill_many continues after a single field throw",
+  /case "fill_many":[\s\S]*try \{[\s\S]*EXECUTE_TYPE[\s\S]*catch \(err\)/.test(source)
+);
 
 // ── 6. fieldsForFill — sensitive + fillable merge (DOM_SCAN contract) ───────
 

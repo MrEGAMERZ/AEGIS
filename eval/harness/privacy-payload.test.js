@@ -243,6 +243,22 @@ check(
   "Fill Form click sends exact FILL_MATCHING_FIELDS message",
   /fillBtn\.addEventListener\([\s\S]*?sendMessage\(\{\s*type:\s*"FILL_MATCHING_FIELDS"\s*\}\)/.test(popupJs)
 );
+const fillClickSrc = popupJs.slice(
+  popupJs.indexOf("fillBtn.addEventListener"),
+  popupJs.indexOf("async function runPrivacyScan")
+);
+check(
+  "Fill Form does not start the agent loop",
+  fillClickSrc.length > 0 && !fillClickSrc.includes("runAgentLoop")
+);
+check(
+  "fill_many keeps remaining fields after one execute throw",
+  /case "fill_many":[\s\S]*?try \{[\s\S]*?EXECUTE_TYPE[\s\S]*?catch/.test(backgroundSrc)
+);
+check(
+  "FILL_MATCHING_FIELDS executes matches before leftover remaining",
+  /async function handleFillMatchingFields[\s\S]*handleExecuteAction[\s\S]*remaining:\s*Math\.max/.test(backgroundSrc)
+);
 check("Settings tab has scan-faces-page-btn", popupHtml.includes('id="scan-faces-page-btn"'));
 check(
   "scan-faces-page-btn wired to scanFacesNow (forceFaces path)",
@@ -264,6 +280,10 @@ check("Stop scan restores idle overlays", contentSrc.includes("REFRESH_IDLE_OVER
 check("Theme is light, dark, or system (not binary only)", popupJs.includes("prefers-color-scheme") && popupHtml.includes("theme-toggle-btn"));
 check("Stop scan control exists in popup", popupHtml.includes('id="stop-scan-btn"'));
 check("Popup chrome says AEGIS, not AGs", popupHtml.includes("<h1>AEGIS</h1>") && !/\bAGs\b/.test(popupHtml));
+check("Ready waits for nerModelReady as well as faces", popupJs.includes("nerModelReady") && popupJs.includes("applyInitDone"));
+check("Popup sends WARM_MODELS on open", popupJs.includes('type: "WARM_MODELS"'));
+check("Chrome start warms models", backgroundSrc.includes("onStartup") && backgroundSrc.includes("warmOnDeviceModelsBestEffort"));
+check("Popup only shows Loading models / Not loaded", popupJs.includes("Loading models") && popupJs.includes("Not loaded") && !popupJs.includes("On-device ready"));
 
 console.log("");
 if (fail) {

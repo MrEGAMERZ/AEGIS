@@ -126,6 +126,12 @@ async function ensureOffscreen() {
   });
 }
 
+function warmOnDeviceModelsBestEffort() {
+  ensureOffscreen()
+    .then(() => chrome.runtime.sendMessage({ type: "WARM_WORKER" }))
+    .catch(() => {});
+}
+
 // ── Document text extraction (popup → offscreen router) ───────────
 // The heavy lifting happens in the offscreen document (DOM + module imports):
 // this service worker only guarantees the offscreen document exists, forwards
@@ -1984,12 +1990,19 @@ async function handleExecuteAction(action, tabId) {
     case "fill_many": {
       const results = [];
       for (const field of safe.fields) {
-        const one = await sendTabMessage(targetTab, {
-          type: "EXECUTE_TYPE",
-          selector: field.selector,
-          value: field.value,
-        });
-        results.push({ selector: field.selector, ...(one || {}) });
+        try {
+          const one = await sendTabMessage(targetTab, {
+            type: "EXECUTE_TYPE",
+            selector: field.selector,
+            value: field.value,
+          });
+          results.push({ selector: field.selector, ...(one || {}) });
+        } catch (err) {
+          results.push({
+            selector: field.selector,
+            error: String(err?.message || err || "fill failed"),
+          });
+        }
       }
       const filled = results.filter((r) => r && !r.error).length;
       execResult = { ok: filled > 0, filled, results };
@@ -2056,6 +2069,11 @@ chrome.runtime.onInstalled.addListener(() => {
   // re-inject so existing file:// / http(s) tabs can be messaged without
   // a manual refresh. Failures are swallowed; sendTabMessage still retries.
   reinjectContentScriptsBestEffort();
+  warmOnDeviceModelsBestEffort();
+});
+
+chrome.runtime.onStartup?.addListener(() => {
+  warmOnDeviceModelsBestEffort();
 });
 
 chrome.commands?.onCommand?.addListener(async (command) => {

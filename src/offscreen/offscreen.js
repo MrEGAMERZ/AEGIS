@@ -60,12 +60,14 @@ function handleWorkerMessage(e) {
 
   if (type === "INIT_DONE") {
     console.log("[Aegis Offscreen] Worker ready, backend:", data.backend,
-      "faceModelReady:", data.faceModelReady);
+      "faceModelReady:", data.faceModelReady, "nerModelReady:", data.nerModelReady);
     chrome.runtime.sendMessage({
       type: "INIT_DONE",
       backend: data.backend,
       faceModelReady: data.faceModelReady,
       faceModelError: data.faceModelError,
+      nerModelReady: data.nerModelReady,
+      nerModelError: data.nerModelError,
     }).catch(() => {});
     if (pendingRequests["INIT_DONE"]) {
       pendingRequests["INIT_DONE"].resolve(data);
@@ -163,7 +165,7 @@ function ensureWorkerReady() {
   if (!workerInitPromise) {
     // Cold WASM compile of ort-wasm-simd-threaded.wasm (~13MB) can exceed 20s
     // on first Load-unpacked. Progress is posted as INIT_PROGRESS.
-    workerInitPromise = workerRequest("INIT", {}, "INIT_DONE", 90000).catch((err) => {
+    workerInitPromise = workerRequest("INIT", {}, "INIT_DONE", 120000).catch((err) => {
       // If INIT times out, reset so the next SANITIZE call retries.
       workerInitPromise = null;
       throw err;
@@ -187,7 +189,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .then((data) =>
         sendResponse({
           ok: true,
-          faceModelReady: data.faceModelReady,
+          faceModelReady: data.faceModelReady === true,
+          nerModelReady: data.nerModelReady === true,
           backend: data.backend,
         })
       )

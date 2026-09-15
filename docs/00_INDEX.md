@@ -2,6 +2,8 @@
 
 Public overview and install path: **[README.md](../README.md)** (repo root).
 
+**Teammates / hackathon handoff:** **[TEAMMATE_REFERENCE.md](TEAMMATE_REFERENCE.md)** — one short file for the whole system (product, pipeline, folders, how to run, what is still open).
+
 ## Project Overview
 
 A privacy-preserving browser extension that intercepts screen content before it leaves the device, runs local vision inference to detect and redact sensitive elements (faces, passwords, PII text), and sends only a sanitized version to a local or optional vision model. The product name is **AEGIS** (Greek: a shield — protector, defender).
@@ -28,6 +30,7 @@ A privacy-preserving browser extension that intercepts screen content before it 
 
 | Doc | Purpose | Link |
 |---|---|---|
+| Teammate reference | **Give this to teammates** — short system tour, folder map, run steps, demo-gate leftovers | [TEAMMATE_REFERENCE.md](TEAMMATE_REFERENCE.md) |
 | Master Task Board | **Canonical outstanding-work board (OPEN WORK A–H)** — what is not done, owners, dependencies, acceptance criteria | [TASK_MASTER.md](TASK_MASTER.md) |
 | 01 | Requirements — functional/non-functional reqs, redaction taxonomy, MVP scope | [01_REQUIREMENTS.md](01_REQUIREMENTS.md) |
 | 02 | Architecture — components, data flow, sanitization pipeline, server contract | [02_ARCHITECTURE.md](02_ARCHITECTURE.md) |

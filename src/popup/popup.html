@@ -34,6 +34,7 @@
     .model-status.ready { border-color: #86efac; background: #f0fdf4; color: #15803d; }
     .model-status.failed { border-color: #fca5a5; background: #fef2f2; color: #dc2626; }
     .model-status.loading { border-color: #fcd34d; background: #fffbeb; color: #b45309; }
+    .model-status[hidden] { display: none; }
 
     .tab-bar { display: flex; padding: 10px 16px 0; gap: 2px; }
     .tab {
@@ -194,7 +195,7 @@
       <span class="badge">On-device</span>
     </div>
     <div class="header-actions">
-      <span class="model-status loading" id="model-status">Loading...</span>
+      <span class="model-status loading" id="model-status">Loading models</span>
       <button class="icon-btn theme-btn" id="theme-toggle-btn" type="button" title="Theme: System — click for Light" aria-label="Theme: System">Auto</button>
     </div>
   </div>

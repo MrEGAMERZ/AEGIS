@@ -5,7 +5,7 @@
 // This worker is created with { type: 'module' } from offscreen.js.
 // ORT (WASM-only bundle) is imported statically so BlazeFace INIT can run
 // without waiting on Transformers.js. Transformers.js is dynamic-imported
-// in loadNERModel() after INIT_DONE.
+// in loadNERModel(), then INIT_DONE fires when faces and names are both ready.
 
 // ── Imports ────────────────────────────────────────────────────────
 
@@ -83,8 +83,8 @@ async function ensureOrtWasmBinary() {
   return ortWasmBinaryPromise;
 }
 
-// Transformers.js is loaded lazily in loadNERModel() so a slow or failed
-// NER module graph cannot block INIT / BlazeFace.
+// Transformers.js is loaded lazily in loadNERModel() so BlazeFace can compile
+// first. INIT_DONE still waits for NER after that.
 
 // ── State ──────────────────────────────────────────────────────────
 let faceSession = null;
@@ -540,25 +540,26 @@ self.onmessage = async (e) => {
         await selectBackend();
         lockOrtWasmSingleThread();
 
-        // Face model is on the VLM critical path — load it first and
-        // report readiness so the offscreen gate can fail closed.
-        // NER is not required before a VLM call; load it in the background
-        // so a slow HF download cannot skip or delay face redaction.
-        self.postMessage({ type: 'INIT_PROGRESS', status: 'Loading face model…', backend, id });
+        // Ready = faces AND names. Scan/VLM fail closed on both; the popup
+        // must not go green after BlazeFace while DistilBERT is still loading.
+        self.postMessage({ type: 'INIT_PROGRESS', status: 'Loading faces…', backend, id });
         await loadFaceModel();
+        self.postMessage({ type: 'INIT_PROGRESS', status: 'Loading names…', backend, id });
+        let nerModelError = null;
+        try {
+          await loadNERModel();
+        } catch (err) {
+          nerModelError = String(err && err.message ? err.message : err);
+          console.error('[SIH26171] NER load failed:', err);
+        }
         self.postMessage({
           type: 'INIT_DONE',
           backend,
           faceModelReady: !!faceSession,
           faceModelError,
           nerModelReady: !!nerPipeline,
+          nerModelError,
           id,
-        });
-        // Warm the NER weights after faces are ready so DETECT_NER is not a
-        // cold 11s download on the first SANITIZE. Fail-closed happens on
-        // DETECT_NER if this load fails (detectNER throws NER_MODEL_UNAVAILABLE).
-        loadNERModel().catch((err) => {
-          console.error('[SIH26171] Background NER load failed:', err);
         });
         break;
       }
