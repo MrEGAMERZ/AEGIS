@@ -269,12 +269,12 @@ check(
 );
 check(
   "pageStructure fields are NER-redacted before the VLM payload",
-  backgroundSrc.includes("redactNerSpansInFields(domScanResults.fields")
+  /fields:\s*redactNerSpansInFields\(fillFields,\s*sanitizeResponse\.nerEntities\)/.test(backgroundSrc)
 );
 
 const fetchIdx = backgroundSrc.indexOf("await fetch(vlmEndpoint");
 const assertCallIdx = backgroundSrc.indexOf("assertReadyForVlm(sanitizeResponse");
-const redactCallIdx = backgroundSrc.indexOf("redactNerSpansInFields(domScanResults");
+const redactCallIdx = backgroundSrc.indexOf("redactNerSpansInFields(fillFields");
 check(
   "NER gate / label redaction runs BEFORE fetch(vlmEndpoint)",
   fetchIdx !== -1 && assertCallIdx !== -1 && redactCallIdx !== -1 &&

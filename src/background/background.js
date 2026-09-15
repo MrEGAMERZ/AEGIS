@@ -240,7 +240,7 @@ chrome.commands?.onCommand?.addListener(async (command) => {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus?.create({
     id: "aegis_autofill_context",
-    title: "Fill Form with Aegis Profile",
+    title: "Fill Form with AGs Profile",
     contexts: ["page", "editable"],
   });
 });
@@ -304,14 +304,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "SCAN_AND_OVERLAY") {
     // Scan the active tab's DOM and show redaction overlay — no VLM call.
-    handleScanAndOverlay()
+    handleScanAndOverlay(msg)
       .then(sendResponse)
-      .catch((err) =>
+      .catch((err) => {
+        if (err && String(err.message || "").includes("SCAN_ABORTED")) {
+          sendResponse({ aborted: true, errorCode: "SCAN_ABORTED" });
+          return;
+        }
         sendResponse({
           error: err.message,
           errorCode: classifyError(err),
-        })
-      );
+        });
+      });
+    return true;
+  }
+
+  if (msg.type === "ABORT_SCAN") {
+    handleAbortScan()
+      .then(sendResponse)
+      .catch(() => sendResponse({ ok: true, aborted: true }));
     return true;
   }
 
@@ -550,6 +561,24 @@ function buildPageStructureForVlm({ fields, maskedRegions, dpr, viewport }) {
 // ── Scan + local redaction (no VLM) ───────────────────────────────
 // Popup "Privacy scan": DOM overlays + capture + BlazeFace/NER sanitize,
 // sanitized preview + privacy receipt — hero path when Ollama is offline.
+// ABORT_SCAN bumps scanEpoch so an in-flight scan discards its result.
+
+let scanEpoch = 0;
+
+function assertScanNotAborted(epoch) {
+  if (epoch != null && epoch !== scanEpoch) {
+    throw new Error("SCAN_ABORTED");
+  }
+}
+
+async function handleAbortScan() {
+  scanEpoch += 1;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id && isInjectableTabUrl(tab.url)) {
+    await sendTabMessage(tab, { type: "REFRESH_IDLE_OVERLAY" }).catch(() => {});
+  }
+  return { ok: true, aborted: true, errorCode: "SCAN_ABORTED" };
+}
 
 function buildPrivacyReceipt(tab, sanitizeResponse, timing) {
   const receipt = {
@@ -576,23 +605,27 @@ function buildPrivacyReceipt(tab, sanitizeResponse, timing) {
   return receipt;
 }
 
-async function performLocalRedaction(tab, config) {
+async function performLocalRedaction(tab, config, scanEpochAtStart) {
   const t0 = Date.now();
   const passwordDetectionEnabled = config.passwordDetection !== false;
   const faceDetectionEnabled = config.faceDetection !== false;
   const piiDetectionEnabled = config.piiDetection !== false;
+  assertScanNotAborted(scanEpochAtStart);
 
   if (isInjectableTabUrl(tab.url)) {
     await sendTabMessage(tab, { type: "CLEAR_REDACTION_OVERLAY" }).catch(() => {});
     await new Promise((resolve) => setTimeout(resolve, OVERLAY_CLEAR_PAINT_MS));
+    assertScanNotAborted(scanEpochAtStart);
   }
 
   const t1 = Date.now();
   const screenshotDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+  assertScanNotAborted(scanEpochAtStart);
   const tCapture = Date.now() - t1;
 
   const t2 = Date.now();
   const domScanResults = await sendTabMessage(tab, { type: "DOM_SCAN" });
+  assertScanNotAborted(scanEpochAtStart);
   domScanResults.fields = filterFieldsForPasswordDetection(
     domScanResults.fields,
     passwordDetectionEnabled
@@ -602,10 +635,11 @@ async function performLocalRedaction(tab, config) {
   sendTabMessage(tab, {
     type: "SHOW_REDACTION_OVERLAY",
     fields: domScanResults.fields || [],
-    includeFaces: true,
+    includeFaces: faceDetectionEnabled,
   }).catch(() => {});
 
   await ensureOffscreen();
+  assertScanNotAborted(scanEpochAtStart);
   const t3 = Date.now();
   const sanitizeResponse = await chrome.runtime.sendMessage({
     type: "SANITIZE",
@@ -614,6 +648,7 @@ async function performLocalRedaction(tab, config) {
     faceDetection: faceDetectionEnabled,
     piiDetection: piiDetectionEnabled,
   });
+  assertScanNotAborted(scanEpochAtStart);
   const tInference = Date.now() - t3;
 
   if (sanitizeResponse?.error) throw new Error(sanitizeResponse.error);
@@ -629,7 +664,7 @@ async function performLocalRedaction(tab, config) {
     fields: domScanResults.fields || [],
     faces: faceRegions,
     dpr: sanitizeResponse.dpr || domScanResults.dpr || 1,
-    includeFaces: true,
+    includeFaces: faceDetectionEnabled,
   }).catch(() => {});
 
   const receipt = buildPrivacyReceipt(tab, sanitizeResponse, {
@@ -656,10 +691,12 @@ async function handleFillMatchingFields() {
   if (!tab?.id) throw new Error("No active tab");
 
   const config = await chrome.storage.local.get(["userProfile", "passwordDetection", "vlmEndpoint"]);
-  const userProfile = await enrichProfileFromNotes(normalizeProfile(config.userProfile));
   const vlmEndpoint = await resolveVlmEndpoint(config.vlmEndpoint);
   vaultProvenanceLocalOnly = isLocalVlmEndpoint(vlmEndpoint);
   await refreshVaultCacheBestEffort();
+  const userProfile = await enrichProfileFromVaultText(
+    await enrichProfileFromNotes(normalizeProfile(config.userProfile))
+  );
 
   const domScan = await sendTabMessage(tab, { type: "DOM_SCAN" });
   const fillFields = filterFieldsForPasswordDetection(
@@ -686,17 +723,27 @@ async function handleFillMatchingFields() {
   };
 }
 
-async function handleScanAndOverlay() {
+async function handleScanAndOverlay(msg) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("No active tab");
+  const epoch = scanEpoch;
 
   const config = await chrome.storage.local.get([
     "faceDetection",
     "piiDetection",
     "passwordDetection",
   ]);
+  // Explicit "Scan faces now" — one existing scan pipeline, faces on for this pass.
+  if (msg && msg.forceFaces === true) {
+    config.faceDetection = true;
+  }
 
-  const { domScanResults, sanitizeResponse, receipt } = await performLocalRedaction(tab, config);
+  const { domScanResults, sanitizeResponse, receipt } = await performLocalRedaction(
+    tab,
+    config,
+    epoch
+  );
+  assertScanNotAborted(epoch);
 
   await chrome.storage.session.set({ lastReceipt: receipt });
 
@@ -953,6 +1000,28 @@ async function enrichProfileFromNotes(profile) {
   const base = profile && typeof profile === "object" && !Array.isArray(profile) ? { ...profile } : {};
   try {
     const blob = [base.raw, base.notes, base.Notes].filter(Boolean).join("\n");
+    if (!String(blob).trim()) return base;
+    const mod = await import("../shared/extract-profile.js");
+    const extracted = mod.toUserProfileFields(mod.extractProfileFromText(blob));
+    return { ...extracted, ...base };
+  } catch {
+    return base;
+  }
+}
+
+// Client-first Fill Form: map vault *text* with the same extract-profile.js
+// used on upload — not a second parser. Saved profile keys win on conflict.
+// Temporary merge only; does not persist and does not put vault text on a
+// remote VLM prompt (CAPTURE_AND_SANITIZE still uses stored userProfile).
+async function enrichProfileFromVaultText(profile) {
+  const base = profile && typeof profile === "object" && !Array.isArray(profile) ? { ...profile } : {};
+  try {
+    const api = globalThis.AegisDocVault;
+    const texts =
+      api && typeof api.getCachedVaultTexts === "function" ? api.getCachedVaultTexts() : [];
+    const blob = (Array.isArray(texts) ? texts : [])
+      .filter((t) => typeof t === "string")
+      .join("\n");
     if (!String(blob).trim()) return base;
     const mod = await import("../shared/extract-profile.js");
     const extracted = mod.toUserProfileFields(mod.extractProfileFromText(blob));
@@ -1840,6 +1909,7 @@ function classifyError(err) {
   if (msg.includes("STRUCTURE_TOO_LARGE")) return "STRUCTURE_TOO_LARGE";
   if (msg.includes("STRUCTURE_RATE_LIMITED")) return "STRUCTURE_RATE_LIMITED";
   if (msg.includes("STRUCTURE_CONSENT_REQUIRED")) return "STRUCTURE_CONSENT_REQUIRED";
+  if (msg.includes("SCAN_ABORTED")) return "SCAN_ABORTED";
   if (msg.includes("timed out")) return "TIMEOUT";
   if (msg.includes("VLM_BAD_RESPONSE")) return "VLM_BAD_RESPONSE";
   if (msg.includes("VLM")) return "BACKEND_UNAVAILABLE";
@@ -1976,7 +2046,7 @@ chrome.runtime.onInstalled.addListener(() => {
   try {
     chrome.contextMenus?.create?.({
       id: "aegis_autofill_context",
-      title: "Fill form from Aegis profile",
+      title: "Fill form from AGs profile",
       contexts: ["page", "editable"],
     });
   } catch {

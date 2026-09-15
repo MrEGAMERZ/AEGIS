@@ -308,7 +308,7 @@ async function main() {
   );
   check("docx extractor lazily imports pako", /import "\.\.\/vendor\/pako\/pako_inflate\.min\.js"/.test(fs.readFileSync(path.join(ROOT, "src", "offscreen", "docx-extractor.js"), "utf8")));
 
-  const EXPECTED_ACCEPT = ".pdf,.docx,.txt,.json,.csv,.md,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.png,.jpg,.jpeg";
+  const EXPECTED_ACCEPT = ".pdf,.docx,.txt,.json,.csv,.md,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   check("popup file input accept covers all formats", popupHtml.includes(`accept="${EXPECTED_ACCEPT}"`));
 
   console.log("\n" + ("─".repeat(60)));

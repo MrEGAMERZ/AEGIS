@@ -221,6 +221,48 @@ check("idle rescan does not send DETECT_FACES", (() => {
   const end = contentSrc.indexOf("function mutationTouchesOverlay");
   return start !== -1 && end > start && !contentSrc.slice(start, end).includes("DETECT_FACES");
 })());
+check(
+  "overlay covers hide private regions (not transparent)",
+  contentSrc.includes('fill: "rgba(15, 23, 42, 0.92)"') &&
+    contentSrc.includes("backdropFilter") &&
+    !/backgroundColor:\s*"transparent"/.test(contentSrc)
+);
+
+console.log("\n7. Face-scan + Fill Form copy");
+check("Settings has face detection toggle", popupHtml.includes('id="face-detection"') && /Face detection on Privacy Scan/.test(popupHtml));
+check("Settings copy says browsing does not scan other people's faces", /Browsing does not scan other people's faces/.test(popupHtml));
+check("Settings has Scan faces on this page", popupHtml.includes('id="scan-faces-page-btn"'));
+check("popup persists faceDetection from Settings", popupJs.includes("face-detection") && popupJs.includes("faceDetection"));
+check("Privacy Scan / Scan faces send forceFaces on SCAN_AND_OVERLAY", popupJs.includes("forceFaces") && popupJs.includes("SCAN_AND_OVERLAY"));
+check("Fill Form copy says profile and documents stay on device", popupHtml.includes('id="fill-form-hint"') && /profile and documents you saved on this device/.test(popupHtml));
+check("upload copy asks to Save after review", /Review fields, then Save to your profile and local knowledge/.test(popupHtml));
+check("nothing stored until Save", /Nothing is stored until you Save/.test(popupHtml));
+check("overlay includeFaces follows faceDetectionEnabled", backgroundSrc.includes("includeFaces: faceDetectionEnabled"));
+check("FILL_MATCHING_FIELDS consumes vault via extract-profile", backgroundSrc.includes("enrichProfileFromVaultText"));
+check(
+  "Fill Form click sends exact FILL_MATCHING_FIELDS message",
+  /fillBtn\.addEventListener\([\s\S]*?sendMessage\(\{\s*type:\s*"FILL_MATCHING_FIELDS"\s*\}\)/.test(popupJs)
+);
+check("Settings tab has scan-faces-page-btn", popupHtml.includes('id="scan-faces-page-btn"'));
+check(
+  "scan-faces-page-btn wired to scanFacesNow (forceFaces path)",
+  popupJs.includes('getElementById("scan-faces-page-btn")') &&
+    /function scanFacesNow[\s\S]*runPrivacyScan\(\{\s*forceFaces:\s*true\s*\}\)/.test(popupJs)
+);
+check(
+  "runPrivacyScan forwards forceFaces on SCAN_AND_OVERLAY",
+  /runPrivacyScan[\s\S]*sendMessage\(\{\s*type:\s*"SCAN_AND_OVERLAY",\s*forceFaces\s*\}\)/.test(popupJs)
+);
+check(
+  "background SCAN_AND_OVERLAY honors forceFaces for faceDetection",
+  /handleScanAndOverlay[\s\S]*msg\.forceFaces === true[\s\S]*config\.faceDetection = true/.test(backgroundSrc)
+);
+check("ABORT_SCAN bumps scanEpoch and ignores late results", backgroundSrc.includes("ABORT_SCAN") && backgroundSrc.includes("SCAN_ABORTED") && backgroundSrc.includes("assertScanNotAborted"));
+check("classifyError still maps timed out to TIMEOUT", /timed out[\s\S]{0,40}TIMEOUT/.test(backgroundSrc) || backgroundSrc.includes('if (msg.includes("timed out")) return "TIMEOUT"'));
+check("popup still maps STRUCTURE_CONSENT_REQUIRED", popupJs.includes("STRUCTURE_CONSENT_REQUIRED") && popupJs.includes("SCAN_ABORTED"));
+check("Stop scan restores idle overlays", contentSrc.includes("REFRESH_IDLE_OVERLAY") && contentSrc.includes("scheduleSensitiveRescan"));
+check("Theme is light, dark, or system (not binary only)", popupJs.includes("prefers-color-scheme") && popupHtml.includes("theme-toggle-btn"));
+check("Stop scan control exists in popup", popupHtml.includes('id="stop-scan-btn"'));
 
 console.log("");
 if (fail) {

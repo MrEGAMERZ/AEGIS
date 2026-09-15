@@ -109,8 +109,12 @@ check(
     contentSrc.indexOf("function renderFaceOverlays") < contentSrc.indexOf("applicant-photo")
 );
 check(
-  "scan overlay path still requests faces",
-  /SHOW_REDACTION_OVERLAY[\s\S]{0,180}includeFaces:\s*true/.test(backgroundSrc)
+  "scan overlay includeFaces follows faceDetectionEnabled",
+  backgroundSrc.includes("includeFaces: faceDetectionEnabled")
+);
+check(
+  "SCAN_AND_OVERLAY honors forceFaces",
+  /handleScanAndOverlay[\s\S]*forceFaces/.test(backgroundSrc)
 );
 
 console.log("\n5. Fail-closed layers unchanged");

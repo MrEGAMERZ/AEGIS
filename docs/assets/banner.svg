@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="200" viewBox="0 0 960 200" role="img" aria-label="Aegis">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111c"/>
+      <stop offset="1" stop-color="#0d2744"/>
+    </linearGradient>
+    <linearGradient id="shield" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#5ec8ff"/>
+      <stop offset="1" stop-color="#2ea8e6"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="200" rx="28" fill="url(#bg)"/>
+  <circle cx="820" cy="-20" r="160" fill="#1aa3ff" opacity="0.07"/>
+  <circle cx="900" cy="180" r="90" fill="#5ec8ff" opacity="0.05"/>
+
+  <g transform="translate(48,46)">
+    <rect width="108" height="108" rx="26" fill="#0a1624"/>
+    <path d="M54 18 C78 18 86 22 86 36 L86 64 C86 82 72 94 54 102 C36 94 22 82 22 64 L22 36 C22 22 30 18 54 18 Z" fill="url(#shield)"/>
+  </g>
+
+  <text x="184" y="92" fill="#f8fafc" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="48" font-weight="700" letter-spacing="1.5">Aegis</text>
+  <text x="184" y="128" fill="#93c5fd" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="18">The screen leaves last.</text>
+
+  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" font-weight="600">
+    <rect x="184" y="148" width="92" height="26" rx="13" fill="#12263a" stroke="#1e4970"/>
+    <text x="230" y="166" fill="#7dd3fc" text-anchor="middle">SIH26171</text>
+    <rect x="286" y="148" width="108" height="26" rx="13" fill="#12263a" stroke="#1e4970"/>
+    <text x="340" y="166" fill="#7dd3fc" text-anchor="middle">Chrome MV3</text>
+    <rect x="404" y="148" width="102" height="26" rx="13" fill="#12263a" stroke="#1e4970"/>
+    <text x="455" y="166" fill="#7dd3fc" text-anchor="middle">On-device</text>
+  </g>
+</svg>

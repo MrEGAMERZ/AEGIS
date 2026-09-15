@@ -349,17 +349,16 @@
   let overlayRaf = 0;
   let overlayListenersAttached = false;
 
-  // USER-VISIBLE indicators only — never black out the live page.
-  // AI redaction happens on the captured/sanitized image (offscreen), not here.
-  // Outline + tiny "Secured" badge; transparent fill so the user still sees
-  // passwords, faces, and fields normally. pointer-events:none on the root.
+  // On-device models (BlazeFace + DistilBERT NER + regex) decide what is
+  // private. Covers hide those regions on the live page. pointer-events:none.
+  // The sanitized capture (offscreen) is a second hide for any VLM.
   const TYPE_COLORS = {
-    password_input:      { border: "#16a34a", badge: "#16a34a" },
-    sensitive_input:     { border: "#2563eb", badge: "#2563eb" },
-    contenteditable_pii: { border: "#7c3aed", badge: "#7c3aed" },
-    face:                { border: "#2563eb", badge: "#2563eb" },
+    password_input:      { border: "#16a34a", badge: "#16a34a", fill: "rgba(15, 23, 42, 0.92)" },
+    sensitive_input:     { border: "#2563eb", badge: "#2563eb", fill: "rgba(15, 23, 42, 0.88)" },
+    contenteditable_pii: { border: "#7c3aed", badge: "#7c3aed", fill: "rgba(15, 23, 42, 0.88)" },
+    face:                { border: "#2563eb", badge: "#2563eb", fill: "rgba(15, 23, 42, 0.94)" },
   };
-  const DEFAULT_COLOR = { border: "#64748b", badge: "#64748b" };
+  const DEFAULT_COLOR = { border: "#64748b", badge: "#64748b", fill: "rgba(15, 23, 42, 0.88)" };
 
   function getOrCreateOverlayRoot() {
     let root = document.getElementById(OVERLAY_ROOT_ID);
@@ -446,7 +445,9 @@
     Object.assign(box.style, {
       position: "fixed",
       border: `1.5px solid ${colors.border}`,
-      backgroundColor: "transparent",
+      backgroundColor: colors.fill || "rgba(15, 23, 42, 0.88)",
+      backdropFilter: "blur(10px)",
+      WebkitBackdropFilter: "blur(10px)",
       boxSizing: "border-box",
       borderRadius: type === "face" ? "10px" : "6px",
       boxShadow: `0 0 0 1px ${colors.border}22`,
@@ -505,7 +506,6 @@
         : field.rect;
       if (!rect || rect.width === 0 || rect.height === 0) continue;
 
-      // Tiny labels — user still sees field contents through transparent fill.
       const typeLabel = {
         password_input: "Secured",
         sensitive_input: "Secured",
@@ -539,8 +539,7 @@
     faceAnchors = [];
     faceLiveAnchors = [];
 
-    // Face outline for the user (transparent). Prefer live photo element on TP08.
-    // Actual face pixelation for AI is only on the sanitized capture.
+    // Hide the face on the live page. Prefer the live photo element on TP08.
     // Idle browsing never calls this — no photo-alt heuristic on MutationObserver.
     const photoEl = document.querySelector("#applicant-photo, img.applicant-photo, img[alt*='photo' i], img[alt*='face' i]");
     if (photoEl) {
@@ -581,8 +580,8 @@
     repositionOverlays();
   }
 
-  // includeFaces:false = idle (DOM password/PII outlines only).
-  // includeFaces:true  = Privacy Scan / Run Agent (BlazeFace boxes + photo outline).
+  // includeFaces:false = idle (hide DOM password/PII fields; no BlazeFace).
+  // includeFaces:true  = Privacy Scan / Run Agent (also hide faces).
   function showRedactionOverlay(fields, faces, dpr, options) {
     const includeFaces = !!(options && options.includeFaces);
     renderFieldOverlays(fields);
@@ -632,6 +631,12 @@
 
     if (msg.type === "CLEAR_REDACTION_OVERLAY") {
       clearRedactionOverlay();
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (msg.type === "REFRESH_IDLE_OVERLAY") {
+      scheduleSensitiveRescan();
       sendResponse({ ok: true });
       return false;
     }

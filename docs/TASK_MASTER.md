@@ -71,7 +71,7 @@
 
 | # | Task | Owner | Status |
 |---|---|---|---|
-| G1 | Commit staged Phase-2 `src/` per the 4+1 commit plan in `engineers/git/work_done.md` (incl. restore commit + storage contract) | git | **WAITING — user must request commit** (standing instruction: no commits without explicit request) |
+| G1 | Commit staged Phase-2 `src/` per the 4+1 commit plan in `engineers/git/work_done.md` (incl. restore commit + storage contract) | git | **DONE 2026-09-15** — Save-confirm + README pack on `DEV` |
 | G2 | Pre-demo release tag + secret scan + `dist/` freeze | git | Tag `demo-YYYY-MM-DD`; no secrets/vendor blobs in git; dist frozen after final rebuild |
 
 ### H. Known-limitation documentation (keep honest, no build work)

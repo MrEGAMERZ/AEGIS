@@ -1,5 +1,7 @@
 # Aegis — On-device Visual Perception for Light-weight Browser Agents
 
+Public overview and install path: **[README.md](../README.md)** (repo root).
+
 ## Project Overview
 
 A privacy-preserving browser extension that intercepts screen content before it leaves the device, runs local vision inference to detect and redact sensitive elements (faces, passwords, PII text), and sends only a sanitized version to a cloud VLM for agentic action.
@@ -29,6 +31,8 @@ A privacy-preserving browser extension that intercepts screen content before it 
 | Master Task Board | **Canonical outstanding-work board (OPEN WORK A–H)** — what is not done, owners, dependencies, acceptance criteria | [TASK_MASTER.md](TASK_MASTER.md) |
 | 01 | Requirements — functional/non-functional reqs, redaction taxonomy, MVP scope | [01_REQUIREMENTS.md](01_REQUIREMENTS.md) |
 | 02 | Architecture — components, data flow, sanitization pipeline, server contract | [02_ARCHITECTURE.md](02_ARCHITECTURE.md) |
+| Profile / Fill Form | PDF → on-device text → optional local AI; face-scan idle/toggle/on-demand; Fill Form client-then-local-VLM (code-accurate) | [PROFILE_FILL_ARCHITECTURE.md](PROFILE_FILL_ARCHITECTURE.md) |
+| Two-scene demo (design) | Live DOM covers then Scan + Fill — not all slices implemented yet | [designs/two-scene-demo-loop.md](designs/two-scene-demo-loop.md) |
 | 03 | Tech Stack & Models — model selection matrix, ADRs, latency budgets | [03_TECH_STACK_MODELS.md](03_TECH_STACK_MODELS.md) |
 | 04 | Evaluation & Test Plan — metrics, ground-truth test pages, instrumentation | [04_EVAL_TEST_PLAN.md](04_EVAL_TEST_PLAN.md) |
 | 05 | Milestones — phased build plan, dependencies, deliverables | [05_MILESTONES.md](05_MILESTONES.md) |
@@ -38,18 +42,21 @@ A privacy-preserving browser extension that intercepts screen content before it 
 | Doc | Purpose | Link |
 |---|---|---|
 | Deep Structured Analysis | Problem understanding, feasibility, competitor landscape, evaluator lens | [Aegis_Deep_Structured_Analysis.md](../docs/Aegis_Deep_Structured_Analysis.md) |
-| Pitch Storytelling Framework | Narrative arc for the final pitch | [Aegis_Pitch_Storytelling_Framework.md](../Aegis_Pitch_Storytelling_Framework.md) |
+| Pitch Storytelling Framework | Narrative arc for the final pitch | [Aegis_Pitch_Storytelling_Framework.md](Aegis_Pitch_Storytelling_Framework.md) |
+| Industry review script | **Canonical spoken pitch** — gunshot lines, split seats, live TP08 demo, Q&A, copy-table for slides | [INDUSTRY_PITCH_SCRIPT.md](INDUSTRY_PITCH_SCRIPT.md) |
 
 ## Privacy & Security Documents
 
 | Doc | Purpose | Link |
 |---|---|---|
 | Document Upload Trust Boundary | What may leave the device for the PDF/DOCX upload + AI-structured profile feature, never-store enforcement points, verification checklist | [PRIVACY_DOC_UPLOAD.md](PRIVACY_DOC_UPLOAD.md) |
+| Profile, vault, Fill Form | Client vs server table: ingest, face scan, Fill Form. Companion to the trust-boundary doc | [PROFILE_FILL_ARCHITECTURE.md](PROFILE_FILL_ARCHITECTURE.md) |
 
 ## Operator, measurement, and backlog
 
 | Doc | Purpose | Link |
 |---|---|---|
+| Live demo card | 10-line install path for **real Chrome**: load `dist/`, name **AGs**, TP08 Fill + Privacy Scan | [LIVE_DEMO.md](LIVE_DEMO.md) |
 | Demo runbook | Judge Chrome E2E on TP08 (load `dist/`, scan / Run Agent, recovery codes) | [DEMO_RUNBOOK.md](DEMO_RUNBOOK.md) |
 | VLM server setup | Measured Ollama install, `qwen2.5vl:7b`, cold/warm smoke tests on `:11434` | [SERVER_SETUP.md](SERVER_SETUP.md) |
 | Backend deploy | Operator path: Node gateway `:8000` → Ollama; Chrome 403 if you hit `:11434` directly | [BACKEND_DEPLOY.md](BACKEND_DEPLOY.md) |

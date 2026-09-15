@@ -36,6 +36,9 @@ engineers/
 AGENTS.md
 CLAUDE.md
 
+# Local E2E artifacts
+eval/harness/.tp08-e2e-last.json
+
 # Backups / patches
 *.bak
 *.bak-*
