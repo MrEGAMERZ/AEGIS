@@ -257,6 +257,12 @@ check(
   "background SCAN_AND_OVERLAY honors forceFaces for faceDetection",
   /handleScanAndOverlay[\s\S]*msg\.forceFaces === true[\s\S]*config\.faceDetection = true/.test(backgroundSrc)
 );
+check("ABORT_SCAN bumps scanEpoch and ignores late results", backgroundSrc.includes("ABORT_SCAN") && backgroundSrc.includes("SCAN_ABORTED") && backgroundSrc.includes("assertScanNotAborted"));
+check("classifyError still maps timed out to TIMEOUT", /timed out[\s\S]{0,40}TIMEOUT/.test(backgroundSrc) || backgroundSrc.includes('if (msg.includes("timed out")) return "TIMEOUT"'));
+check("popup still maps STRUCTURE_CONSENT_REQUIRED", popupJs.includes("STRUCTURE_CONSENT_REQUIRED") && popupJs.includes("SCAN_ABORTED"));
+check("Stop scan restores idle overlays", contentSrc.includes("REFRESH_IDLE_OVERLAY") && contentSrc.includes("scheduleSensitiveRescan"));
+check("Theme is light, dark, or system (not binary only)", popupJs.includes("prefers-color-scheme") && popupHtml.includes("theme-toggle-btn"));
+check("Stop scan control exists in popup", popupHtml.includes('id="stop-scan-btn"'));
 
 console.log("");
 if (fail) {

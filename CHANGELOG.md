@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Stop scan** on the Fill tab: cancels an in-progress Privacy Scan (`ABORT_SCAN`) so a cold 30–90s run does not trap the popup. Late results are discarded; idle field covers are restored.
+- Popup theme cycles **Light → Dark → Auto (system)** and is stored as `aegisTheme`.
+
+### Fixed
+- `classifyError` still maps VLM `timed out` to `TIMEOUT`. Consent copy for document structure is unchanged.
+
 ## [0.1.0] - 2026-09-09
 
 ### Added

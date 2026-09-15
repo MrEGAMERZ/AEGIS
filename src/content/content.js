@@ -635,6 +635,12 @@
       return false;
     }
 
+    if (msg.type === "REFRESH_IDLE_OVERLAY") {
+      scheduleSensitiveRescan();
+      sendResponse({ ok: true });
+      return false;
+    }
+
     if (msg.type === "EXECUTE_CLICK") {
       sendResponse(executeClick(msg.x, msg.y));
       return false;

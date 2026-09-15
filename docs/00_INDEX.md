@@ -32,6 +32,7 @@ A privacy-preserving browser extension that intercepts screen content before it 
 | 01 | Requirements — functional/non-functional reqs, redaction taxonomy, MVP scope | [01_REQUIREMENTS.md](01_REQUIREMENTS.md) |
 | 02 | Architecture — components, data flow, sanitization pipeline, server contract | [02_ARCHITECTURE.md](02_ARCHITECTURE.md) |
 | Profile / Fill Form | PDF → on-device text → optional local AI; face-scan idle/toggle/on-demand; Fill Form client-then-local-VLM (code-accurate) | [PROFILE_FILL_ARCHITECTURE.md](PROFILE_FILL_ARCHITECTURE.md) |
+| Two-scene demo (design) | Live DOM covers then Scan + Fill — not all slices implemented yet | [designs/two-scene-demo-loop.md](designs/two-scene-demo-loop.md) |
 | 03 | Tech Stack & Models — model selection matrix, ADRs, latency budgets | [03_TECH_STACK_MODELS.md](03_TECH_STACK_MODELS.md) |
 | 04 | Evaluation & Test Plan — metrics, ground-truth test pages, instrumentation | [04_EVAL_TEST_PLAN.md](04_EVAL_TEST_PLAN.md) |
 | 05 | Milestones — phased build plan, dependencies, deliverables | [05_MILESTONES.md](05_MILESTONES.md) |

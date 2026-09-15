@@ -94,3 +94,46 @@ Already measured (do not invent new ones):
 - WebGPU as the baseline (D1 is bonus; WASM is what we ship).
 - Mock gateway (`--mock`) as the judged Brain Connection.
 - Firefox, cloud Firebase, or a public `:8000` on the open internet.
+
+---
+
+## CEO review locks (2026-09-15)
+
+Mode: **HOLD SCOPE** on the proof package, with one extra product item you asked for.
+
+**This week’s product (not a scripted demo)**
+- Demo on a **normal form you already use**. Do not add test-page-only rules, dummy-person theater, or extra demo switches.
+- When Chrome opens, Aegis **starts itself and wakes the on-device models**. **20–30 seconds** on first open is fine. After Ready, Scan/Fill must work with no extra freeze.
+- Ready means **faces and name-hiding are both awake**, not faces only.
+- If nothing is saved, tell the user to **save a profile**. Do not sit on the local brain waiting.
+- **Never store Aadhaar/PAN** (and the other ID numbers already on the never-store list). On-device later is fine for name, email, phone, résumé text. Cloud brain is a **later story**, not this room.
+- Face finding runs only when the privacy toggle is **on**. Idle browsing does not scan faces.
+- Judged laptop path: **Ollama + the local helper**. The extension must not talk to Ollama by itself (Chrome will refuse). Load Aegis from the **small build folder**, not the whole project.
+- After a practice: **screenshots, clock times, tick the task board**.
+- Printed start list: Ollama, helper, Chrome with Aegis, then your form.
+
+**Not this week**
+- WebGPU, smaller NER, self-learning, cloud deploy, tiny on-device chat model as a new ship.
+- Hard-fail the whole app because our kitchen-sink test page missed a tiny photo.
+- Rewriting the product around one dummy JSON person.
+
+**Code still owes (CEO rules, not in the tree yet)**
+- Wake models on Chrome/extension start (`onStartup` / first load → offscreen INIT through name-hiding).
+- Popup Ready gated on that full wake.
+- Empty-profile copy; do not call the local brain when Fill has nothing to type.
+
+**Operator docs still stale (fix when touching the runbook, not as demo theater)**
+- Printed path should be the helper, not a direct Ollama URL. Practice pages: prefer `http://127.0.0.1:8765` over `file://`.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | issues_open | mode: HOLD_SCOPE, 1 expansion accepted (wake on Chrome open), 3 critical gaps (wake/Ready/empty-profile not in code yet) |
+| Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | Codex CLI not installed; same-family outside voice used |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 0 | — | not run |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | not run (no new screens; Ready + save-profile copy only) |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | not run |
+
+- **VERDICT:** CEO HOLD_SCOPE with wake-on-open accepted — not ready to treat live proof as done; eng review required before shipping the warmup/Ready/empty-profile work.
+NO UNRESOLVED DECISIONS

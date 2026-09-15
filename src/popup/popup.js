@@ -22,6 +22,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
 const statusEl    = document.getElementById("status");
 const runBtn      = document.getElementById("run-btn");
 const scanBtn     = document.getElementById("scan-btn");
+const stopScanBtn = document.getElementById("stop-scan-btn");
 const fillBtn     = document.getElementById("fill-btn");
 const modelStatus = document.getElementById("model-status");
 const receiptEl   = document.getElementById("receipt");
@@ -185,15 +186,17 @@ function formatVlmOfflineMessage(vlmError) {
   return "VLM unavailable: " + msg;
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "INIT_PROGRESS") {
-    updateModelStatus("Loading...", "loading");
-    setStatus(msg.status || "Loading on-device models...", "active");
-  }
-  if (msg.type === "INIT_DONE") {
-    updateModelStatus(msg.faceModelReady ? "On-device ready" : "On-device failed", msg.faceModelReady ? "ready" : "failed");
-  }
-});
+if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === "INIT_PROGRESS") {
+      updateModelStatus("Loading...", "loading");
+      setStatus(msg.status || "Loading on-device models...", "active");
+    }
+    if (msg.type === "INIT_DONE") {
+      updateModelStatus(msg.faceModelReady ? "On-device ready" : "On-device failed", msg.faceModelReady ? "ready" : "failed");
+    }
+  });
+}
 
 function labelFor(k) { return KEY_LABELS[k] || k; }
 
@@ -352,6 +355,7 @@ function formatAgentError(code, message) {
   if (code === "STRUCTURE_CONSENT_REQUIRED") {
     return "[consent] Check 'Structure with local AI' and try again.";
   }
+  if (code === "SCAN_ABORTED") return "Scan stopped.";
   return `[${code}] ${t}`;
 }
 
@@ -413,6 +417,28 @@ async function runAgentLoop(task) {
   }
 }
 
+let scanGeneration = 0;
+function setScanBusy(busy) {
+  scanBtn.disabled = busy;
+  fillBtn.disabled = busy;
+  runBtn.disabled = busy;
+  if (stopScanBtn) stopScanBtn.disabled = !busy;
+}
+
+async function abortPrivacyScan() {
+  scanGeneration += 1;
+  setScanBusy(false);
+  setPipeline(null);
+  setStatus("Scan stopped.", "warn");
+  try {
+    await chrome.runtime.sendMessage({ type: "ABORT_SCAN" });
+  } catch {
+    // Background may already be gone; UI is already reset.
+  }
+}
+
+stopScanBtn?.addEventListener("click", () => abortPrivacyScan());
+
 // ── Button Handlers ───────────────────────────────────────────────
 fillBtn.addEventListener("click", async () => {
   const saveErr = await persistProfileFromTextarea();
@@ -443,26 +469,47 @@ fillBtn.addEventListener("click", async () => {
 
 async function runPrivacyScan(opts = {}) {
   const forceFaces = opts.forceFaces === true;
-  scanBtn.disabled = true; fillBtn.disabled = true; runBtn.disabled = true; clearStatus(); previewWrap.classList.remove("visible");
-  setPipeline("capture", { includeVlm: false }); setStatus("Capturing viewport and running local redaction...");
+  const token = ++scanGeneration;
+  setScanBusy(true);
+  clearStatus();
+  previewWrap.classList.remove("visible");
+  setPipeline("capture", { includeVlm: false });
+  setStatus("Capturing viewport and running local redaction...");
   try {
     setPipeline("redact", { includeVlm: false });
     const result = await withStuckHint(
       () => chrome.runtime.sendMessage({ type: "SCAN_AND_OVERLAY", forceFaces }),
-      "Still scanning..."
+      "Still scanning... Click Stop scan to cancel."
     );
-    if (result.error) { setPipeline(null); setStatus(formatAgentError(result.errorCode || "UNKNOWN", result.error), "error"); }
-    else { if (result.receipt) showReceipt(result.receipt); showSanitizedPreview(result.sanitizedImage); setPipeline(null);
-      const faces = result.receipt?.masked?.faces || 0; const fields = result.fieldCount || 0;
-      const facesOn = forceFaces || document.getElementById("face-detection")?.checked !== false;
-      if (facesOn) {
-        setStatus(`Secured ${fields} field(s) + ${faces} face(s).`, fields > 0 || faces > 0 ? "success" : "active");
-      } else {
-        setStatus(`Secured ${fields} field(s). Faces not scanned (toggle off).`, fields > 0 ? "success" : "active");
-      }
+    if (token !== scanGeneration) return;
+    if (result?.aborted || result?.errorCode === "SCAN_ABORTED") {
+      setPipeline(null);
+      setStatus("Scan stopped.", "warn");
+      return;
     }
-  } catch (err) { setPipeline(null); setStatus(formatRuntimeDisconnect(err), "error"); }
-  finally { scanBtn.disabled = false; fillBtn.disabled = false; runBtn.disabled = false; }
+    if (result?.error) {
+      setPipeline(null);
+      setStatus(formatAgentError(result.errorCode || "UNKNOWN", result.error), "error");
+      return;
+    }
+    if (result.receipt) showReceipt(result.receipt);
+    showSanitizedPreview(result.sanitizedImage);
+    setPipeline(null);
+    const faces = result.receipt?.masked?.faces || 0;
+    const fields = result.fieldCount || 0;
+    const facesOn = forceFaces || document.getElementById("face-detection")?.checked !== false;
+    if (facesOn) {
+      setStatus(`Secured ${fields} field(s) + ${faces} face(s).`, fields > 0 || faces > 0 ? "success" : "active");
+    } else {
+      setStatus(`Secured ${fields} field(s). Faces not scanned (toggle off).`, fields > 0 ? "success" : "active");
+    }
+  } catch (err) {
+    if (token !== scanGeneration) return;
+    setPipeline(null);
+    setStatus(formatRuntimeDisconnect(err), "error");
+  } finally {
+    if (token === scanGeneration) setScanBusy(false);
+  }
 }
 
 scanBtn.addEventListener("click", () => runPrivacyScan());
@@ -731,17 +778,57 @@ async function renderVaultList() {
   }
 }
 
-// ── Theme Switcher ────────────────────────────────────────────────
+// ── Theme Switcher (Light → Dark → System) ────────────────────────
+const THEME_ORDER = ["light", "dark", "system"];
 const themeToggleBtn = document.getElementById("theme-toggle-btn");
-async function initTheme() {
-  const stored = await chrome.storage.local.get("aegisTheme");
-  if (stored.aegisTheme === "dark") { document.body.classList.add("dark-mode"); if (themeToggleBtn) themeToggleBtn.textContent = "L"; }
+let aegisTheme = "system";
+
+function systemPrefersDark() {
+  return typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches;
 }
+
+function applyTheme(theme) {
+  aegisTheme = THEME_ORDER.includes(theme) ? theme : "system";
+  const dark = aegisTheme === "dark" || (aegisTheme === "system" && systemPrefersDark());
+  document.body.classList.toggle("dark-mode", dark);
+  if (!themeToggleBtn) return;
+  const label = aegisTheme === "light" ? "Light" : aegisTheme === "dark" ? "Dark" : "Auto";
+  const next = aegisTheme === "light" ? "Dark" : aegisTheme === "dark" ? "System" : "Light";
+  themeToggleBtn.textContent = label;
+  themeToggleBtn.title = `Theme: ${aegisTheme === "system" ? "System" : label} — click for ${next}`;
+  themeToggleBtn.setAttribute("aria-label", `Theme: ${aegisTheme === "system" ? "System" : label}`);
+}
+
+async function initTheme() {
+  let raw;
+  try {
+    const stored = await chrome.storage.local.get("aegisTheme");
+    raw = stored.aegisTheme;
+  } catch {
+    raw = "system";
+  }
+  applyTheme(raw === "dark" || raw === "light" || raw === "system" ? raw : "system");
+}
+
 themeToggleBtn?.addEventListener("click", async () => {
-  const isDark = document.body.classList.toggle("dark-mode");
-  if (themeToggleBtn) themeToggleBtn.textContent = isDark ? "L" : "D";
-  await chrome.storage.local.set({ aegisTheme: isDark ? "dark" : "light" });
+  const idx = THEME_ORDER.indexOf(aegisTheme);
+  const next = THEME_ORDER[(idx + 1) % THEME_ORDER.length];
+  applyTheme(next);
+  try {
+    await chrome.storage.local.set({ aegisTheme: next });
+  } catch {
+    // Preview / missing chrome.storage — theme still applies in this document.
+  }
 });
+
+if (typeof matchMedia === "function") {
+  const mq = matchMedia("(prefers-color-scheme: dark)");
+  const onScheme = () => {
+    if (aegisTheme === "system") applyTheme("system");
+  };
+  if (typeof mq.addEventListener === "function") mq.addEventListener("change", onScheme);
+  else if (typeof mq.addListener === "function") mq.addListener(onScheme);
+}
 
 // ── Init ──────────────────────────────────────────────────────────
 initTheme();
