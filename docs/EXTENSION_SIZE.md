@@ -24,7 +24,7 @@ This is the Client-side Resource Utilization (20%) artifact. Chrome’s `chrome:
 
 | Source | Claim | Status vs 2026-09-09 |
 |---|---|---|
-| `scripts/build-dist.sh` | Assembles a lean Load-unpacked root; excludes `ort-wasm-simd-threaded.jsep.wasm` (~27.8 MB) | Still true — jsep pair is **not** in `dist/` |
+| `scripts/build-dist.sh` | Assembles a lean Load-unpacked root from an allowlist of `src/vendor/` | Still true |
 | `docs/DEMO_RUNBOOK.md` | `dist/` ~**79 MB** with NER; **15–80 MB** in Chrome; repo root ~**650 MB+**; historically **~629 MB** billed | 79–81 MB band still matches; this tree is **81M**. Repo-root bill is now **1.4G** (new `.chrome-demo-profile` 592M + `node_modules` 518M) |
 | `docs/TASK_MASTER.md` E4 / DONE | `dist/` rebuilt **81M** (2026-09-06) | Matches this measurement |
 | `docs/MVP_GAP_REPORT.md` (2026-08-31) | `dist/` **79M**, NER ~65M; “15 MB predates NER vendoring” | 79M was an earlier snapshot; NER tree is still ~65M |
@@ -102,15 +102,13 @@ Largest single files in `dist/`:
 
 | Path | `du -sh` | In `dist/`? |
 |---|---|---|
-| `src/vendor` | **108M** | Partial — allowlist in `scripts/build-dist.sh` |
+| `src/vendor` | see `du -sh src/vendor` | Partial — allowlist in `scripts/build-dist.sh` |
 | `src/vendor/models` | **65M** | Yes |
 | `src/vendor/ort-wasm-simd-threaded.wasm` | **13M** | Yes |
 | `src/vendor/blaze.onnx` | **524K** | Yes |
 | `src/vendor/pdfjs` | **1.6M** | Yes |
-| `src/vendor/ort-wasm-simd-threaded.jsep.wasm` | **27M** (27,797,172 B) | **No** — excluded on purpose |
-| `src/vendor/ort-wasm-simd-threaded.jsep.mjs` | **48K** | **No** |
 
-The ~27 MB gap between `src/vendor` (108M) and `dist/src/vendor` (81M) is the unused jsep pair plus leftover `.bak` copies of `transformers.min.js`.
+The unused ORT **jsep** WASM pair (~28 MB) and leftover `.bak` copies of `transformers.min.js` were removed from the tree. `dist/` stays an allowlist build; do not Load unpacked from the repo root.
 
 ---
 

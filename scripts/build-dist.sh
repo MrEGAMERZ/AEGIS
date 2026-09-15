@@ -32,15 +32,7 @@ RUNTIME_DIRS=(
 )
 
 # src/vendor/ is an allowlist, not a directory copy.
-#
-# Excluded on purpose:
-#   ort-wasm-simd-threaded.jsep.wasm (27,797,172 B)
-#   ort-wasm-simd-threaded.jsep.mjs     (46,676 B)
-# The vendored ORT is the WASM-only bundle; its only wasm filename literal is
-# "ort-wasm-simd-threaded.wasm". Its `jsep*` symbols are runtime hook names
-# (jsepOnCreateSession, jsepRegisterBuffer, ...), not file references. The ORT
-# inlined in transformers.min.js asks for .asyncify.* names we never vendored
-# and fetches its own WASM remotely. Nothing loads the .jsep. pair.
+# The vendored ORT is the WASM-only bundle (`ort-wasm-simd-threaded.wasm`).
 VENDOR_FILES=(
   src/vendor/ort.min.js
   src/vendor/transformers.min.js

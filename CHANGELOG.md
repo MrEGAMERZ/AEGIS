@@ -11,6 +11,7 @@
 
 ### Changed
 - Product name is **AEGIS** everywhere Chrome and docs show it (not AGs). Greek: a shield — protector, defender.
+- Repo hygiene: dropped unused ORT jsep WASM (~28 MB), stale `BRANCHES.md` / OpenCode config / one-off debug scripts. Root `package.json` is eval-only (`adm-zip`); models stay in `src/vendor/`.
 
 ## [0.1.0] - 2026-09-09
 

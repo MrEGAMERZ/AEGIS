@@ -41,7 +41,7 @@ A privacy-preserving browser extension that intercepts screen content before it 
 
 | Doc | Purpose | Link |
 |---|---|---|
-| Deep Structured Analysis | Problem understanding, feasibility, competitor landscape, evaluator lens | [Aegis_Deep_Structured_Analysis.md](../docs/Aegis_Deep_Structured_Analysis.md) |
+| Deep Structured Analysis | Problem understanding, feasibility, competitor landscape, evaluator lens | [Aegis_Deep_Structured_Analysis.md](Aegis_Deep_Structured_Analysis.md) |
 | Pitch Storytelling Framework | Narrative arc for the final pitch | [Aegis_Pitch_Storytelling_Framework.md](Aegis_Pitch_Storytelling_Framework.md) |
 | Industry review script | **Canonical spoken pitch** — gunshot lines, split seats, live TP08 demo, Q&A, copy-table for slides | [INDUSTRY_PITCH_SCRIPT.md](INDUSTRY_PITCH_SCRIPT.md) |
 
@@ -61,7 +61,6 @@ A privacy-preserving browser extension that intercepts screen content before it 
 | VLM server setup | Measured Ollama install, `qwen2.5vl:7b`, cold/warm smoke tests on `:11434` | [SERVER_SETUP.md](SERVER_SETUP.md) |
 | Backend deploy | Operator path: Node gateway `:8000` → Ollama; Chrome 403 if you hit `:11434` directly | [BACKEND_DEPLOY.md](BACKEND_DEPLOY.md) |
 | Extension size | Measured `du` of `dist/` vs repo root, JS/models/pdfjs/icons breakdown (Resource criterion) | [EXTENSION_SIZE.md](EXTENSION_SIZE.md) |
-| Git branches | Local + fetched remotes, last commits, which branch to demo | [BRANCHES.md](BRANCHES.md) |
 | Improvement ideas | Ranked demo-week vs post-demo backlog | [IMPROVEMENT_IDEAS.md](IMPROVEMENT_IDEAS.md) |
 
 ---

@@ -191,12 +191,10 @@ You run it like a local server: `ollama serve`. Then you can talk to it via HTTP
 ### What does it do in our project?
 It's running your Qwen 3 8B model locally. When our browser extension has finished sanitizing the screenshot, it sends the sanitized image to Ollama, and Ollama's model tells the extension what action to take next (e.g., "click the login button at position 350, 210").
 
-### Your current setup (from `opencode.json`):
-- Ollama is running at `http://localhost:11434/v1`
-- Model loaded: `qwen3:8b`
+### Demo model
+The live path is **Ollama + `qwen2.5vl:7b`** (a vision model). The extension talks to the local gateway on `:8000`, not to Ollama on `:11434` directly.
 
-### The problem (important):
-`qwen3:8b` is a **text-only** model. It cannot process images. To receive and understand our sanitized screenshot, you need a **Vision-Language Model (VLM)** — a model that accepts both text AND images.
+A text-only model such as `qwen3:8b` cannot read the sanitized screenshot. You need a **Vision-Language Model (VLM)**.
 
 ### How to check what models you have:
 ```bash

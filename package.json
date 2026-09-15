@@ -2,14 +2,11 @@
   "name": "aegis-browser-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "On-device visual perception for lightweight browser agents",
+  "description": "AEGIS Chrome extension. Runtime models live in src/vendor/. This file is only for Node eval helpers.",
   "scripts": {
-    "dev": "echo 'Load src/ as unpacked extension in chrome://extensions'",
-    "lint": "eslint src/",
-    "typecheck": "echo 'No TypeScript yet'"
+    "test": "sh -c 'for f in eval/harness/*.test.js; do node \"$f\" || exit 1; done'"
   },
-  "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
-    "onnxruntime-web": "^1.21.0"
+  "devDependencies": {
+    "adm-zip": "^0.5.16"
   }
 }

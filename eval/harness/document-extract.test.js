@@ -24,7 +24,7 @@
  *     real DOMParser (offscreen document is created with reason DOM_PARSER).
  *
  * USAGE: node eval/harness/document-extract.test.js
- * DEPENDENCIES: node core + adm-zip (already in root node_modules) + the
+ * DEPENDENCIES: node core + adm-zip (root devDependency) + the
  * vendored files under src/vendor/ (pdfjs/, pako/).
  */
 

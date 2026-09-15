@@ -1,5 +1,5 @@
 # Commit: src/, server/, eval/, scripts/, lean docs/, manifest.json, package.json
-# Never commit: dist/, node_modules/, .chrome-demo-profile/, *.bak, agent folders
+# Never commit: dist/, node_modules/, Chrome profiles, editor/agent folders
 
 # macOS junk
 .DS_Store
@@ -28,6 +28,7 @@ dist/
 # Local agent / editor / graph (not the extension)
 .agents/
 .cursor/
+.gstack/
 .opencode/
 graphify-out/
 .graphify_detect.json
@@ -35,6 +36,7 @@ graphify-out/
 engineers/
 AGENTS.md
 CLAUDE.md
+opencode.json
 
 # Local E2E artifacts
 eval/harness/.tp08-e2e-last.json

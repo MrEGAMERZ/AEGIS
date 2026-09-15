@@ -81,9 +81,7 @@
         "src/vendor/ort-wasm-simd-threaded.wasm",
         "src/vendor/ort-wasm-simd-threaded.mjs",
         "src/vendor/blaze.onnx",
-        "src/vendor/models/*",
-        "src/voice/voice.html",
-        "src/dashboard/dashboard.html"
+        "src/vendor/models/*"
       ],
       "matches": ["<all_urls>"]
     }
