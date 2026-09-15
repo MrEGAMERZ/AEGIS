@@ -174,11 +174,13 @@ function ensureWorkerReady() {
 
 // ── Message Listener ──────────────────────────────────────────────
 
+let sanitizeQueue = Promise.resolve();
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "SANITIZE") {
-    handleSanitize(msg)
-      .then(sendResponse)
-      .catch((err) => sendResponse({ error: err.message }));
+    const run = sanitizeQueue.then(() => handleSanitize(msg));
+    sanitizeQueue = run.catch(() => {});
+    run.then(sendResponse).catch((err) => sendResponse({ error: err.message }));
     return true; // async
   }
 

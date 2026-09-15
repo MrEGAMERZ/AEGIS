@@ -143,6 +143,7 @@ const sandbox = {
   URL, // isLocalVlmEndpoint() does new URL() — without this every endpoint
   // (even localhost:8000) looks "remote" and the fail-closed guard rejects.
   AbortSignal,
+  AbortController,
   setTimeout,
   chrome: {
     runtime: {

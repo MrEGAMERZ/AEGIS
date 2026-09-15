@@ -258,7 +258,9 @@ check(
   /handleScanAndOverlay[\s\S]*msg\.forceFaces === true[\s\S]*config\.faceDetection = true/.test(backgroundSrc)
 );
 check("ABORT_SCAN bumps scanEpoch and ignores late results", backgroundSrc.includes("ABORT_SCAN") && backgroundSrc.includes("SCAN_ABORTED") && backgroundSrc.includes("assertScanNotAborted"));
+check("CAPTURE_AND_SANITIZE honors scanEpoch so Stop cancels leftover VLM", /handleCaptureAndSanitize[\s\S]*performLocalRedaction\(tab,\s*config,\s*epoch\)/.test(backgroundSrc));
 check("classifyError still maps timed out to TIMEOUT", /timed out[\s\S]{0,40}TIMEOUT/.test(backgroundSrc) || backgroundSrc.includes('if (msg.includes("timed out")) return "TIMEOUT"'));
+check("consent copy names Structure with local AI", backgroundSrc.includes("Structure with local AI"));
 check("popup still maps STRUCTURE_CONSENT_REQUIRED", popupJs.includes("STRUCTURE_CONSENT_REQUIRED") && popupJs.includes("SCAN_ABORTED"));
 check("Stop scan restores idle overlays", contentSrc.includes("REFRESH_IDLE_OVERLAY") && contentSrc.includes("scheduleSensitiveRescan"));
 check("Theme is light, dark, or system (not binary only)", popupJs.includes("prefers-color-scheme") && popupHtml.includes("theme-toggle-btn"));
