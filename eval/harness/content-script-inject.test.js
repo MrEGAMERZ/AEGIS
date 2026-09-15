@@ -153,8 +153,11 @@ console.log("\n3. sendTabMessage injects once then retries");
       check("sendMessage called twice (fail + retry)", sendCalls.length === 2);
       check("executeScript called once", injectCalls.length === 1);
       check(
-        "injects src/content/content.js",
-        injectCalls[0]?.files?.[0] === "src/content/content.js"
+        "injects field-mapper, autofill, then content.js",
+        Array.isArray(injectCalls[0]?.files) &&
+          injectCalls[0].files[0] === "src/content/field-mapper.js" &&
+          injectCalls[0].files[1] === "src/content/autofill.js" &&
+          injectCalls[0].files[2] === "src/content/content.js"
       );
       check("inject target is the same tabId", injectCalls[0]?.target?.tabId === 42);
     })
@@ -162,7 +165,7 @@ console.log("\n3. sendTabMessage injects once then retries");
       check("retry returns DOM_SCAN payload", false, err.message);
       check("sendMessage called twice (fail + retry)", false);
       check("executeScript called once", false);
-      check("injects src/content/content.js", false);
+      check("injects field-mapper, autofill, then content.js", false);
       check("inject target is the same tabId", false);
     })
     .then(() => runRestrictedAndFailureCases());
@@ -251,6 +254,14 @@ function runRestrictedAndFailureCases() {
       check("popup maps NO_CONTENT_SCRIPT", popupJs.includes("NO_CONTENT_SCRIPT"));
       check("popup tells user to refresh the tab", popupJs.includes("Refresh this tab"));
       check("popup uses formatAgentError", popupJs.includes("formatAgentError"));
+      check(
+        "popup warms on-device models on open",
+        popupJs.includes('type: "WARM_MODELS"') && popupJs.includes("warmOnDeviceModels")
+      );
+      check(
+        "getActiveTab prefers lastFocusedWindow over currentWindow",
+        backgroundSrc.includes("lastFocusedWindow: true") && backgroundSrc.includes("function getActiveTab")
+      );
       check(
         "Run Agent still blocks FACE_REDACTION_REQUIRED copy",
         popupJs.includes("FACE_REDACTION_REQUIRED") &&

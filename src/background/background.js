@@ -116,14 +116,33 @@ async function hasOffscreenDocument() {
   return contexts.length > 0;
 }
 
+let offscreenCreateLock = null;
+
 async function ensureOffscreen() {
   if (await hasOffscreenDocument()) return;
-  await chrome.offscreen.createDocument({
-    url: OFFSCREEN_URL,
-    reasons: ["DOM_PARSER", "WORKERS"],
-    justification:
-      "Inference and mask rendering require Canvas/DOM access; WORKERS reason required to spawn inference Web Worker inside offscreen document",
+  if (offscreenCreateLock) {
+    await offscreenCreateLock;
+    return;
+  }
+  offscreenCreateLock = (async () => {
+    if (await hasOffscreenDocument()) return;
+    try {
+      await chrome.offscreen.createDocument({
+        url: OFFSCREEN_URL,
+        reasons: ["DOM_PARSER", "WORKERS"],
+        justification:
+          "Inference and mask rendering require Canvas/DOM access; WORKERS reason required to spawn inference Web Worker inside offscreen document",
+      });
+    } catch (err) {
+      // Two callers can pass the existence check together; Chrome then
+      // rejects the second createDocument. If the document exists, proceed.
+      if (await hasOffscreenDocument()) return;
+      throw err;
+    }
+  })().finally(() => {
+    offscreenCreateLock = null;
   });
+  await offscreenCreateLock;
 }
 
 // ── Document text extraction (popup → offscreen router) ───────────
@@ -154,7 +173,11 @@ async function handleExtractDocumentText(filePayload) {
 // Manifest <all_urls> covers file:// only when "Allow access to file URLs"
 // is on; we still programmatically inject and retry once.
 
-const CONTENT_SCRIPT_FILE = "src/content/content.js";
+const CONTENT_SCRIPT_FILES = [
+  "src/content/field-mapper.js",
+  "src/content/autofill.js",
+  "src/content/content.js",
+];
 const injectInFlight = new Map();
 
 function isMissingReceiver(err) {
@@ -194,7 +217,7 @@ async function injectContentScript(tabId) {
   const p = chrome.scripting
     .executeScript({
       target: { tabId, allFrames: false },
-      files: [CONTENT_SCRIPT_FILE],
+      files: CONTENT_SCRIPT_FILES,
       injectImmediately: true,
     })
     .finally(() => {
@@ -226,30 +249,25 @@ async function sendTabMessage(tab, message) {
   }
 }
 
-// ── Keyboard Shortcut Listener (Ctrl+Shift+F) ─────────────────────
-chrome.commands?.onCommand?.addListener(async (command) => {
-  if (command === "autofill_page") {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id) {
-      sendTabMessage(tab, { type: "PROFILE_PREFILL" }).catch(() => {});
+// Popup focus makes currentWindow the extension popup (no tabs). Prefer the
+// last focused browser window, then any injectable active tab.
+async function getActiveTab() {
+  const queries = [
+    { active: true, lastFocusedWindow: true },
+    { active: true, currentWindow: true },
+    { active: true },
+  ];
+  for (const query of queries) {
+    try {
+      const tabs = await chrome.tabs.query(query);
+      const tab = (tabs || []).find((t) => t?.id && isInjectableTabUrl(t.url));
+      if (tab) return tab;
+    } catch {
+      // Query shape not available in this context.
     }
   }
-});
-
-// ── Context Menu (Right-Click "Fill with Aegis Profile") ─────────
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus?.create({
-    id: "aegis_autofill_context",
-    title: "Fill Form with AGs Profile",
-    contexts: ["page", "editable"],
-  });
-});
-
-chrome.contextMenus?.onClicked?.addListener(async (info, tab) => {
-  if (info.menuItemId === "aegis_autofill_context" && tab?.id) {
-    sendTabMessage(tab, { type: "PROFILE_PREFILL" }).catch(() => {});
-  }
-});
+  throw new Error("No active tab");
+}
 
 // ── Message Router ─────────────────────────────────────────────────
 
@@ -564,6 +582,7 @@ function buildPageStructureForVlm({ fields, maskedRegions, dpr, viewport }) {
 // ABORT_SCAN bumps scanEpoch so an in-flight scan discards its result.
 
 let scanEpoch = 0;
+let pipelineAbortController = null;
 
 function assertScanNotAborted(epoch) {
   if (epoch != null && epoch !== scanEpoch) {
@@ -571,11 +590,43 @@ function assertScanNotAborted(epoch) {
   }
 }
 
+function beginPipelineAbortScope() {
+  if (typeof AbortController !== "function") {
+    pipelineAbortController = null;
+    return null;
+  }
+  pipelineAbortController = new AbortController();
+  return pipelineAbortController;
+}
+
+function combineAbortSignals(signals) {
+  const live = (signals || []).filter(Boolean);
+  if (live.length === 0) return undefined;
+  if (live.length === 1) return live[0];
+  if (typeof AbortSignal.any === "function") return AbortSignal.any(live);
+  const extra = new AbortController();
+  for (const signal of live) {
+    if (signal.aborted) {
+      extra.abort();
+      break;
+    }
+    signal.addEventListener("abort", () => extra.abort(), { once: true });
+  }
+  return extra.signal;
+}
+
 async function handleAbortScan() {
   scanEpoch += 1;
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id && isInjectableTabUrl(tab.url)) {
+  try {
+    pipelineAbortController?.abort();
+  } catch {
+    // Already aborted.
+  }
+  try {
+    const tab = await getActiveTab();
     await sendTabMessage(tab, { type: "REFRESH_IDLE_OVERLAY" }).catch(() => {});
+  } catch {
+    // No injectable tab (popup-only / chrome://) — abort still succeeded.
   }
   return { ok: true, aborted: true, errorCode: "SCAN_ABORTED" };
 }
@@ -678,26 +729,50 @@ async function performLocalRedaction(tab, config, scanEpochAtStart) {
 }
 
 async function handleProfilePrefill() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) throw new Error("No active tab");
+  const tab = await getActiveTab();
   return sendTabMessage(tab, { type: "PROFILE_PREFILL" });
+}
+
+// Trap / secret labels should not count as leftover VLM work. Fill Form
+// leaves them blank on purpose; hanging 30–90s for Ollama just to fail closed
+// is a live-demo breaker.
+function isLeftoverFillField(field) {
+  if (!field || !field.selector) return false;
+  if (field.type === "password_input" || field.type === "sensitive_input") return false;
+  const blob = `${field.label || ""} ${field.reason || ""} ${field.selector || ""}`.toLowerCase();
+  if (
+    /\b(aadhaar|aadhar|pan|cvv|csc|otp|ssn|password|blood[\s-]*group|portal[\s-]*pin|never_store)\b/.test(
+      blob
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function leftoverFillCount(fillFields, filled) {
+  const eligible = (Array.isArray(fillFields) ? fillFields : []).filter(isLeftoverFillField).length;
+  return Math.max(0, eligible - (Number(filled) || 0));
 }
 
 // Instant fill: map every visible form control to a verified profile/vault
 // value. No VLM. Used by the popup Fill Form button so a saved profile or
 // uploaded doc does not wait 90s per field.
 async function handleFillMatchingFields() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) throw new Error("No active tab");
+  const tab = await getActiveTab();
 
   const config = await chrome.storage.local.get(["userProfile", "passwordDetection", "vlmEndpoint"]);
-  const vlmEndpoint = await resolveVlmEndpoint(config.vlmEndpoint);
+  const gateway = await probeRealGateway();
+  const preferred = preferGatewayEndpoint(config.vlmEndpoint);
+  const vlmEndpoint = gateway || preferred;
+  if (vlmEndpoint !== config.vlmEndpoint) {
+    chrome.storage.local.set({ vlmEndpoint }).catch(() => {});
+  }
   vaultProvenanceLocalOnly = isLocalVlmEndpoint(vlmEndpoint);
   await refreshVaultCacheBestEffort();
   const userProfile = await enrichProfileFromVaultText(
     await enrichProfileFromNotes(normalizeProfile(config.userProfile))
   );
-
   const domScan = await sendTabMessage(tab, { type: "DOM_SCAN" });
   const fillFields = filterFieldsForPasswordDetection(
     fieldsForFill(domScan),
@@ -706,26 +781,39 @@ async function handleFillMatchingFields() {
   const context = { userProfile, fields: fillFields };
   const types = collectVerifiedTypeActions([], context);
   const action = wrapFillActions(types);
-  const remainingBase = fillFields.filter((f) => f && f.type !== "password_input").length;
 
   if (action.action === "done") {
-    return { ok: true, filled: 0, remaining: remainingBase, summary: action.summary };
+    return {
+      ok: true,
+      filled: 0,
+      remaining: leftoverFillCount(fillFields, 0),
+      gatewayReady: !!gateway,
+      summary: action.summary,
+    };
   }
 
   const exec = await handleExecuteAction(action, tab.id);
-  if (exec?.error) return { ok: false, filled: 0, remaining: remainingBase, error: exec.error };
+  if (exec?.error) {
+    return {
+      ok: false,
+      filled: 0,
+      remaining: leftoverFillCount(fillFields, 0),
+      gatewayReady: !!gateway,
+      error: exec.error,
+    };
+  }
   const filled = exec.filled ?? (action.action === "type" ? 1 : 0);
   return {
     ok: true,
     filled,
-    remaining: Math.max(0, remainingBase - filled),
+    remaining: leftoverFillCount(fillFields, filled),
+    gatewayReady: !!gateway,
     action: action.action,
   };
 }
 
 async function handleScanAndOverlay(msg) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) throw new Error("No active tab");
+  const tab = await getActiveTab();
   const epoch = scanEpoch;
 
   const config = await chrome.storage.local.get([
@@ -795,7 +883,7 @@ async function handleStructureDocumentText(msg) {
   const consented = docConsent === true || msg?.consented === true;
   if (!consented) {
     throw new Error(
-      "STRUCTURE_CONSENT_REQUIRED: Analyzing a document needs your explicit consent. Enable \"Allow local document analysis\" in the popup."
+      "STRUCTURE_CONSENT_REQUIRED: Analyzing a document needs your explicit consent. Check \"Structure with local AI\" in the popup."
     );
   }
 
@@ -1078,8 +1166,9 @@ function agentLoopStopAfterExecute({ step, maxSteps, action, execResult }) {
 const OVERLAY_CLEAR_PAINT_MS = 32;
 
 async function handleCaptureAndSanitize(task) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) throw new Error("No active tab");
+  const tab = await getActiveTab();
+  const epoch = scanEpoch;
+  beginPipelineAbortScope();
 
   const config = await chrome.storage.local.get([
     "vlmEndpoint",
@@ -1097,7 +1186,8 @@ async function handleCaptureAndSanitize(task) {
     tCapture,
     tDomScan,
     tInference,
-  } = await performLocalRedaction(tab, config);
+  } = await performLocalRedaction(tab, config, epoch);
+  assertScanNotAborted(epoch);
 
   const faceDetectionEnabled = config.faceDetection !== false;
   const piiDetectionEnabled = config.piiDetection !== false;
@@ -1284,6 +1374,7 @@ Only use actions that do NOT require reading redacted screen regions.`;
       }
     }
   } catch (fetchErr) {
+    if (String(fetchErr?.message || "").includes("SCAN_ABORTED")) throw fetchErr;
     vlmError = fetchErr.message.includes("Failed to fetch")
       ? "VLM server unreachable. Is it running at " + vlmEndpoint + "?"
       : fetchErr.message;
@@ -1350,15 +1441,21 @@ async function requestVlmContent(vlmEndpoint, vlmHeaders, vlmPayload) {
     vlmEndpoint = DEFAULT_GATEWAY_VLM;
   }
 
+  const timeoutSignal = AbortSignal.timeout(VLM_FETCH_TIMEOUT_MS);
+  const signal = combineAbortSignals([timeoutSignal, pipelineAbortController?.signal]);
+
   let response;
   try {
     response = await fetch(vlmEndpoint, {
       method: "POST",
       headers: vlmHeaders,
       body: JSON.stringify(vlmPayload),
-      signal: AbortSignal.timeout(VLM_FETCH_TIMEOUT_MS),
+      signal,
     });
   } catch (err) {
+    if (pipelineAbortController?.signal?.aborted) {
+      throw new Error("SCAN_ABORTED");
+    }
     const name = err?.name || "";
     const msg = String(err?.message || err || "");
     if (name === "TimeoutError" || name === "AbortError" || msg.includes("aborted") || msg.includes("The operation was aborted")) {
@@ -1372,12 +1469,22 @@ async function requestVlmContent(vlmEndpoint, vlmHeaders, vlmPayload) {
   let body = await response.text();
 
   if (!response.ok && response.status === 403 && vlmEndpoint !== DEFAULT_GATEWAY_VLM) {
-    response = await fetch(DEFAULT_GATEWAY_VLM, {
-      method: "POST",
-      headers: vlmHeaders,
-      body: JSON.stringify(vlmPayload),
-      signal: AbortSignal.timeout(VLM_FETCH_TIMEOUT_MS),
-    });
+    try {
+      response = await fetch(DEFAULT_GATEWAY_VLM, {
+        method: "POST",
+        headers: vlmHeaders,
+        body: JSON.stringify(vlmPayload),
+        signal: combineAbortSignals([
+          AbortSignal.timeout(VLM_FETCH_TIMEOUT_MS),
+          pipelineAbortController?.signal,
+        ]),
+      });
+    } catch (err) {
+      if (pipelineAbortController?.signal?.aborted) {
+        throw new Error("SCAN_ABORTED");
+      }
+      throw err;
+    }
     body = await response.text();
     chrome.storage.local.set({ vlmEndpoint: DEFAULT_GATEWAY_VLM }).catch(() => {});
   }
@@ -1965,7 +2072,12 @@ async function handleExecuteAction(action, tabId) {
     return { error: `Unknown action: ${safe.action}. Valid: ${VALID_ACTIONS.join(", ")}` };
   }
 
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let tab = null;
+  try {
+    tab = await getActiveTab();
+  } catch {
+    tab = null;
+  }
   const targetTabId = tabId || tab?.id;
   if (!targetTabId) throw new Error("No active tab");
 

@@ -240,7 +240,7 @@ Same as Path A — the button is labeled **Privacy Scan** in the popup UI.
 1. `FILL_MATCHING_FIELDS` — maps saved profile + document vault text to visible form labels (no VLM)  
 2. If fields remain → **one** local-VLM agent loop (`CAPTURE_AND_SANITIZE` → execute actions; stops on `fill_many` or `done`)
 
-**Success:** status reports N fields filled locally; any leftovers filled via local AI. Trap fields stay empty. Requires gateway at `:8000` for the VLM step.
+**Success:** status reports N fields filled locally; trap fields stay empty. If the gateway at `:8000` is down, leftover VLM is skipped (status says remaining fields left blank). Requires gateway at `:8000` only for leftover empty *eligible* fields.
 
 ### Path B — Run Agent — form fill
 

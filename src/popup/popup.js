@@ -343,7 +343,13 @@ function formatAgentError(code, message) {
   if (code === "NER_REDACTION_REQUIRED") {
     return `[${code}] NER redaction did not complete — unredacted PII cannot leave the device. ${t}`;
   }
-  if (code === "TIMEOUT" || code === "INIT_FAILED") return `[${code}] On-device model init failed. ${t} Reload extension.`;
+  if (code === "TIMEOUT") {
+    if (/VLM|server timed out|vision model/i.test(t)) {
+      return `[TIMEOUT] Local model timed out. Keep the gateway on :8000 and retry. ${t}`;
+    }
+    return `[TIMEOUT] On-device model timed out. ${t} Wait, then retry; reload the extension if this persists.`;
+  }
+  if (code === "INIT_FAILED") return `[${code}] On-device model init failed. ${t} Reload extension.`;
   if (code === "VLM_BAD_RESPONSE") return `[${code}] VLM did not return a usable action. ${t}`;
   if (code === "BAD_JSON") return `[${code}] Non-JSON response. ${t}`;
   if (code === "STRUCTURE_REMOTE_REJECTED") {
@@ -369,6 +375,8 @@ function formatRuntimeDisconnect(err) {
 // ── Agent Loop ────────────────────────────────────────────────────
 const DEFAULT_FILL_TASK = "Fill the visible form using my saved profile. Leave blank any field not in the profile.";
 
+let workGeneration = 0;
+
 async function persistProfileFromTextarea() {
   const raw = document.getElementById("profile-input")?.value || "";
   if (raw.trim()) {
@@ -389,13 +397,35 @@ async function persistProfileFromTextarea() {
   return null;
 }
 
-async function runAgentLoop(task) {
+async function runAgentLoop(task, token) {
+  const mine = token ?? workGeneration;
+  try {
+    const status = await chrome.runtime.sendMessage({ type: "GET_GATEWAY_STATUS" });
+    if (mine !== workGeneration) return;
+    if (!status?.ok && !status?.usingGateway) {
+      setPipeline(null);
+      setStatus(formatVlmOfflineMessage("Failed to fetch"), "warn");
+      return;
+    }
+  } catch {
+    if (mine !== workGeneration) return;
+    setPipeline(null);
+    setStatus(formatVlmOfflineMessage("Failed to fetch"), "warn");
+    return;
+  }
   for (let step = 1; step <= MAX_AGENT_STEPS; step++) {
+    if (mine !== workGeneration) return;
     const stepLabel = `Step ${step}/${MAX_AGENT_STEPS}`;
     setPipeline("capture");
     setStatus(`${stepLabel}: Capturing viewport and running local redaction...`);
     setPipeline("redact");
-    const response = await withStuckHint(() => chrome.runtime.sendMessage({ type: "CAPTURE_AND_SANITIZE", task }), `${stepLabel}: Still working...`);
+    const response = await withStuckHint(() => chrome.runtime.sendMessage({ type: "CAPTURE_AND_SANITIZE", task }), `${stepLabel}: Still working... Click Stop to cancel.`);
+    if (mine !== workGeneration) return;
+    if (response?.aborted || response?.errorCode === "SCAN_ABORTED") {
+      setPipeline(null);
+      setStatus("Stopped.", "warn");
+      return;
+    }
     if (response.error) { setPipeline(null); setStatus(formatAgentError(response.errorCode || "UNKNOWN", response.error), "error"); return; }
     if (response.receipt) showReceipt(response.receipt);
     showSanitizedPreview(response.sanitizedImage);
@@ -404,6 +434,7 @@ async function runAgentLoop(task) {
     if (!response.action) { setPipeline(null); setStatus(`${stepLabel}: No action from VLM.`, "warn"); return; }
     setStatus(`${stepLabel}: VLM -> ${response.action.action}. Executing...`);
     const execResult = await chrome.runtime.sendMessage({ type: "EXECUTE_ACTION", action: response.action });
+    if (mine !== workGeneration) return;
     if (execResult.error) { setPipeline(null); setStatus(`${stepLabel}: ${formatAgentError(execResult.errorCode || "UNKNOWN", execResult.error)}`, "error"); return; }
     if (response.action.action === "fill_many") {
       setPipeline(null);
@@ -417,27 +448,33 @@ async function runAgentLoop(task) {
   }
 }
 
-let scanGeneration = 0;
-function setScanBusy(busy) {
+function setBusy(mode) {
+  const busy = mode != null;
   scanBtn.disabled = busy;
   fillBtn.disabled = busy;
   runBtn.disabled = busy;
-  if (stopScanBtn) stopScanBtn.disabled = !busy;
-}
-
-async function abortPrivacyScan() {
-  scanGeneration += 1;
-  setScanBusy(false);
-  setPipeline(null);
-  setStatus("Scan stopped.", "warn");
-  try {
-    await chrome.runtime.sendMessage({ type: "ABORT_SCAN" });
-  } catch {
-    // Background may already be gone; UI is already reset.
+  if (stopScanBtn) {
+    stopScanBtn.disabled = !busy;
+    stopScanBtn.textContent = mode && mode !== "scan" ? "Stop" : "Stop scan";
+    stopScanBtn.title = busy
+      ? (mode === "scan" ? "Stop the in-progress Privacy Scan" : "Stop the in-progress action")
+      : "Stop an in-progress Privacy Scan";
   }
 }
 
-stopScanBtn?.addEventListener("click", () => abortPrivacyScan());
+async function abortBusyWork() {
+  const token = ++workGeneration;
+  setPipeline(null);
+  setStatus("Stopped.", "warn");
+  try {
+    await chrome.runtime.sendMessage({ type: "ABORT_SCAN" });
+  } catch {
+    // Background may already be gone; UI resets after this returns.
+  }
+  if (token === workGeneration) setBusy(null);
+}
+
+stopScanBtn?.addEventListener("click", () => abortBusyWork());
 
 // ── Button Handlers ───────────────────────────────────────────────
 fillBtn.addEventListener("click", async () => {
@@ -445,32 +482,48 @@ fillBtn.addEventListener("click", async () => {
   if (saveErr) { setStatus(saveErr, "error"); return; }
   const task = document.getElementById("task-input").value.trim() || DEFAULT_FILL_TASK;
   document.getElementById("task-input").value = task;
-  fillBtn.disabled = true; scanBtn.disabled = true; runBtn.disabled = true; clearStatus(); previewWrap.classList.remove("visible");
+  const token = ++workGeneration;
+  setBusy("fill");
+  clearStatus(); previewWrap.classList.remove("visible");
   try {
     setStatus("Filling matching fields from your profile and documents…", "active");
     const local = await chrome.runtime.sendMessage({ type: "FILL_MATCHING_FIELDS" });
+    if (token !== workGeneration) return;
     if (local?.error) {
       setStatus(formatAgentError(local.errorCode || "UNKNOWN", local.error), "error");
       return;
     }
     const filled = local?.filled || 0;
     const remaining = local?.remaining ?? 0;
-    if (filled > 0 && remaining === 0) {
-      setStatus(`Filled ${filled} field(s) from your profile and documents.`, "success");
+    const gatewayReady = local?.gatewayReady === true;
+    if (!gatewayReady || remaining === 0) {
+      if (filled > 0) {
+        const extra = remaining > 0 && !gatewayReady
+          ? " Remaining fields left blank (local AI offline)."
+          : remaining > 0
+            ? " Remaining fields left blank."
+            : "";
+        setStatus(`Filled ${filled} field(s) from your profile and documents.${extra}`, "success");
+        return;
+      }
+      setStatus("No matching profile fields. Save a profile or upload a document first.", "warn");
       return;
     }
     if (filled > 0) {
       setStatus(`Filled ${filled} field(s). Asking local AI for the rest…`, "active");
     }
-    await runAgentLoop(task);
-  } catch (err) { setPipeline(null); setStatus(formatRuntimeDisconnect(err), "error"); }
-  finally { fillBtn.disabled = false; scanBtn.disabled = false; runBtn.disabled = false; }
+    await runAgentLoop(task, token);
+  } catch (err) {
+    if (token !== workGeneration) return;
+    setPipeline(null); setStatus(formatRuntimeDisconnect(err), "error");
+  }
+  finally { if (token === workGeneration) setBusy(null); }
 });
 
 async function runPrivacyScan(opts = {}) {
   const forceFaces = opts.forceFaces === true;
-  const token = ++scanGeneration;
-  setScanBusy(true);
+  const token = ++workGeneration;
+  setBusy("scan");
   clearStatus();
   previewWrap.classList.remove("visible");
   setPipeline("capture", { includeVlm: false });
@@ -481,7 +534,7 @@ async function runPrivacyScan(opts = {}) {
       () => chrome.runtime.sendMessage({ type: "SCAN_AND_OVERLAY", forceFaces }),
       "Still scanning... Click Stop scan to cancel."
     );
-    if (token !== scanGeneration) return;
+    if (token !== workGeneration) return;
     if (result?.aborted || result?.errorCode === "SCAN_ABORTED") {
       setPipeline(null);
       setStatus("Scan stopped.", "warn");
@@ -504,11 +557,11 @@ async function runPrivacyScan(opts = {}) {
       setStatus(`Secured ${fields} field(s). Faces not scanned (toggle off).`, fields > 0 ? "success" : "active");
     }
   } catch (err) {
-    if (token !== scanGeneration) return;
+    if (token !== workGeneration) return;
     setPipeline(null);
     setStatus(formatRuntimeDisconnect(err), "error");
   } finally {
-    if (token === scanGeneration) setScanBusy(false);
+    if (token === workGeneration) setBusy(null);
   }
 }
 
@@ -533,9 +586,14 @@ runBtn.addEventListener("click", async () => {
   if (!task) { setStatus("Enter a task description.", "error"); return; }
   const saveErr = await persistProfileFromTextarea();
   if (saveErr && saveErr !== "Profile is empty.") { setStatus(saveErr, "error"); return; }
-  runBtn.disabled = true; scanBtn.disabled = true; fillBtn.disabled = true; clearStatus(); previewWrap.classList.remove("visible");
-  try { await runAgentLoop(task); } catch (err) { setPipeline(null); setStatus(formatRuntimeDisconnect(err), "error"); }
-  finally { runBtn.disabled = false; scanBtn.disabled = false; fillBtn.disabled = false; }
+  const token = ++workGeneration;
+  setBusy("agent");
+  clearStatus(); previewWrap.classList.remove("visible");
+  try { await runAgentLoop(task, token); } catch (err) {
+    if (token !== workGeneration) return;
+    setPipeline(null); setStatus(formatRuntimeDisconnect(err), "error");
+  }
+  finally { if (token === workGeneration) setBusy(null); }
 });
 
 // ── Document Drop ─────────────────────────────────────────────────
@@ -791,6 +849,7 @@ function applyTheme(theme) {
   aegisTheme = THEME_ORDER.includes(theme) ? theme : "system";
   const dark = aegisTheme === "dark" || (aegisTheme === "system" && systemPrefersDark());
   document.body.classList.toggle("dark-mode", dark);
+  document.body.style.colorScheme = dark ? "dark" : "light";
   if (!themeToggleBtn) return;
   const label = aegisTheme === "light" ? "Light" : aegisTheme === "dark" ? "Dark" : "Auto";
   const next = aegisTheme === "light" ? "Dark" : aegisTheme === "dark" ? "System" : "Light";
@@ -830,6 +889,21 @@ if (typeof matchMedia === "function") {
   else if (typeof mq.addListener === "function") mq.addListener(onScheme);
 }
 
+function warmOnDeviceModels() {
+  updateModelStatus("Loading...", "loading");
+  chrome.runtime.sendMessage({ type: "WARM_MODELS" })
+    .then((warm) => {
+      if (!warm) return;
+      if (warm.ok === false && /timed out/i.test(String(warm.error || ""))) return;
+      if (warm.ok === false || warm.faceModelReady === false) {
+        updateModelStatus("On-device failed", "failed");
+        return;
+      }
+      updateModelStatus("On-device ready", "ready");
+    })
+    .catch(() => {});
+}
+
 // ── Init ──────────────────────────────────────────────────────────
 initTheme();
 loadConfig();
@@ -837,3 +911,4 @@ setupConfigListeners();
 loadLastReceipt();
 renderProfile();
 renderVaultList();
+warmOnDeviceModels();

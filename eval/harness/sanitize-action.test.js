@@ -56,11 +56,11 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 vm.runInContext(
-  source + "\n;globalThis.__EXPORTS__ = { sanitizeAction, parseAction, normalizeProfile, classifyError, collectVerifiedTypeActions, fieldsForFill };",
+  source + "\n;globalThis.__EXPORTS__ = { sanitizeAction, parseAction, normalizeProfile, classifyError, collectVerifiedTypeActions, fieldsForFill, leftoverFillCount, isLeftoverFillField };",
   sandbox,
   { filename: SRC_PATH }
 );
-const { sanitizeAction, parseAction, normalizeProfile, classifyError, collectVerifiedTypeActions, fieldsForFill } = sandbox.__EXPORTS__;
+const { sanitizeAction, parseAction, normalizeProfile, classifyError, collectVerifiedTypeActions, fieldsForFill, leftoverFillCount, isLeftoverFillField } = sandbox.__EXPORTS__;
 
 const PAGE_FIELDS = [
   { type: "text_input", label: "Full Name", selector: "#name_input" },
@@ -570,6 +570,33 @@ check(
     "fieldsForFill: dedupes overlapping selector (no duplicate name field)",
     merged.length === 2 && merged.filter((f) => f.selector === "#name").length === 1,
     JSON.stringify(merged)
+  );
+}
+
+console.log("\n7. leftoverFillCount — trap fields do not force a leftover VLM pass");
+{
+  const fields = [
+    { selector: "#full-name", label: "Full Name", type: "text_input" },
+    { selector: "#email", label: "Email", type: "text_input" },
+    { selector: "#aadhaar-number", label: "Aadhaar Number", type: "text_input" },
+    { selector: "#pan-number", label: "PAN", type: "text_input" },
+    { selector: "#blood-group", label: "Blood Group", type: "text_input" },
+    { selector: "#pwd", label: "Portal PIN", type: "password_input" },
+  ];
+  check("Aadhaar is not leftover-eligible", isLeftoverFillField(fields[2]) === false);
+  check("PAN is not leftover-eligible", isLeftoverFillField(fields[3]) === false);
+  check("Blood group is not leftover-eligible", isLeftoverFillField(fields[4]) === false);
+  check("password_input is not leftover-eligible", isLeftoverFillField(fields[5]) === false);
+  check("name is leftover-eligible", isLeftoverFillField(fields[0]) === true);
+  check(
+    "TP08 after filling name+email has zero leftover (traps ignored)",
+    leftoverFillCount(fields, 2) === 0,
+    String(leftoverFillCount(fields, 2))
+  );
+  check(
+    "unfilled eligible fields still count as leftover",
+    leftoverFillCount(fields, 1) === 1,
+    String(leftoverFillCount(fields, 1))
   );
 }
 
