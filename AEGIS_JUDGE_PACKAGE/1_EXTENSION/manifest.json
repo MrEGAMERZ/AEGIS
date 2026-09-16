@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json.schemastore.org/chrome-manifest.json",
+  "manifest_version": 3,
+  "name": "AEGIS",
+  "short_name": "AEGIS",
+  "version": "0.1.0",
+  "description": "On-device visual perception for lightweight browser agents. Intercepts screen content, redacts sensitive elements locally, and sends only sanitized data to a cloud VLM.",
+
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage",
+    "scripting",
+    "offscreen",
+    "contextMenus"
+  ],
+
+  "host_permissions": ["<all_urls>"],
+
+  "background": {
+    "service_worker": "src/background/background.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>", "file://*/*"],
+      "js": [
+        "src/content/field-mapper.js",
+        "src/content/autofill.js",
+        "src/content/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "AEGIS",
+    "default_icon": {
+      "16": "src/icons/icon16.png",
+      "32": "src/icons/icon32.png",
+      "48": "src/icons/icon48.png",
+      "128": "src/icons/icon128.png"
+    }
+  },
+
+  "icons": {
+    "16": "src/icons/icon16.png",
+    "32": "src/icons/icon32.png",
+    "48": "src/icons/icon48.png",
+    "128": "src/icons/icon128.png"
+  },
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  },
+
+  "commands": {
+    "autofill_page": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+F",
+        "mac": "Command+Shift+F"
+      },
+      "description": "Fill the active page from the saved AEGIS profile"
+    }
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/offscreen/offscreen.html",
+        "src/voice/voice.html",
+        "src/dashboard/dashboard.html",
+        "src/inference/inference.worker.js",
+        "src/vendor/ort.min.js",
+        "src/vendor/transformers.min.js",
+        "src/vendor/transformers-global.js",
+        "src/vendor/*.wasm",
+        "src/vendor/*.mjs",
+        "src/vendor/ort-wasm-simd-threaded.wasm",
+        "src/vendor/ort-wasm-simd-threaded.mjs",
+        "src/vendor/blaze.onnx",
+        "src/vendor/models/*"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

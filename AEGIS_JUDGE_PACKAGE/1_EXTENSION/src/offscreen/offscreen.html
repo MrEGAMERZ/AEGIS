@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>SIH26171 Offscreen Document</title>
+</head>
+<body>
+  <canvas id="mask-canvas" style="display:none;"></canvas>
+
+  <!--
+    Do not load ort.min.js / transformers here. Both are ESM, and loading them
+    in this document races the inference worker (duplicate 13MB WASM compile).
+    The worker imports ORT; Transformers.js loads during INIT (after faces, before INIT_DONE).
+  -->
+  <script src="offscreen.js" type="module"></script>
+</body>
+</html>

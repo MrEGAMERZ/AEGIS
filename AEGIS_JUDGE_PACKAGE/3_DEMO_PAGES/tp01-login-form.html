@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<!--
+  TEST PAGE 01 — Login Form
+  Ground-truth PII elements:
+    - #password     → type=password    → DOM detection (certain)
+    - #email        → email regex      → regex detection (certain)
+  Non-sensitive elements:
+    - Label "Email", label "Password", "Remember me", Submit button
+  Layout: centered card, neutral background
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>TP01 — Login Form</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #f0f4f8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+      padding: 40px 48px;
+      width: 400px;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 24px; color: #1a202c; }
+    .field { margin-bottom: 18px; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; color: #4a5568; margin-bottom: 6px; }
+    input[type="text"], input[type="email"], input[type="password"] {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid #cbd5e0;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      transition: border-color 0.2s;
+    }
+    input:focus { outline: none; border-color: #4299e1; }
+    .remember { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #718096; }
+    .btn {
+      margin-top: 24px;
+      width: 100%;
+      padding: 12px;
+      background: #4299e1;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn:hover { background: #3182ce; }
+    .footer { margin-top: 16px; text-align: center; font-size: 0.8rem; color: #a0aec0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Sign In</h1>
+
+    <div class="field">
+      <label for="email">Email address</label>
+      <input
+        type="email"
+        id="email"
+        name="email"
+        placeholder="you@example.com"
+        autocomplete="email"
+        value="john.doe@gmail.com"
+      />
+    </div>
+
+    <div class="field">
+      <label for="password">Password</label>
+      <input
+        type="password"
+        id="password"
+        name="password"
+        placeholder="••••••••"
+        autocomplete="current-password"
+        value="SuperSecret123!"
+      />
+    </div>
+
+    <div class="remember">
+      <input type="checkbox" id="remember" />
+      <label for="remember" style="margin:0;font-weight:400;">Remember me on this device</label>
+    </div>
+
+    <button class="btn" id="submit-btn">Sign In</button>
+
+    <p class="footer">Forgot your password? <a href="#">Reset it</a></p>
+  </div>
+
+  <!--
+    BENCHMARK METADATA — parsed by harness
+    data-gt-sensitive: selectors of known PII elements
+    data-gt-non-sensitive: selectors of known safe elements
+  -->
+  <div id="benchmark-meta" style="display:none"
+    data-page-id="tp01-login-form"
+    data-gt-sensitive='[
+      {"selector":"#password","type":"password_input","reason":"type=password"},
+      {"selector":"#email","type":"email_pii","reason":"email regex"}
+    ]'
+    data-gt-non-sensitive='[
+      {"selector":"label[for=email]","type":"label"},
+      {"selector":"label[for=password]","type":"label"},
+      {"selector":"#submit-btn","type":"button"},
+      {"selector":"#remember","type":"checkbox"}
+    ]'
+  ></div>
+</body>
+</html>

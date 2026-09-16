@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<!--
+  TEST PAGE 07 — Government/KYC Onboarding (Unseen Layout — Generalization Test)
+  
+  Never used during development. Deliberate novel HTML structure.
+  
+  PII elements:
+    - #aadhaar-num  → 12-digit structured ID (regex: \d{4}\s\d{4}\s\d{4})
+    - #pan-card     → PAN regex ([A-Z]{5}\d{4}[A-Z])
+    - #full-name    → NER PERSON
+    - #mobile-num   → phone regex
+    - #dob          → personal info
+    - #address      → NER LOC (combined)
+    - input[type=password] (#pin-field) → DOM password detection
+  
+  Non-sensitive:
+    - Government logo, navigation, progress indicator
+    - Document upload buttons (no actual data)
+    - Terms/instructions text
+  
+  Layout: Government portal aesthetic — completely different from other test pages.
+  Uses: table-based layout, government blue/orange colors, step progress bar.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>TP07 — KYC Onboarding Portal</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Times New Roman", serif; background: #e8eaf6; }
+    /* Top bar */
+    .topbar { background: #1a237e; color: #fff; padding: 10px 24px; display: flex; justify-content: space-between; align-items: center; }
+    .topbar .site-name { font-size: 1.1rem; font-weight: 700; }
+    .topbar .site-sub { font-size: 0.72rem; color: #c5cae9; }
+    .topbar .lang { font-size: 0.78rem; color: #c5cae9; cursor: pointer; }
+    /* Header strip */
+    .header-strip { background: #ff6f00; height: 6px; }
+    /* Nav */
+    .secondary-nav { background: #283593; padding: 0 24px; display: flex; gap: 0; }
+    .secondary-nav a { color: #c5cae9; font-size: 0.82rem; padding: 10px 16px; text-decoration: none; display: block; }
+    .secondary-nav a:hover, .secondary-nav a.active { background: #1a237e; color: #fff; }
+    /* Main layout */
+    .page-wrap { max-width: 900px; margin: 24px auto; padding: 0 16px; }
+    .breadcrumb { font-size: 0.75rem; color: #5c6bc0; margin-bottom: 16px; }
+    /* Progress */
+    .progress-bar { display: flex; align-items: center; margin-bottom: 24px; }
+    .prog-step { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; }
+    .prog-num { width: 24px; height: 24px; border-radius: 50%; background: #283593; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.72rem; font-weight: 700; flex-shrink: 0; }
+    .prog-step.done .prog-num { background: #2e7d32; }
+    .prog-step.active .prog-num { background: #ff6f00; }
+    .prog-label { color: #283593; font-weight: 600; }
+    .prog-connector { flex: 1; height: 2px; background: #c5cae9; margin: 0 8px; }
+    /* Form */
+    .form-card { background: #fff; border: 1.5px solid #9fa8da; border-radius: 6px; }
+    .form-card-header { background: #283593; color: #fff; padding: 12px 20px; font-size: 0.9rem; font-weight: 700; border-radius: 4px 4px 0 0; display: flex; align-items: center; gap: 10px; }
+    .form-card-header .icon { font-size: 1.2rem; }
+    .form-card-body { padding: 24px; }
+    .section-divider { font-size: 0.78rem; font-weight: 700; color: #283593; text-transform: uppercase; letter-spacing: 0.8px; border-bottom: 1.5px solid #c5cae9; padding-bottom: 6px; margin: 20px 0 14px; }
+    /* Table-based form layout (classic government style) */
+    .form-table { width: 100%; border-collapse: collapse; }
+    .form-table td { padding: 8px 12px; vertical-align: top; }
+    .form-table td:first-child { width: 35%; font-size: 0.83rem; font-weight: 700; color: #37474f; padding-top: 10px; }
+    .form-table td span.required { color: #c62828; margin-left: 2px; }
+    .form-table input[type="text"],
+    .form-table input[type="tel"],
+    .form-table input[type="date"],
+    .form-table input[type="password"],
+    .form-table select,
+    .form-table textarea {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid #90a4ae;
+      border-radius: 3px;
+      font-family: Arial, sans-serif;
+      font-size: 0.85rem;
+      background: #f5f5f5;
+    }
+    .form-table input:focus, .form-table select:focus { outline: none; border-color: #283593; background: #fff; }
+    .form-table textarea { resize: vertical; min-height: 70px; }
+    .hint { font-size: 0.71rem; color: #78909c; margin-top: 3px; }
+    .upload-box { border: 1.5px dashed #9fa8da; border-radius: 4px; padding: 12px; text-align: center; font-size: 0.8rem; color: #5c6bc0; cursor: pointer; background: #f3f4fd; }
+    .upload-box:hover { background: #e8eaf6; }
+    /* Action bar */
+    .action-bar { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-top: 1.5px solid #e0e0e0; background: #f5f5f5; border-radius: 0 0 6px 6px; }
+    .btn-primary { padding: 10px 32px; background: #ff6f00; border: none; color: #fff; font-size: 0.88rem; font-weight: 700; cursor: pointer; border-radius: 3px; letter-spacing: 0.5px; }
+    .btn-secondary { padding: 10px 24px; background: #fff; border: 1.5px solid #283593; color: #283593; font-size: 0.88rem; font-weight: 600; cursor: pointer; border-radius: 3px; }
+    .notice { background: #fff9c4; border: 1px solid #f9a825; border-radius: 4px; padding: 10px 14px; font-size: 0.78rem; color: #f57f17; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <!-- Top bar -->
+  <div class="topbar">
+    <div>
+      <div class="site-name">🇮🇳 Digital Identity Services Portal</div>
+      <div class="site-sub">Ministry of Electronics &amp; Information Technology, Government of India</div>
+    </div>
+    <div class="lang">हिंदी | English</div>
+  </div>
+  <div class="header-strip"></div>
+
+  <!-- Secondary nav -->
+  <nav class="secondary-nav">
+    <a href="#" class="active">KYC Onboarding</a>
+    <a href="#">Document Verification</a>
+    <a href="#">Status Tracker</a>
+    <a href="#">Help &amp; Support</a>
+    <a href="#">Contact Us</a>
+  </nav>
+
+  <div class="page-wrap">
+    <!-- Breadcrumb -->
+    <div class="breadcrumb">Home &gt; Services &gt; KYC Onboarding &gt; Personal Details</div>
+
+    <!-- Notice -->
+    <div class="notice">
+      ℹ️ All information submitted here is encrypted and stored securely as per the Information Technology Act, 2000.
+      Do NOT share your OTP or PIN with anyone.
+    </div>
+
+    <!-- Progress -->
+    <div class="progress-bar">
+      <div class="prog-step done">
+        <div class="prog-num">✓</div>
+        <span class="prog-label">Registration</span>
+      </div>
+      <div class="prog-connector"></div>
+      <div class="prog-step active">
+        <div class="prog-num">2</div>
+        <span class="prog-label">Personal Details</span>
+      </div>
+      <div class="prog-connector"></div>
+      <div class="prog-step">
+        <div class="prog-num">3</div>
+        <span class="prog-label">Documents</span>
+      </div>
+      <div class="prog-connector"></div>
+      <div class="prog-step">
+        <div class="prog-num">4</div>
+        <span class="prog-label">Biometrics</span>
+      </div>
+      <div class="prog-connector"></div>
+      <div class="prog-step">
+        <div class="prog-num">5</div>
+        <span class="prog-label">Review</span>
+      </div>
+    </div>
+
+    <!-- Main Form Card -->
+    <div class="form-card">
+      <div class="form-card-header">
+        <span class="icon">📋</span>
+        Step 2: Personal Information
+      </div>
+      <div class="form-card-body">
+
+        <div class="section-divider">Basic Information</div>
+        <table class="form-table">
+          <tr>
+            <td>Full Name (as on Aadhaar)<span class="required">*</span></td>
+            <td>
+              <input type="text" id="full-name" name="full_name" value="Lakshmi Narayanan" />
+              <div class="hint">Enter name exactly as it appears on your Aadhaar card.</div>
+            </td>
+          </tr>
+          <tr>
+            <td>Date of Birth<span class="required">*</span></td>
+            <td>
+              <input type="date" id="dob" name="date_of_birth" value="1985-06-23" />
+            </td>
+          </tr>
+          <tr>
+            <td>Gender<span class="required">*</span></td>
+            <td>
+              <select id="gender">
+                <option value="">— Select —</option>
+                <option value="F" selected>Female</option>
+                <option value="M">Male</option>
+                <option value="O">Other</option>
+              </select>
+            </td>
+          </tr>
+          <tr>
+            <td>Mobile Number<span class="required">*</span></td>
+            <td>
+              <input type="tel" id="mobile-num" name="mobile_number" value="+91 9123456780" />
+              <div class="hint">OTP will be sent to this number.</div>
+            </td>
+          </tr>
+        </table>
+
+        <div class="section-divider">Identity Documents</div>
+        <table class="form-table">
+          <tr>
+            <td>Aadhaar Number<span class="required">*</span></td>
+            <td>
+              <input type="text" id="aadhaar-num" name="aadhaar_number" value="5432 8761 9023" maxlength="14" />
+              <div class="hint">12-digit number on your Aadhaar card.</div>
+            </td>
+          </tr>
+          <tr>
+            <td>PAN Card Number<span class="required">*</span></td>
+            <td>
+              <input type="text" id="pan-card" name="pan_number" value="BCRPK7291M" style="text-transform:uppercase;" />
+              <div class="hint">10-character alphanumeric PAN number.</div>
+            </td>
+          </tr>
+          <tr>
+            <td>Set 4-digit PIN<span class="required">*</span></td>
+            <td>
+              <input type="password" id="pin-field" name="user_pin" maxlength="4" placeholder="••••" />
+              <div class="hint">This PIN will be used for future logins. Do not share.</div>
+            </td>
+          </tr>
+        </table>
+
+        <div class="section-divider">Permanent Address</div>
+        <table class="form-table">
+          <tr>
+            <td>Complete Address<span class="required">*</span></td>
+            <td>
+              <textarea id="address" name="address">No. 5, 3rd Cross, Rajajinagar, Bengaluru, Karnataka - 560010</textarea>
+            </td>
+          </tr>
+          <tr>
+            <td>Proof of Address<span class="required">*</span></td>
+            <td>
+              <div class="upload-box" onclick="alert('File upload simulated')">
+                📎 Click to upload document (PDF/JPG, max 2MB)
+              </div>
+            </td>
+          </tr>
+        </table>
+
+      </div>
+
+      <!-- Action bar -->
+      <div class="action-bar">
+        <button class="btn-secondary">← Previous</button>
+        <div style="font-size:0.78rem;color:#78909c;">* Required fields</div>
+        <button class="btn-primary">Save &amp; Continue →</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Benchmark metadata -->
+  <div id="benchmark-meta" style="display:none"
+    data-page-id="tp07-kyc-onboarding"
+    data-gt-sensitive='[
+      {"selector":"#full-name","type":"ner_person","reason":"NER PERSON — full name on government ID"},
+      {"selector":"#dob","type":"personal_info","reason":"date of birth"},
+      {"selector":"#mobile-num","type":"phone_pii","reason":"phone regex"},
+      {"selector":"#aadhaar-num","type":"id_pii","reason":"Aadhaar = 12-digit national ID"},
+      {"selector":"#pan-card","type":"id_pii","reason":"PAN = national tax ID"},
+      {"selector":"#pin-field","type":"password_input","reason":"type=password — user PIN"},
+      {"selector":"#address","type":"ner_location","reason":"NER LOC — full address"}
+    ]'
+    data-gt-non-sensitive='[
+      {"selector":"#gender","type":"select","note":"gender select — edge case, not PII alone"},
+      {"selector":".upload-box","type":"upload_control"},
+      {"selector":".breadcrumb","type":"navigation"},
+      {"selector":".secondary-nav a","type":"navigation"},
+      {"selector":".notice","type":"informational_text"},
+      {"selector":".prog-label","type":"progress_indicator"}
+    ]'
+    data-layout-notes="Government portal aesthetic. Table-based form layout. No CSS framework. Serif font. Completely novel to extension training."
+  ></div>
+</body>
+</html>

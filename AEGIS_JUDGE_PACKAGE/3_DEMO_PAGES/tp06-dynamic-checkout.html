@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<!--
+  TEST PAGE 06 — Dynamic Content (MutationObserver Test)
+  
+  UNSEEN LAYOUT: Never used during development.
+  PURPOSE: Tests MutationObserver + generalization on novel layout (e-commerce checkout flow).
+  
+  Dynamics tested:
+    1. Password field appears after clicking "Create Account" (0ms but hidden initially)
+    2. Card number field appears after "Pay with Card" toggle (1.5s delay)
+    3. SSN appears in background after 3s (lazy-loaded field from "server")
+    4. OTP field appears after "Send OTP" (simulated 2s network call)
+  
+  Ground-truth PII (all become visible at some point):
+    - #new-password      → type=password (appears on tab switch)
+    - #otp-code         → pin keyword in ID
+    - #card-num-late    → cc-number autocomplete (appears after 1.5s)
+    - #ssn-late         → SSN regex (appears after 3s)
+  
+  Non-sensitive (always visible):
+    - Product image placeholder, price, item name
+    - Shipping address inputs (street, city, zip)
+    - Coupon code input
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>TP06 — Dynamic Checkout (Generalization)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Georgia, serif; background: #fffaf0; min-height: 100vh; padding: 32px 16px; }
+    .layout { max-width: 840px; margin: 0 auto; display: grid; grid-template-columns: 1fr 380px; gap: 24px; }
+    h1 { font-size: 1.4rem; color: #744210; margin-bottom: 20px; }
+    /* Left: form area */
+    .form-area {}
+    /* Accordion-style sections */
+    .step { border: 1.5px solid #d4a574; border-radius: 10px; margin-bottom: 14px; overflow: hidden; }
+    .step-header {
+      background: #fef3c7;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      font-weight: 700;
+      color: #92400e;
+      font-size: 0.92rem;
+    }
+    .step-num { background: #d97706; color: #fff; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700; flex-shrink: 0; }
+    .step-body { padding: 18px; display: none; }
+    .step.open .step-body { display: block; }
+    .field { margin-bottom: 14px; }
+    label { display: block; font-size: 0.8rem; font-weight: 700; color: #92400e; margin-bottom: 5px; }
+    input[type="text"], input[type="email"], input[type="password"], input[type="tel"] {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1.5px solid #d4a574;
+      border-radius: 7px;
+      font-family: inherit;
+      font-size: 0.88rem;
+      background: #fffdf7;
+    }
+    input:focus { outline: none; border-color: #d97706; }
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+    .tab-btn {
+      padding: 8px 16px;
+      border: 1.5px solid #d4a574;
+      border-radius: 6px;
+      background: #fff;
+      color: #92400e;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tab-btn.active { background: #d97706; color: #fff; border-color: #d97706; }
+    .btn { padding: 12px 24px; background: #d97706; color: #fff; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 700; cursor: pointer; width: 100%; margin-top: 8px; }
+    .btn:hover { background: #b45309; }
+    .otp-row { display: flex; gap: 8px; }
+    .otp-row input { flex: 1; }
+    .otp-row button { padding: 9px 14px; background: #92400e; color: #fff; border: none; border-radius: 7px; font-size: 0.78rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    /* Dynamic fields */
+    .dynamic-hidden { display: none; }
+    .loading-text { font-size: 0.78rem; color: #a0aec0; font-style: italic; }
+    /* Right: order summary */
+    .summary { background: #fff; border: 1.5px solid #d4a574; border-radius: 10px; padding: 20px; height: fit-content; }
+    .summary h2 { font-size: 1rem; color: #744210; margin-bottom: 16px; }
+    .product-item { display: flex; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid #fef3c7; margin-bottom: 14px; }
+    .product-img { width: 64px; height: 64px; background: linear-gradient(135deg, #fed7aa, #fbbf24); border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
+    .product-info { flex: 1; }
+    .product-name { font-size: 0.88rem; font-weight: 700; color: #744210; }
+    .product-desc { font-size: 0.75rem; color: #a0aec0; margin: 2px 0; }
+    .product-price { font-size: 0.95rem; font-weight: 700; color: #d97706; }
+    .total-row { display: flex; justify-content: space-between; font-size: 0.85rem; color: #744210; padding: 4px 0; }
+    .total-row.final { font-weight: 700; font-size: 0.95rem; border-top: 1.5px solid #d4a574; margin-top: 8px; padding-top: 10px; }
+    .coupon { display: flex; gap: 8px; margin-top: 12px; }
+    .coupon input { flex: 1; }
+    .coupon button { padding: 9px 12px; background: #fef3c7; color: #92400e; border: 1.5px solid #d4a574; border-radius: 7px; font-size: 0.78rem; font-weight: 700; cursor: pointer; }
+    .status-msg { font-size: 0.78rem; color: #059669; margin-top: 6px; font-weight: 600; }
+    .error-msg { font-size: 0.78rem; color: #c53030; margin-top: 6px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="form-area">
+      <h1>Checkout</h1>
+
+      <!-- Step 1: Account (has dynamic password on toggle) -->
+      <div class="step open" id="step-account">
+        <div class="step-header" onclick="toggleStep('step-account')">
+          <div class="step-num">1</div>
+          Account
+        </div>
+        <div class="step-body">
+          <div class="tabs">
+            <button class="tab-btn active" onclick="showAccountTab('guest')">Guest</button>
+            <button class="tab-btn" onclick="showAccountTab('login')">Login</button>
+            <button class="tab-btn" onclick="showAccountTab('register')">Create Account</button>
+          </div>
+
+          <!-- Guest form (always visible) -->
+          <div id="account-guest">
+            <div class="field">
+              <label for="guest-email">Email address</label>
+              <input type="email" id="guest-email" value="buyer@outlook.com" />
+            </div>
+          </div>
+
+          <!-- Login form (hidden initially) -->
+          <div id="account-login" style="display:none">
+            <div class="field">
+              <label for="login-email">Email</label>
+              <input type="email" id="login-email" />
+            </div>
+            <div class="field">
+              <label for="login-password">Password</label>
+              <!-- DYNAMIC: appears only on login tab -->
+              <input type="password" id="login-password" placeholder="Your password" />
+            </div>
+          </div>
+
+          <!-- Register form (hidden initially, password appears) -->
+          <div id="account-register" style="display:none">
+            <div class="field">
+              <label for="reg-email">Email</label>
+              <input type="email" id="reg-email" />
+            </div>
+            <div class="field">
+              <label for="new-password">Create Password</label>
+              <!-- DYNAMIC: key field — appears after tab switch -->
+              <input type="password" id="new-password" placeholder="Minimum 8 characters" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: OTP Verification -->
+      <div class="step" id="step-otp">
+        <div class="step-header" onclick="toggleStep('step-otp')">
+          <div class="step-num">2</div>
+          Verify Identity
+        </div>
+        <div class="step-body">
+          <p style="font-size:0.82rem;color:#92400e;margin-bottom:12px;">
+            Enter the 6-digit OTP sent to your phone.
+          </p>
+          <div class="otp-row">
+            <!-- DYNAMIC: OTP field — sensitive (pin keyword) -->
+            <input type="text" id="otp-code" name="otp-pin" placeholder="• • • • • •" maxlength="6" />
+            <button onclick="sendOTP()">Send OTP</button>
+          </div>
+          <p id="otp-status" class="status-msg" style="display:none;">OTP sent to +91 98765 XXXXX</p>
+        </div>
+      </div>
+
+      <!-- Step 3: Shipping -->
+      <div class="step" id="step-shipping">
+        <div class="step-header" onclick="toggleStep('step-shipping')">
+          <div class="step-num">3</div>
+          Shipping Address
+        </div>
+        <div class="step-body">
+          <div class="field">
+            <label for="ship-name">Full Name</label>
+            <input type="text" id="ship-name" value="Rahul Verma" />
+          </div>
+          <div class="field">
+            <label for="ship-street">Street Address</label>
+            <input type="text" id="ship-street" value="Plot 14, Sector 18, Noida" />
+          </div>
+          <div class="row-2">
+            <div class="field">
+              <label for="ship-city">City</label>
+              <input type="text" id="ship-city" value="Noida" />
+            </div>
+            <div class="field">
+              <label for="ship-pin">PIN Code</label>
+              <input type="text" id="ship-pin" value="201301" />
+            </div>
+          </div>
+          <div class="field">
+            <label for="ship-phone">Phone</label>
+            <input type="tel" id="ship-phone" value="+91 98765 43210" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 4: Payment (card number appears after 1.5s) -->
+      <div class="step" id="step-payment">
+        <div class="step-header" onclick="toggleStep('step-payment')">
+          <div class="step-num">4</div>
+          Payment
+        </div>
+        <div class="step-body">
+          <div class="tabs">
+            <button class="tab-btn active" onclick="showPaymentTab('card')">Card</button>
+            <button class="tab-btn" onclick="showPaymentTab('upi')">UPI</button>
+            <button class="tab-btn" onclick="showPaymentTab('netbanking')">Net Banking</button>
+          </div>
+
+          <div id="payment-card">
+            <p class="loading-text" id="card-loading">Loading secure card form...</p>
+            <!-- DYNAMIC: Card form appears after 1.5s delay -->
+            <div id="card-form-late" style="display:none;">
+              <div class="field">
+                <label for="card-num-late">Card Number</label>
+                <input type="text" id="card-num-late" autocomplete="cc-number" placeholder="•••• •••• •••• ••••" />
+              </div>
+              <div class="row-2">
+                <div class="field">
+                  <label>Expiry</label>
+                  <input type="text" autocomplete="cc-exp" placeholder="MM/YY" />
+                </div>
+                <div class="field">
+                  <label>CVV</label>
+                  <input type="text" autocomplete="cc-csc" placeholder="•••" maxlength="3" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="payment-upi" style="display:none;">
+            <div class="field">
+              <label for="upi-id">UPI ID</label>
+              <input type="text" id="upi-id" placeholder="yourname@paytm" />
+            </div>
+          </div>
+
+          <div id="payment-netbanking" style="display:none;">
+            <p style="font-size:0.85rem;color:#92400e;">Select your bank to continue.</p>
+          </div>
+
+          <!-- DYNAMIC: SSN field — appears after 3s (simulates lazy-loaded KYC) -->
+          <div id="kyc-section" class="dynamic-hidden" style="margin-top:16px;padding-top:16px;border-top:1px dashed #d4a574;">
+            <div class="field">
+              <label for="ssn-late">KYC / Aadhaar Last 4 Digits</label>
+              <input type="text" id="ssn-late" name="ssn" placeholder="••••" maxlength="4" value="7291" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <button class="btn" id="place-order-btn">Place Order →</button>
+    </div>
+
+    <!-- Order Summary -->
+    <div class="summary">
+      <h2>Order Summary</h2>
+      <div class="product-item">
+        <div class="product-img">📦</div>
+        <div class="product-info">
+          <div class="product-name">Artisan Ceramic Mug Set</div>
+          <div class="product-desc">Hand-painted, 350ml × 4</div>
+          <div class="product-price">₹1,299</div>
+        </div>
+      </div>
+      <div class="product-item">
+        <div class="product-img">🧴</div>
+        <div class="product-info">
+          <div class="product-name">Organic Skincare Bundle</div>
+          <div class="product-desc">5-piece set, natural ingredients</div>
+          <div class="product-price">₹2,499</div>
+        </div>
+      </div>
+      <div class="total-row"><span>Subtotal</span><span>₹3,798</span></div>
+      <div class="total-row"><span>Shipping</span><span>₹99</span></div>
+      <div class="total-row"><span>Discount</span><span style="color:#059669;">- ₹200</span></div>
+      <div class="total-row final"><span>Total</span><span>₹3,697</span></div>
+
+      <div class="coupon">
+        <input type="text" id="coupon-code" placeholder="Coupon code" />
+        <button>Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Tab switching
+    function showAccountTab(tab) {
+      document.getElementById('account-guest').style.display = tab === 'guest' ? 'block' : 'none';
+      document.getElementById('account-login').style.display = tab === 'login' ? 'block' : 'none';
+      document.getElementById('account-register').style.display = tab === 'register' ? 'block' : 'none';
+      document.querySelectorAll('#step-account .tab-btn').forEach((b, i) => {
+        b.classList.toggle('active', ['guest','login','register'][i] === tab);
+      });
+    }
+
+    function showPaymentTab(tab) {
+      document.getElementById('payment-card').style.display = tab === 'card' ? 'block' : 'none';
+      document.getElementById('payment-upi').style.display = tab === 'upi' ? 'block' : 'none';
+      document.getElementById('payment-netbanking').style.display = tab === 'netbanking' ? 'block' : 'none';
+    }
+
+    function toggleStep(id) {
+      document.getElementById(id).classList.toggle('open');
+    }
+
+    function sendOTP() {
+      const btn = event.target;
+      btn.disabled = true;
+      btn.textContent = 'Sending...';
+      setTimeout(() => {
+        document.getElementById('otp-status').style.display = 'block';
+        btn.textContent = 'Resend';
+        btn.disabled = false;
+      }, 2000);
+    }
+
+    // DYNAMIC: Card form appears after 1.5 seconds (simulates secure iframe load)
+    setTimeout(() => {
+      document.getElementById('card-loading').style.display = 'none';
+      document.getElementById('card-form-late').style.display = 'block';
+      console.log('[TP06] Card form dynamically injected — MutationObserver should trigger');
+    }, 1500);
+
+    // DYNAMIC: KYC / SSN section appears after 3 seconds (simulates lazy KYC load)
+    setTimeout(() => {
+      const kyc = document.getElementById('kyc-section');
+      kyc.classList.remove('dynamic-hidden');
+      kyc.style.display = 'block';
+      console.log('[TP06] KYC section dynamically injected — MutationObserver should trigger');
+    }, 3000);
+
+    // Open step-payment by default for demo
+    document.getElementById('step-payment').classList.add('open');
+  </script>
+
+  <!-- Benchmark metadata -->
+  <div id="benchmark-meta" style="display:none"
+    data-page-id="tp06-dynamic-checkout"
+    data-gt-sensitive='[
+      {"selector":"#new-password","type":"password_input","reason":"type=password","dynamic":true,"appears":"on tab switch"},
+      {"selector":"#login-password","type":"password_input","reason":"type=password","dynamic":true,"appears":"on tab switch"},
+      {"selector":"#otp-code","type":"sensitive_input","reason":"name=otp-pin contains keyword pin"},
+      {"selector":"#card-num-late","type":"sensitive_input","reason":"autocomplete=cc-number","dynamic":true,"appears_after_ms":1500},
+      {"selector":"#ssn-late","type":"sensitive_input","reason":"name=ssn — SSN keyword","dynamic":true,"appears_after_ms":3000},
+      {"selector":"#ship-phone","type":"phone_pii","reason":"phone regex match"}
+    ]'
+    data-gt-non-sensitive='[
+      {"selector":"#guest-email","type":"email_input","note":"email — could be PII but not always detected by DOM scanner"},
+      {"selector":"#ship-street","type":"address","note":"shipping address — not CC or SSN PII"},
+      {"selector":"#ship-city","type":"address"},
+      {"selector":"#ship-pin","type":"address","note":"postal code only"},
+      {"selector":"#coupon-code","type":"promo_code"},
+      {"selector":".product-name","type":"product_info"},
+      {"selector":".total-row","type":"transaction_total"}
+    ]'
+    data-dynamic-tests='[
+      {"field":"#card-num-late","delay_ms":1500,"test":"MutationObserver should detect within 500ms of appearance"},
+      {"field":"#kyc-section","delay_ms":3000,"test":"MutationObserver should detect within 500ms of appearance"},
+      {"field":"#new-password","trigger":"tab switch","test":"MutationObserver on display:none → block change"}
+    ]'
+  ></div>
+</body>
+</html>

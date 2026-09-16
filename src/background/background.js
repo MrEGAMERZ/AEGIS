@@ -5,7 +5,7 @@ const OFFSCREEN_URL = chrome.runtime.getURL("src/offscreen/offscreen.html");
 const DEFAULT_OLLAMA_VLM = "http://localhost:11434/v1/chat/completions";
 const DEFAULT_GATEWAY_VLM = "http://localhost:8000/v1/chat/completions";
 const DEFAULT_GATEWAY_HEALTH = "http://localhost:8000/health";
-const DEFAULT_VLM_MODEL = "qwen2.5vl:7b";
+const DEFAULT_VLM_MODEL = "SARA-Distillation-0.5B";
 const VLM_FETCH_TIMEOUT_MS = 120000;
 
 // ── Local document vault module (lazy) ────────────────────────────

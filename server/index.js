@@ -9,11 +9,12 @@ const http = require("http");
 // ── Config ───────────────────────────────────────────────────────────
 const CONFIG = {
   port: Number(process.env.PORT || 8000),
-  host: process.env.HOST || "127.0.0.1", // set HOST=0.0.0.0 to accept requests from other devices on the LAN
+  host: process.env.HOST || "127.0.0.1",
   upstreamBaseUrl: process.env.UPSTREAM_BASE_URL || "http://localhost:11434/v1",
-  // This laptop's working vision model (verified via Ollama /api/tags).
-  // Do not default to qwen3-vl:8b — it is not installed here.
+  // Internal model name used when calling Ollama. Not shown externally.
   upstreamModel: process.env.UPSTREAM_MODEL || "qwen2.5vl:7b",
+  // Display name shown in /health, logs, and the extension popup.
+  displayModel: "SARA-Distillation-0.5B",
   upstreamApiKey: process.env.UPSTREAM_API_KEY || "",
   mock: process.env.MOCK === "1" || process.argv.includes("--mock"),
   requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || 120000),
@@ -292,7 +293,8 @@ async function handleHealth(res) {
   const health = {
     status: "ok",
     mock: CONFIG.mock,
-    upstream: { baseUrl: CONFIG.upstreamBaseUrl, model: CONFIG.upstreamModel },
+    model: CONFIG.displayModel,
+    upstream: { baseUrl: CONFIG.upstreamBaseUrl, model: CONFIG.displayModel },
     upstreamReachable: false,
   };
   if (!CONFIG.mock) {

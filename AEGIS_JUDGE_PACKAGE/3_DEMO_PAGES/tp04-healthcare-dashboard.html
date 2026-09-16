@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<!--
+  TEST PAGE 04 — Healthcare Patient Dashboard
+  Ground-truth PII elements:
+    - #patient-name     → NER PERSON
+    - #patient-id       → structured ID (regex: MRN-\d{6})
+    - #patient-ssn      → SSN regex (\d{3}-\d{2}-\d{4})
+    - #patient-dob      → personal info
+    - #patient-phone    → phone regex
+    - #diagnosis-text   → medical info (sensitive)
+    - #medication-list  → medical info (sensitive)
+    - #insurance-id     → ID number
+  Non-sensitive elements:
+    - Doctor name (debatable, but non-patient PII), appointment date, hospital name
+    - Navigation, chart headings
+  Layout: clinical dashboard, left nav, tabular data, blue/white theme
+  TESTS: mixed PII density — many elements, some sensitive, some not
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>TP04 — Healthcare Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Segoe UI", sans-serif; background: #eef2f7; display: flex; min-height: 100vh; }
+    /* Nav */
+    .nav { width: 200px; background: #1e3a5f; flex-shrink: 0; padding: 20px 0; }
+    .nav-logo { color: #fff; font-weight: 700; font-size: 1rem; padding: 0 16px 20px; border-bottom: 1px solid #2c5282; }
+    .nav-item { padding: 10px 16px; color: #90cdf4; font-size: 0.85rem; cursor: pointer; }
+    .nav-item:hover, .nav-item.active { background: #2c5282; color: #fff; }
+    /* Main */
+    .main { flex: 1; padding: 24px; overflow: auto; }
+    .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .top-bar h1 { font-size: 1.3rem; color: #1a202c; }
+    .badge { background: #fc8181; color: #fff; border-radius: 4px; padding: 2px 8px; font-size: 0.75rem; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+    .card { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .card-title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: #1e3a5f; margin-bottom: 12px; }
+    .info-table { width: 100%; font-size: 0.85rem; }
+    .info-table tr td:first-child { color: #718096; font-weight: 600; width: 40%; padding: 5px 0; }
+    .info-table tr td:last-child { color: #1a202c; }
+    .sensitive { background: #fff5f5; }
+    .med-item { padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; }
+    .med-item:last-child { border: none; }
+    .vitals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .vital-card { text-align: center; padding: 12px; background: #ebf8ff; border-radius: 8px; }
+    .vital-val { font-size: 1.4rem; font-weight: 700; color: #2b6cb0; }
+    .vital-label { font-size: 0.72rem; color: #718096; margin-top: 2px; }
+    .alert-box { background: #fff5f5; border: 1.5px solid #fc8181; border-radius: 8px; padding: 14px; font-size: 0.85rem; color: #c53030; margin-bottom: 16px; }
+    table.records { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    table.records th { background: #1e3a5f; color: #fff; padding: 8px 12px; text-align: left; }
+    table.records td { padding: 8px 12px; border-bottom: 1px solid #e2e8f0; }
+    table.records tr:hover td { background: #ebf8ff; }
+  </style>
+</head>
+<body>
+  <!-- Sidebar Navigation -->
+  <nav class="nav">
+    <div class="nav-logo">MediTrack</div>
+    <div class="nav-item active">Patient Record</div>
+    <div class="nav-item">Appointments</div>
+    <div class="nav-item">Lab Results</div>
+    <div class="nav-item">Prescriptions</div>
+    <div class="nav-item">Billing</div>
+    <div class="nav-item">Settings</div>
+  </nav>
+
+  <!-- Main content -->
+  <main class="main">
+    <div class="top-bar">
+      <h1>Patient Record</h1>
+      <div>
+        <span class="badge">CRITICAL</span>
+        <span style="margin-left:12px;font-size:0.82rem;color:#718096;">Dr. Ravi Patel &nbsp;|&nbsp; 26 Aug 2026</span>
+      </div>
+    </div>
+
+    <!-- Allergy alert -->
+    <div class="alert-box">
+      ⚠️ Allergy Alert: Penicillin, Sulfonamides. Proceed with caution.
+    </div>
+
+    <div class="grid">
+      <!-- Patient demographics -->
+      <div class="card">
+        <div class="card-title">Patient Demographics</div>
+        <table class="info-table">
+          <tr>
+            <td>Full Name</td>
+            <td><strong id="patient-name">Kavitha Ramaswamy</strong></td>
+          </tr>
+          <tr class="sensitive">
+            <td>SSN</td>
+            <td id="patient-ssn">524-68-1903</td>
+          </tr>
+          <tr>
+            <td>MRN</td>
+            <td id="patient-id">MRN-483920</td>
+          </tr>
+          <tr>
+            <td>Date of Birth</td>
+            <td id="patient-dob">19 July 1978 (Age 48)</td>
+          </tr>
+          <tr>
+            <td>Contact</td>
+            <td id="patient-phone">+91 044-2345-6789</td>
+          </tr>
+          <tr>
+            <td>Insurance ID</td>
+            <td id="insurance-id">NHIP-00382710</td>
+          </tr>
+        </table>
+      </div>
+
+      <!-- Vitals -->
+      <div class="card">
+        <div class="card-title">Current Vitals</div>
+        <div class="vitals">
+          <div class="vital-card">
+            <div class="vital-val">98.6°F</div>
+            <div class="vital-label">Temperature</div>
+          </div>
+          <div class="vital-card">
+            <div class="vital-val">128/82</div>
+            <div class="vital-label">Blood Pressure</div>
+          </div>
+          <div class="vital-card">
+            <div class="vital-val">72 bpm</div>
+            <div class="vital-label">Heart Rate</div>
+          </div>
+          <div class="vital-card">
+            <div class="vital-val">99%</div>
+            <div class="vital-label">SpO₂</div>
+          </div>
+          <div class="vital-card">
+            <div class="vital-val">18/min</div>
+            <div class="vital-label">Resp. Rate</div>
+          </div>
+          <div class="vital-card">
+            <div class="vital-val">6.8</div>
+            <div class="vital-label">HbA1c</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Diagnosis -->
+      <div class="card">
+        <div class="card-title">Active Diagnoses</div>
+        <p id="diagnosis-text" style="font-size:0.85rem;color:#c53030;line-height:1.8;">
+          Type 2 Diabetes Mellitus (E11.9)<br/>
+          Hypertensive Heart Disease (I11.9)<br/>
+          Chronic Kidney Disease, Stage 2 (N18.2)
+        </p>
+      </div>
+
+      <!-- Medications -->
+      <div class="card">
+        <div class="card-title">Current Medications</div>
+        <div id="medication-list">
+          <div class="med-item">Metformin 500mg — twice daily</div>
+          <div class="med-item">Amlodipine 5mg — once daily</div>
+          <div class="med-item">Lisinopril 10mg — once daily</div>
+          <div class="med-item">Aspirin 81mg — once daily</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Visit history table -->
+    <div class="card">
+      <div class="card-title">Visit History</div>
+      <table class="records">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Doctor</th>
+            <th>Department</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>14 Aug 2026</td>
+            <td>Dr. Ravi Patel</td>
+            <td>Internal Medicine</td>
+            <td>Routine diabetes follow-up</td>
+          </tr>
+          <tr>
+            <td>02 Jul 2026</td>
+            <td>Dr. Anjali Singh</td>
+            <td>Nephrology</td>
+            <td>CKD monitoring — stable</td>
+          </tr>
+          <tr>
+            <td>15 May 2026</td>
+            <td>Dr. Suresh Kumar</td>
+            <td>Cardiology</td>
+            <td>EKG normal, continue current meds</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <!-- Benchmark metadata -->
+  <div id="benchmark-meta" style="display:none"
+    data-page-id="tp04-healthcare-dashboard"
+    data-gt-sensitive='[
+      {"selector":"#patient-name","type":"ner_person","reason":"NER PERSON — patient name"},
+      {"selector":"#patient-ssn","type":"ssn_pii","reason":"SSN regex match"},
+      {"selector":"#patient-id","type":"id_pii","reason":"medical record number"},
+      {"selector":"#patient-dob","type":"personal_info","reason":"date of birth"},
+      {"selector":"#patient-phone","type":"phone_pii","reason":"phone regex"},
+      {"selector":"#insurance-id","type":"id_pii","reason":"insurance identifier"},
+      {"selector":"#diagnosis-text","type":"medical_info","reason":"diagnosis = sensitive health data"},
+      {"selector":"#medication-list","type":"medical_info","reason":"medications = sensitive health data"}
+    ]'
+    data-gt-non-sensitive='[
+      {"selector":".vital-card","type":"vitals","note":"medical vitals — could argue sensitive but not PII"},
+      {"selector":".nav-item","type":"navigation"},
+      {"selector":"table.records td:first-child","type":"dates","note":"visit dates not sensitive alone"},
+      {"selector":".alert-box","type":"allergy_alert","note":"allergy data is sensitive — edge case"}
+    ]'
+  ></div>
+</body>
+</html>

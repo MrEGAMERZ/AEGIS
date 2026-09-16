@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<!--
+  TEST PAGE 02 — Payment / Checkout Form
+  Ground-truth PII elements:
+    - #card-number      → 16-digit regex + autocomplete=cc-number
+    - #cvv              → autocomplete=cc-csc  (DOM sensitive)
+    - #card-name        → autocomplete=cc-name + NER (person name)
+    - #expiry           → autocomplete=cc-exp
+  Non-sensitive elements:
+    - Billing address (street, city, zip — not PII by default)
+    - Submit button, headings, labels
+  Layout: two-column grid, dark header, red accent
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>TP02 — Payment Form</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; padding: 32px; }
+    .container { max-width: 700px; margin: 0 auto; }
+    h1 { font-size: 1.6rem; margin-bottom: 8px; color: #e94560; }
+    .subtitle { font-size: 0.85rem; color: #aaa; margin-bottom: 28px; }
+    .section { background: #16213e; border-radius: 10px; padding: 28px; margin-bottom: 20px; }
+    .section-title { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #e94560; margin-bottom: 16px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .field { margin-bottom: 14px; }
+    label { display: block; font-size: 0.8rem; font-weight: 600; color: #aaa; margin-bottom: 5px; }
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      background: #0f3460;
+      border: 1.5px solid #1f4e78;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 0.9rem;
+    }
+    input:focus { outline: none; border-color: #e94560; }
+    .btn {
+      width: 100%;
+      padding: 14px;
+      background: #e94560;
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    .secure-badge { text-align: center; font-size: 0.75rem; color: #888; margin-top: 10px; }
+    .card-icons { display: flex; gap: 8px; margin-bottom: 12px; }
+    .card-icon { background: #0f3460; border-radius: 4px; padding: 4px 10px; font-size: 0.7rem; color: #aaa; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Complete Payment</h1>
+    <p class="subtitle">All transactions are encrypted and secure.</p>
+
+    <!-- Card details section -->
+    <div class="section">
+      <div class="section-title">Card Information</div>
+      <div class="card-icons">
+        <span class="card-icon">VISA</span>
+        <span class="card-icon">MC</span>
+        <span class="card-icon">AMEX</span>
+      </div>
+
+      <div class="field">
+        <label for="card-name">Cardholder Name</label>
+        <input
+          type="text"
+          id="card-name"
+          name="card-name"
+          autocomplete="cc-name"
+          placeholder="John Michael Doe"
+          value="Priya Sharma"
+        />
+      </div>
+
+      <div class="field">
+        <label for="card-number">Card Number</label>
+        <input
+          type="text"
+          id="card-number"
+          name="card-number"
+          autocomplete="cc-number"
+          placeholder="1234 5678 9012 3456"
+          value="4532 0151 1283 0366"
+          maxlength="19"
+        />
+      </div>
+
+      <div class="grid-2">
+        <div class="field">
+          <label for="expiry">Expiry Date</label>
+          <input
+            type="text"
+            id="expiry"
+            name="expiry"
+            autocomplete="cc-exp"
+            placeholder="MM / YY"
+            value="09 / 28"
+            maxlength="7"
+          />
+        </div>
+        <div class="field">
+          <label for="cvv">CVV / CVC</label>
+          <input
+            type="text"
+            id="cvv"
+            name="cvv"
+            autocomplete="cc-csc"
+            placeholder="•••"
+            value="847"
+            maxlength="4"
+          />
+        </div>
+      </div>
+    </div>
+
+    <!-- Billing address section -->
+    <div class="section">
+      <div class="section-title">Billing Address</div>
+      <div class="field">
+        <label for="street">Street Address</label>
+        <input type="text" id="street" name="street" value="42 Baker Street" />
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label for="city">City</label>
+          <input type="text" id="city" name="city" value="Mumbai" />
+        </div>
+        <div class="field">
+          <label for="zip">PIN Code</label>
+          <input type="text" id="zip" name="zip" value="400001" />
+        </div>
+      </div>
+    </div>
+
+    <button class="btn" id="pay-btn">Pay ₹4,999</button>
+    <p class="secure-badge">🔒 Secured by SSL encryption</p>
+  </div>
+
+  <!-- Benchmark metadata -->
+  <div id="benchmark-meta" style="display:none"
+    data-page-id="tp02-payment-form"
+    data-gt-sensitive='[
+      {"selector":"#card-number","type":"sensitive_input","reason":"autocomplete=cc-number + 16-digit regex"},
+      {"selector":"#cvv","type":"sensitive_input","reason":"autocomplete=cc-csc"},
+      {"selector":"#card-name","type":"sensitive_input","reason":"autocomplete=cc-name + NER person"},
+      {"selector":"#expiry","type":"sensitive_input","reason":"autocomplete=cc-exp"}
+    ]'
+    data-gt-non-sensitive='[
+      {"selector":"#street","type":"input","note":"billing address, not CC PII"},
+      {"selector":"#city","type":"input"},
+      {"selector":"#zip","type":"input"},
+      {"selector":"#pay-btn","type":"button"}
+    ]'
+  ></div>
+</body>
+</html>

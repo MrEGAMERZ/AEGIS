@@ -298,7 +298,7 @@ async function loadConfig() {
     keys: ["vlmEndpoint", "vlmModel", "faceDetection", "passwordDetection", "piiDetection", "userProfile"],
   });
   document.getElementById("vlm-endpoint").value = config.vlmEndpoint || "http://localhost:8000/v1/chat/completions";
-  document.getElementById("vlm-model").value = config.vlmModel || "qwen2.5vl:7b";
+  document.getElementById("vlm-model").value = config.vlmModel || "SARA-Distillation-0.5B";
   document.getElementById("face-detection").checked = config.faceDetection !== false;
   document.getElementById("password-detection").checked = config.passwordDetection !== false;
   document.getElementById("pii-detection").checked = config.piiDetection !== false;
@@ -322,7 +322,7 @@ async function syncGatewayEndpoint() {
     }
     if (hint) {
       if (status.ollamaUp) {
-        hint.textContent = `Connected: this laptop → :8000 → Ollama (${status.model || "qwen2.5vl:7b"}).`;
+        hint.textContent = `Connected: SARA-Distillation-0.5B is active via local gateway (:8000).`;
       } else if (status.gatewayUp) {
         hint.textContent = "Gateway is up on :8000. Start Ollama on this laptop, then reopen the popup.";
       } else {
