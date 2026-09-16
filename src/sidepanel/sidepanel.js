@@ -1,140 +1,159 @@
-const chatInput = document.getElementById('chat-input');
-const btnSend = document.getElementById('btn-send');
-const btnScreenshot = document.getElementById('btn-screenshot');
-const btnClear = document.getElementById('btn-clear');
-const chatContainer = document.getElementById('chat-container');
-const statusBar = document.getElementById('status-bar');
-const statusText = document.getElementById('status-text');
+// sidepanel.js — Chat tab logic (Fill/Profile/Settings run via popup.js)
+// The popup.js module bootstraps the Fill/Profile/Settings tabs via DOM IDs.
+// This file handles: tab switching, chat messaging, screen-share button.
 
-let attachScreenshotNext = false;
-let messageHistory = [];
+// ── Tab switching ─────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = btn.dataset.tab;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    const pane = document.getElementById(target);
+    if (pane) pane.classList.add('active');
+  });
+});
 
-async function loadHistory() {
+// ── Chat state ────────────────────────────────────────────
+const chatContainer   = document.getElementById('chat-container');
+const chatInput       = document.getElementById('chat-input');
+const btnSend         = document.getElementById('btn-send');
+const btnScreenshot   = document.getElementById('btn-screenshot');
+const btnClearChat    = document.getElementById('btn-clear-chat');
+const chatStatus      = document.getElementById('chat-status');
+const chatStatusText  = document.getElementById('chat-status-text');
+const screenshotHint  = document.getElementById('screenshot-hint');
+const welcomeMsg      = document.getElementById('welcome-msg');
+const modelSelect     = document.getElementById('model-select');
+
+let attachScreenshot = false;
+let messageHistory   = [];
+
+// Load persisted chat history
+(async () => {
   const data = await chrome.storage.local.get('chatHistory');
-  if (data.chatHistory && data.chatHistory.length > 0) {
+  if (data.chatHistory && data.chatHistory.length) {
     messageHistory = data.chatHistory;
-    document.querySelector('.welcome-message').style.display = 'none';
-    messageHistory.forEach(msg => appendMessage(msg.role, msg.content, msg.image));
+    welcomeMsg.style.display = 'none';
+    messageHistory.forEach(m => renderMessage(m.role, m.content, m.image));
   }
-}
+})();
 
 function saveHistory() {
+  // Trim to last 40 turns to avoid hitting storage limits
+  if (messageHistory.length > 40) messageHistory = messageHistory.slice(-40);
   chrome.storage.local.set({ chatHistory: messageHistory });
 }
 
-function appendMessage(role, text, imageUrl = null) {
-  document.querySelector('.welcome-message').style.display = 'none';
-  const div = document.createElement('div');
-  div.className = `message ${role}`;
-  
+function renderMessage(role, text, imageUrl) {
+  welcomeMsg.style.display = 'none';
+  const wrap = document.createElement('div');
+  wrap.className = `message ${role}`;
   if (imageUrl) {
     const img = document.createElement('img');
-    img.src = imageUrl;
-    img.className = 'message-img';
-    div.appendChild(img);
+    img.src = imageUrl; img.className = 'message-img';
+    wrap.appendChild(img);
   }
-  
-  const content = document.createElement('div');
-  content.className = 'message-content';
-  content.textContent = text;
-  div.appendChild(content);
-  
-  chatContainer.appendChild(div);
+  const body = document.createElement('div');
+  body.className = 'message-content';
+  body.textContent = text;
+  wrap.appendChild(body);
+  chatContainer.appendChild(wrap);
   chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
 function setStatus(text, show) {
-  statusText.textContent = text;
-  statusBar.hidden = !show;
+  chatStatusText.textContent = text;
+  chatStatus.hidden = !show;
 }
 
+// Auto-grow textarea
 chatInput.addEventListener('input', () => {
   chatInput.style.height = 'auto';
-  chatInput.style.height = (chatInput.scrollHeight) + 'px';
-  if (chatInput.value.trim()) btnSend.classList.add('active');
-  else btnSend.classList.remove('active');
+  chatInput.style.height = chatInput.scrollHeight + 'px';
+  btnSend.classList.toggle('active', chatInput.value.trim().length > 0);
+});
+chatInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
 });
 
-chatInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
+// Screenshot toggle
+btnScreenshot.addEventListener('click', () => {
+  attachScreenshot = !attachScreenshot;
+  btnScreenshot.style.background = attachScreenshot ? '#dbeafe' : '';
+  screenshotHint.classList.toggle('hidden', !attachScreenshot);
+});
+
+// Clear chat
+btnClearChat.addEventListener('click', () => {
+  messageHistory = [];
+  saveHistory();
+  chatContainer.innerHTML = '';
+  welcomeMsg.style.display = '';
+  chatContainer.appendChild(welcomeMsg);
+});
+
+// Example chips
+document.querySelectorAll('.example-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    chatInput.value = chip.dataset.msg;
+    chatInput.dispatchEvent(new Event('input'));
     handleSend();
-  }
+  });
 });
 
 btnSend.addEventListener('click', handleSend);
 
-btnScreenshot.addEventListener('click', () => {
-  attachScreenshotNext = !attachScreenshotNext;
-  btnScreenshot.style.backgroundColor = attachScreenshotNext ? 'var(--border)' : 'transparent';
-});
-
-btnClear.addEventListener('click', () => {
-  messageHistory = [];
-  saveHistory();
-  chatContainer.innerHTML = `
-    <div class="welcome-message">
-      <div class="bot-icon">🤖</div>
-      <h3>How can I help you today?</h3>
-      <p>I am a fully private, on-device assistant. I can answer questions, write code, or execute actions on your browser. Your screen and data stay local.</p>
-    </div>
-  `;
-});
-
 async function handleSend() {
   const text = chatInput.value.trim();
-  if (!text && !attachScreenshotNext) return;
+  if (!text) return;
 
   chatInput.value = '';
   chatInput.style.height = 'auto';
   btnSend.classList.remove('active');
-  btnScreenshot.style.backgroundColor = 'transparent';
-  
-  const shouldAttach = attachScreenshotNext;
-  attachScreenshotNext = false;
 
-  let userMsg = { role: 'user', content: text };
-  appendMessage('user', text + (shouldAttach ? " 📸 (Analyzing Screen...)" : ""));
-  
-  // push early so history exists
+  const shouldAttach = attachScreenshot;
+  attachScreenshot = false;
+  btnScreenshot.style.background = '';
+  screenshotHint.classList.add('hidden');
+
+  const userMsg = { role: 'user', content: text };
+  renderMessage('user', text + (shouldAttach ? ' 📸' : ''));
   messageHistory.push(userMsg);
   saveHistory();
 
-  setStatus('SARA is thinking...', true);
+  setStatus('SARA is thinking…', true);
 
   try {
     const res = await chrome.runtime.sendMessage({
       type: 'CHAT_REQUEST',
       history: messageHistory,
-      model: document.getElementById('model-select').value,
+      model: modelSelect.value,
       attachScreenshot: shouldAttach
     });
 
     if (res.error) throw new Error(res.error);
-    
-    // Update the history message with the image if one was generated
+
     if (res.sanitizedImage) {
       messageHistory[messageHistory.length - 1].image = res.sanitizedImage;
-      saveHistory();
     }
 
-    const botMsg = { role: 'assistant', content: res.reply };
+    const reply = res.reply || '✅ Action performed.';
+    const botMsg = { role: 'assistant', content: reply };
     messageHistory.push(botMsg);
     saveHistory();
-    appendMessage('assistant', res.reply);
+    renderMessage('assistant', reply);
 
     if (res.actionExecuted) {
-      const actionMsg = { role: 'assistant', content: `[Executed Action: ${res.actionExecuted}]` };
-      messageHistory.push(actionMsg);
+      const note = `[Executed: ${res.actionExecuted}]`;
+      messageHistory.push({ role: 'assistant', content: note });
       saveHistory();
-      appendMessage('assistant', `[Executed Action: ${res.actionExecuted}]`);
+      renderMessage('assistant', note);
     }
 
   } catch (err) {
-    appendMessage('assistant', `Error: ${err.message}`);
+    renderMessage('assistant', `⚠️ Error: ${err.message}`);
   } finally {
     setStatus('', false);
   }
 }
-
-loadHistory();
