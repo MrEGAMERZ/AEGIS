@@ -72,6 +72,8 @@ check(
     html.includes('id="preview-empty"')
 );
 check("Privacy Scan shows the redacted frame after SCAN_AND_OVERLAY", js.includes("revealScanPreview(result.sanitizedImage)") && js.includes("GET_LAST_SANITIZED_IMAGE"));
+check("Fill tab has a privacy risk score card", html.includes('id="risk-card"') && html.includes("Privacy Risk Score") && js.includes("GET_PAGE_RISK_SCORE"));
+check("Privacy Scan drives the staged progress bar", html.includes('id="scan-progress"') && js.includes("SCAN_PROGRESS") && js.includes("setScanProgress"));
 check("last redacted frame is restored from session", js.includes("lastSanitizedImage"));
 check("Stop scan button present and starts disabled", html.includes('id="stop-scan-btn"') && /id="stop-scan-btn"[^>]*disabled/.test(html));
 check("Theme button present", html.includes('id="theme-toggle-btn"') && html.includes("theme-btn"));

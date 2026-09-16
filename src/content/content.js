@@ -594,9 +594,93 @@
     if (root) root.innerHTML = "";
   }
 
+  // ── Privacy Risk Analyser (for badge score) ─────────────────────
+  // Runs entirely in the content script — no screenshots, no network.
+  // Returns a risk report consumed by the background to set the badge.
+
+  function analysePageRisk() {
+    const risks = [];
+    let score = 100; // start perfect, deduct per risk
+
+    // 1. HTTPS check
+    if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+      risks.push({ id: "no_https", label: "No HTTPS", severity: "high" });
+      score -= 30;
+    }
+
+    // 2. Password fields in the open
+    const pwdFields = document.querySelectorAll('input[type="password"]');
+    if (pwdFields.length > 0) {
+      risks.push({ id: "password_fields", label: `${pwdFields.length} password field(s)`, severity: "medium" });
+      score -= Math.min(pwdFields.length * 10, 20);
+    }
+
+    // 3. Sensitive inputs (Aadhaar, PAN, SSN, card, OTP …)
+    const sensitiveInputs = document.querySelectorAll("input, textarea");
+    let sensitiveCount = 0;
+    const SENSITIVE_RE = /aadhaar|aadhar|pan|ssn|social.sec|credit|card|cvv|otp|passport/i;
+    sensitiveInputs.forEach((el) => {
+      const haystack = [el.name, el.id, el.placeholder, el.getAttribute("aria-label"), el.getAttribute("data-testid")]
+        .filter(Boolean).join(" ");
+      if (SENSITIVE_RE.test(haystack)) sensitiveCount++;
+    });
+    if (sensitiveCount > 0) {
+      risks.push({ id: "sensitive_inputs", label: `${sensitiveCount} sensitive input(s)`, severity: "high" });
+      score -= Math.min(sensitiveCount * 15, 25);
+    }
+
+    // 4. External tracking scripts
+    const scripts = Array.from(document.querySelectorAll("script[src]"));
+    const TRACKER_DOMAINS = ["google-analytics", "googletagmanager", "doubleclick", "facebook.net",
+      "hotjar", "clarity.ms", "mixpanel", "amplitude", "segment.io", "intercom"];
+    const trackers = scripts.filter(s => TRACKER_DOMAINS.some(t => (s.src || "").includes(t)));
+    if (trackers.length > 0) {
+      risks.push({ id: "trackers", label: `${trackers.length} tracker script(s)`, severity: "medium" });
+      score -= Math.min(trackers.length * 5, 15);
+    }
+
+    // 5. Pre-ticked consent / marketing checkboxes
+    const preChecked = Array.from(document.querySelectorAll('input[type="checkbox"]:checked'))
+      .filter(el => {
+        const label = (el.labels?.[0]?.textContent || el.getAttribute("aria-label") || "").toLowerCase();
+        return /market|promo|newslet|adverti|partner|third.party|consent|agree/i.test(label);
+      });
+    if (preChecked.length > 0) {
+      risks.push({ id: "dark_patterns", label: `${preChecked.length} pre-ticked consent box(es)`, severity: "medium" });
+      score -= Math.min(preChecked.length * 10, 15);
+    }
+
+    // 6. Visible Aadhaar / PAN numbers in plain text
+    const bodyText = document.body?.innerText || "";
+    const aadhaarMatches = bodyText.match(/\b\d{4}\s?\d{4}\s?\d{4}\b/g) || [];
+    const panMatches = bodyText.match(/\b[A-Z]{5}\d{4}[A-Z]\b/g) || [];
+    const piiInPage = aadhaarMatches.length + panMatches.length;
+    if (piiInPage > 0) {
+      risks.push({ id: "pii_exposed", label: `${piiInPage} ID number(s) visible`, severity: "high" });
+      score -= Math.min(piiInPage * 20, 30);
+    }
+
+    score = Math.max(0, Math.min(100, Math.round(score)));
+    let grade, color;
+    if (score >= 85)      { grade = "A"; color = "#16a34a"; }
+    else if (score >= 70) { grade = "B"; color = "#65a30d"; }
+    else if (score >= 55) { grade = "C"; color = "#d97706"; }
+    else if (score >= 35) { grade = "D"; color = "#ea580c"; }
+    else                  { grade = "F"; color = "#dc2626"; }
+
+    return { score, grade, color, risks,
+      host: location.hostname || location.href,
+      ts: Date.now() };
+  }
+
   // ── Message Listener ────────────────────────────────────────────
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.type === "PAGE_RISK_SCAN") {
+      sendResponse(analysePageRisk());
+      return false;
+    }
+
     if (msg.type === "DOM_SCAN") {
       const fields = scanDOMForSensitiveFields();
       const fillableFields = scanFillableFormFields();

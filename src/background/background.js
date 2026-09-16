@@ -236,6 +236,152 @@ async function sendTabMessage(tab, message) {
 // file (onInstalled / onStartup). Creating the same menu id twice on Reload
 // unpacked is what Chrome logs as "duplicate id aegis_autofill_context".
 
+// ── Privacy Risk Badge System ──────────────────────────────────────
+// Runs a lightweight DOM analysis on every navigation and paints a
+// colour-coded grade (A–F) on the extension icon badge.
+
+// ── Privacy Risk Analyser ─────────────────────────────────────────
+// Standalone function passed to chrome.scripting.executeScript — must be
+// fully self-contained (no closures over outer scope variables).
+function runRiskAnalyser() {
+  const risks = [];
+  let score = 100;
+
+  // 1. HTTPS
+  if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+    risks.push({ id: "no_https", label: "No HTTPS — data sent unencrypted", severity: "high" });
+    score -= 30;
+  }
+
+  // 2. Password fields
+  const pwdFields = document.querySelectorAll('input[type="password"]');
+  if (pwdFields.length > 0) {
+    risks.push({ id: "password_fields", label: `${pwdFields.length} password field(s) exposed`, severity: "medium" });
+    score -= Math.min(pwdFields.length * 10, 20);
+  }
+
+  // 3. Sensitive inputs (Aadhaar, PAN, SSN, OTP, card…)
+  let sensitiveCount = 0;
+  const SENS = /aadhaar|aadhar|pan\b|ssn|social.sec|credit|card|cvv|otp|passport/i;
+  document.querySelectorAll("input, textarea").forEach((el) => {
+    const hay = [el.name, el.id, el.placeholder, el.getAttribute("aria-label"), el.getAttribute("data-testid")]
+      .filter(Boolean).join(" ");
+    if (SENS.test(hay)) sensitiveCount++;
+  });
+  if (sensitiveCount > 0) {
+    risks.push({ id: "sensitive_inputs", label: `${sensitiveCount} sensitive input(s) detected`, severity: "high" });
+    score -= Math.min(sensitiveCount * 15, 25);
+  }
+
+  // 4. External trackers
+  const TRACKERS = ["google-analytics", "googletagmanager", "doubleclick", "facebook.net",
+    "hotjar", "clarity.ms", "mixpanel", "amplitude", "segment.io", "intercom"];
+  const trackerScripts = Array.from(document.querySelectorAll("script[src]"))
+    .filter(s => TRACKERS.some(t => (s.src || "").includes(t)));
+  if (trackerScripts.length > 0) {
+    risks.push({ id: "trackers", label: `${trackerScripts.length} tracker script(s) found`, severity: "medium" });
+    score -= Math.min(trackerScripts.length * 5, 15);
+  }
+
+  // 5. Pre-ticked consent / marketing checkboxes (dark patterns)
+  const preChecked = Array.from(document.querySelectorAll('input[type="checkbox"]:checked'))
+    .filter(el => /market|promo|newslet|adverti|partner|third.party|consent|agree/i
+      .test(el.labels?.[0]?.textContent || el.getAttribute("aria-label") || ""));
+  if (preChecked.length > 0) {
+    risks.push({ id: "dark_patterns", label: `${preChecked.length} pre-ticked consent box(es)`, severity: "medium" });
+    score -= Math.min(preChecked.length * 10, 15);
+  }
+
+  // 6. Visible Aadhaar / PAN in page text
+  const bodyText = document.body?.innerText || "";
+  const aadhaarHits = (bodyText.match(/\b\d{4}\s?\d{4}\s?\d{4}\b/g) || []).length;
+  const panHits     = (bodyText.match(/\b[A-Z]{5}\d{4}[A-Z]\b/g) || []).length;
+  if (aadhaarHits + panHits > 0) {
+    risks.push({ id: "pii_exposed", label: `${aadhaarHits + panHits} ID number(s) visible in page`, severity: "high" });
+    score -= Math.min((aadhaarHits + panHits) * 20, 30);
+  }
+
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  const grade =
+    score >= 85 ? "A" :
+    score >= 70 ? "B" :
+    score >= 55 ? "C" :
+    score >= 35 ? "D" : "F";
+  const color =
+    grade === "A" ? "#16a34a" :
+    grade === "B" ? "#65a30d" :
+    grade === "C" ? "#d97706" :
+    grade === "D" ? "#ea580c" : "#dc2626";
+
+  return { score, grade, color, risks,
+    host: location.hostname || location.href,
+    ts: Date.now() };
+}
+
+const riskCache = new Map(); // tabId → riskReport
+
+function badgeColorForGrade(grade) {
+  return { A: "#16a34a", B: "#65a30d", C: "#d97706", D: "#ea580c", F: "#dc2626" }[grade] || "#64748b";
+}
+
+async function updateRiskBadge(tab) {
+  const tabId = tab?.id;
+  if (!tabId || !isInjectableTabUrl(tab.url)) {
+    chrome.action?.setBadgeText({ text: "", tabId: tabId }).catch(() => {});
+    return;
+  }
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: runRiskAnalyser,
+      world: "ISOLATED",
+    });
+    const report = results?.[0]?.result;
+    if (!report || !report.grade) return;
+    riskCache.set(tabId, report);
+    chrome.action?.setBadgeText({ text: report.grade, tabId }).catch(() => {});
+    chrome.action?.setBadgeBackgroundColor({ color: badgeColorForGrade(report.grade), tabId }).catch(() => {});
+    chrome.runtime.sendMessage({ type: "RISK_SCORE_UPDATE", report }).catch(() => {});
+  } catch {
+    // Tab not scriptable yet — badge stays as-is
+  }
+}
+
+// Debounced per-tab updater (avoids hammering on fast SPAs)
+const badgeTimers = new Map();
+function scheduleBadgeUpdate(tab, delayMs = 800) {
+  const id = tab?.id;
+  if (!id) return;
+  if (badgeTimers.has(id)) clearTimeout(badgeTimers.get(id));
+  badgeTimers.set(id, setTimeout(() => {
+    badgeTimers.delete(id);
+    updateRiskBadge(tab).catch(() => {});
+  }, delayMs));
+}
+
+chrome.tabs?.onUpdated?.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === "complete") scheduleBadgeUpdate(tab, 1200);
+});
+
+chrome.tabs?.onActivated?.addListener(async ({ tabId }) => {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    // Use cache if fresh (< 30s)
+    const cached = riskCache.get(tabId);
+    if (cached && Date.now() - cached.ts < 30000) {
+      chrome.action?.setBadgeText({ text: cached.grade, tabId }).catch(() => {});
+      chrome.action?.setBadgeBackgroundColor({ color: badgeColorForGrade(cached.grade), tabId }).catch(() => {});
+      return;
+    }
+    scheduleBadgeUpdate(tab, 400);
+  } catch {}
+});
+
+chrome.tabs?.onRemoved?.addListener((tabId) => {
+  riskCache.delete(tabId);
+  if (badgeTimers.has(tabId)) { clearTimeout(badgeTimers.get(tabId)); badgeTimers.delete(tabId); }
+});
+
 // ── Message Router ─────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -304,7 +450,44 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "GET_PAGE_RISK_SCORE") {
+    (async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab) { sendResponse({ grade: "?", score: 0, color: "#64748b", risks: [], host: "", unscannable: true }); return; }
+
+        // chrome:// / edge:// pages cannot be scripted
+        if (!isInjectableTabUrl(tab.url)) {
+          sendResponse({ grade: "?", score: 0, color: "#64748b", risks: [], host: tab.url || "system page", unscannable: true });
+          return;
+        }
+
+        // Use cache if < 30s old
+        const cached = riskCache.get(tab.id);
+        if (cached && Date.now() - cached.ts < 30000) { sendResponse(cached); return; }
+
+        // Run the analyser directly via scripting — avoids messaging race conditions
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: runRiskAnalyser,
+          world: "ISOLATED",
+        });
+        const report = results?.[0]?.result;
+        if (report?.grade) {
+          riskCache.set(tab.id, report);
+          chrome.action?.setBadgeText({ text: report.grade, tabId: tab.id }).catch(() => {});
+          chrome.action?.setBadgeBackgroundColor({ color: badgeColorForGrade(report.grade), tabId: tab.id }).catch(() => {});
+        }
+        sendResponse(report || null);
+      } catch (err) {
+        sendResponse({ grade: "?", score: 0, color: "#64748b", risks: [], host: "", unscannable: true });
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === "ABORT_SCAN") {
+
     handleAbortScan()
       .then(sendResponse)
       .catch(() => sendResponse({ ok: true, aborted: true }));
@@ -619,17 +802,26 @@ async function performLocalRedaction(tab, config, scanEpochAtStart) {
   const piiDetectionEnabled = config.piiDetection !== false;
   assertScanNotAborted(scanEpochAtStart);
 
+  // Helper: fire-and-forget progress ping to any open popup.
+  function emitProgress(stage, label) {
+    chrome.runtime.sendMessage({ type: "SCAN_PROGRESS", stage, label }).catch(() => {});
+  }
+
   if (isInjectableTabUrl(tab.url)) {
     await sendTabMessage(tab, { type: "CLEAR_REDACTION_OVERLAY" }).catch(() => {});
     await new Promise((resolve) => setTimeout(resolve, OVERLAY_CLEAR_PAINT_MS));
     assertScanNotAborted(scanEpochAtStart);
   }
 
+  // Stage: capture
+  emitProgress("capture", "Capturing viewport…");
   const t1 = Date.now();
   const screenshotDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
   assertScanNotAborted(scanEpochAtStart);
   const tCapture = Date.now() - t1;
 
+  // Stage: DOM scan
+  emitProgress("dom", "Scanning DOM fields…");
   const t2 = Date.now();
   const domScanResults = await sendTabMessage(tab, { type: "DOM_SCAN" });
   assertScanNotAborted(scanEpochAtStart);
@@ -645,6 +837,8 @@ async function performLocalRedaction(tab, config, scanEpochAtStart) {
     includeFaces: faceDetectionEnabled,
   }).catch(() => {});
 
+  // Stage: inference + mask (this is the long WASM / NER step)
+  emitProgress("detect", "Running face + PII detection…");
   await ensureOffscreen();
   assertScanNotAborted(scanEpochAtStart);
   const t3 = Date.now();
@@ -683,6 +877,7 @@ async function performLocalRedaction(tab, config, scanEpochAtStart) {
 
   return { domScanResults, sanitizeResponse, receipt, t0, tCapture, tDomScan, tInference };
 }
+
 
 async function handleProfilePrefill() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

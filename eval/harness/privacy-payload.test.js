@@ -332,6 +332,8 @@ check(
     backgroundSrc.includes("ollamaUp")
 );
 check("Popup only shows Loading models / Not loaded", popupJs.includes("Loading models") && popupJs.includes("Not loaded") && !popupJs.includes("On-device ready"));
+check("GET_PAGE_RISK_SCORE is served from the background", backgroundSrc.includes("GET_PAGE_RISK_SCORE") && backgroundSrc.includes("function runRiskAnalyser"));
+check("SCAN_AND_OVERLAY emits SCAN_PROGRESS stages", backgroundSrc.includes('type: "SCAN_PROGRESS"') && popupJs.includes("setScanProgress"));
 
 console.log("");
 if (fail) {

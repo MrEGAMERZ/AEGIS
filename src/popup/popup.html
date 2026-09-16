@@ -22,9 +22,14 @@
     }
     .icon-btn:hover { background: #e2e8f0; }
     .theme-btn {
-      width: auto; min-width: 52px; padding: 0 8px; font-size: 10px; font-weight: 700;
-      letter-spacing: 0.2px; color: #334155;
+      width: auto; min-width: 64px; padding: 0 10px; gap: 5px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.2px; color: #334155;
+      border: 1px solid #e2e8f0 !important; background: #f8fafc !important;
+      border-radius: 99px !important; display: flex; align-items: center;
+      transition: background 0.2s, border-color 0.2s;
     }
+    .theme-btn:hover { background: #e2e8f0 !important; border-color: #cbd5e1 !important; }
+    .theme-btn .theme-icon { font-size: 12px; line-height: 1; }
     .btn-stop { color: #b91c1c; border-color: #fecaca; background: #fef2f2; font-weight: 600; }
     .btn-stop:hover { background: #fee2e2; }
     .model-status {
@@ -82,6 +87,78 @@
     .preview-wrap.has-image .preview-empty { display: none; }
     .preview-caption { font-size: 11px; color: #64748b; margin-top: 8px; line-height: 1.4; }
     .preview-legend { font-size: 11px; font-weight: 600; color: #334155; margin-top: 8px; line-height: 1.4; }
+
+    /* ── Scan Progress Bar ────────────────────────────────────────── */
+    @keyframes shimmer {
+      0%   { background-position: -200% center; }
+      100% { background-position:  200% center; }
+    }
+    @keyframes pulse-dot {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(37,99,235,0.5); }
+      50%       { box-shadow: 0 0 0 4px rgba(37,99,235,0); }
+    }
+    .scan-progress { display: none; margin-bottom: 10px; }
+    .scan-progress.visible { display: block; animation: fadeIn 0.2s ease; }
+    .scan-progress-header {
+      display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px;
+    }
+    .scan-progress-label {
+      font-size: 10px; font-weight: 700; color: #2563eb; text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .scan-progress-pct {
+      font-size: 10px; font-weight: 700; color: #64748b; font-variant-numeric: tabular-nums;
+    }
+    .scan-progress-track {
+      height: 7px; background: #e2e8f0; border-radius: 99px; overflow: hidden; margin-bottom: 8px;
+    }
+    .scan-progress-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #2563eb 0%, #60a5fa 50%, #2563eb 100%);
+      background-size: 200% 100%;
+      border-radius: 99px;
+      transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1), background 0.3s ease;
+      animation: shimmer 1.8s linear infinite;
+    }
+    .scan-progress-fill.done {
+      background: linear-gradient(90deg, #16a34a, #4ade80, #16a34a);
+      background-size: 200% 100%;
+      animation: shimmer 1.8s linear infinite;
+    }
+    .scan-progress-fill.error {
+      background: #dc2626;
+      animation: none;
+    }
+    .scan-progress-stages { display: flex; justify-content: space-between; }
+    .scan-stage {
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      flex: 1; font-size: 9px; font-weight: 600; color: #94a3b8;
+      text-transform: uppercase; letter-spacing: 0.3px; transition: color 0.25s;
+    }
+    .scan-stage .stage-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: #e2e8f0; border: 2px solid #cbd5e1;
+      transition: background 0.3s, border-color 0.3s, transform 0.25s, box-shadow 0.3s;
+    }
+    .scan-stage.active { color: #2563eb; }
+    .scan-stage.active .stage-dot {
+      background: #2563eb; border-color: #2563eb; transform: scale(1.35);
+      animation: pulse-dot 1.2s ease-in-out infinite;
+    }
+    .scan-stage.done { color: #16a34a; }
+    .scan-stage.done .stage-dot { background: #16a34a; border-color: #16a34a; box-shadow: 0 0 0 2px rgba(22,163,74,0.2); }
+
+    body.dark-mode .scan-progress-track { background: #334155; }
+    body.dark-mode .scan-progress-label { color: #60a5fa; }
+    body.dark-mode .scan-progress-pct { color: #64748b; }
+    body.dark-mode .scan-progress-fill { background: linear-gradient(90deg, #3b82f6 0%, #93c5fd 50%, #3b82f6 100%); background-size: 200% 100%; }
+    body.dark-mode .scan-progress-fill.done { background: linear-gradient(90deg, #22c55e, #86efac, #22c55e); background-size: 200% 100%; }
+    body.dark-mode .scan-stage { color: #475569; }
+    body.dark-mode .scan-stage .stage-dot { background: #334155; border-color: #475569; }
+    body.dark-mode .scan-stage.active { color: #60a5fa; }
+    body.dark-mode .scan-stage.active .stage-dot { background: #3b82f6; border-color: #3b82f6; }
+    body.dark-mode .scan-stage.done { color: #4ade80; }
+    body.dark-mode .scan-stage.done .stage-dot { background: #22c55e; border-color: #22c55e; box-shadow: 0 0 0 2px rgba(34,197,94,0.2); }
 
     input[type="text"], input[type="url"], input[type="password"], select, textarea {
       width: 100%; padding: 8px 10px; background: #ffffff; border: 1px solid #e2e8f0;
@@ -177,7 +254,8 @@
     body.dark-mode label { color: #cbd5e1; }
     body.dark-mode .model-status { background: #1e293b; border-color: #334155; color: #94a3b8; }
     body.dark-mode .vault-row { border-color: #334155; }
-    body.dark-mode .theme-btn { color: #e2e8f0; }
+    body.dark-mode .theme-btn { color: #e2e8f0; border-color: #334155 !important; background: #1e293b !important; }
+    body.dark-mode .theme-btn:hover { background: #334155 !important; border-color: #475569 !important; }
     body.dark-mode .hint { color: #64748b; }
     body.dark-mode .receipt-row { color: #94a3b8; }
     body.dark-mode .receipt-row span:last-child { color: #f1f5f9; }
@@ -198,6 +276,64 @@
     body.dark-mode .p-empty { color: #64748b; }
     body.dark-mode .add-field-card { background: #0f172a; border-color: #1d4ed8; }
     body.dark-mode #profile-switcher { background: #0f172a; color: #f1f5f9; border-color: #334155; }
+    /* ── Privacy Risk Score Card ────────────────────────────── */
+    @keyframes risk-spin { to { transform: rotate(360deg); } }
+    @keyframes risk-pop { 0% { transform: scale(0.5); opacity:0; } 70% { transform: scale(1.15); } 100% { transform: scale(1); opacity:1; } }
+    .risk-card {
+      border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
+      border: 1.5px solid #e2e8f0; background: #f8fafc;
+      animation: fadeIn 0.25s ease;
+    }
+    .risk-card-header { display: flex; align-items: center; gap: 10px; }
+    .risk-grade-badge {
+      width: 44px; height: 44px; border-radius: 10px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; font-weight: 900; color: #fff; letter-spacing: -1px;
+      animation: risk-pop 0.4s cubic-bezier(0.34,1.56,0.64,1) both;
+    }
+    .risk-grade-badge.loading {
+      background: #e2e8f0 !important; animation: none;
+      position: relative; overflow: hidden;
+    }
+    .risk-grade-badge.loading::after {
+      content: ""; position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.6) 50%, transparent 100%);
+      background-size: 200% 100%; animation: shimmer 1.2s linear infinite;
+    }
+    .risk-info { flex: 1; min-width: 0; }
+    .risk-label { font-size: 11px; font-weight: 700; color: #334155; }
+    .risk-host { font-size: 10px; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+    .risk-score-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+    .risk-score-num { font-size: 19px; font-weight: 800; line-height: 1; }
+    .risk-score-max { font-size: 10px; color: #94a3b8; font-weight: 600; }
+    .risk-refresh-btn {
+      width: 26px; height: 26px; border: 1px solid #e2e8f0; background: #fff; border-radius: 6px;
+      cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; transition: background 0.15s;
+    }
+    .risk-refresh-btn:hover { background: #f1f5f9; }
+    .risk-refresh-btn.spinning { animation: risk-spin 0.7s linear 1; }
+    .risk-factors { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+    .risk-factor {
+      display: flex; align-items: center; gap: 6px; font-size: 10px; color: #475569;
+      padding: 3px 6px; border-radius: 5px; background: #fff; border: 1px solid #e2e8f0;
+    }
+    .risk-factor .rf-dot {
+      width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+    }
+    .rf-dot.high   { background: #dc2626; }
+    .rf-dot.medium { background: #d97706; }
+    .rf-dot.low    { background: #2563eb; }
+    .risk-safe-msg { font-size: 10px; color: #16a34a; font-weight: 600; margin-top: 6px; display: flex; align-items: center; gap: 4px; }
+    body.dark-mode .risk-card { background: #1e293b; border-color: #334155; }
+    body.dark-mode .risk-label { color: #e2e8f0; }
+    body.dark-mode .risk-host { color: #64748b; }
+    body.dark-mode .risk-score-max { color: #64748b; }
+    body.dark-mode .risk-refresh-btn { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+    body.dark-mode .risk-refresh-btn:hover { background: #334155; }
+    body.dark-mode .risk-factor { background: #0f172a; border-color: #334155; color: #94a3b8; }
+    body.dark-mode .risk-grade-badge.loading { background: #334155 !important; }
+    body.dark-mode .risk-safe-msg { color: #4ade80; }
   </style>
 </head>
 <body>
@@ -220,6 +356,24 @@
 
   <!-- Fill -->
   <div class="tab-content active" id="tab-fill">
+
+    <!-- ❤️ Privacy Risk Score Card — always shown at top -->
+    <div class="risk-card" id="risk-card">
+      <div class="risk-card-header">
+        <div class="risk-grade-badge loading" id="risk-grade-badge">&nbsp;</div>
+        <div class="risk-info">
+          <div class="risk-label">🛡️ Privacy Risk Score</div>
+          <div class="risk-host" id="risk-host">Scanning…</div>
+          <div class="risk-score-row">
+            <span class="risk-score-num" id="risk-score-num" style="color:#94a3b8">--</span>
+            <span class="risk-score-max">/100</span>
+          </div>
+        </div>
+        <button class="risk-refresh-btn" id="risk-refresh-btn" title="Re-scan this page">↻</button>
+      </div>
+      <div class="risk-factors" id="risk-factors"></div>
+    </div>
+
     <div class="card receipt" id="receipt">
       <div class="card-title">Last privacy receipt</div>
       <div class="receipt-row"><span>Fields masked</span><span id="r-fields">--</span></div>
@@ -227,6 +381,30 @@
       <div class="receipt-row"><span>PII spans</span><span id="r-pii">--</span></div>
       <div class="receipt-row"><span>Total latency</span><span id="r-total">--</span></div>
       <div class="receipt-badges" id="r-badges"></div>
+    </div>
+
+    <div class="card scan-progress" id="scan-progress">
+      <div class="scan-progress-header">
+        <span class="scan-progress-label">🔍 Privacy Scan</span>
+        <span class="scan-progress-pct" id="scan-progress-pct">0%</span>
+      </div>
+      <div class="scan-progress-track">
+        <div class="scan-progress-fill" id="scan-progress-fill"></div>
+      </div>
+      <div class="scan-progress-stages">
+        <div class="scan-stage" id="sp-stage-capture">
+          <div class="stage-dot"></div>Capture
+        </div>
+        <div class="scan-stage" id="sp-stage-dom">
+          <div class="stage-dot"></div>DOM Scan
+        </div>
+        <div class="scan-stage" id="sp-stage-detect">
+          <div class="stage-dot"></div>Detect &amp; Mask
+        </div>
+        <div class="scan-stage" id="sp-stage-done">
+          <div class="stage-dot"></div>Done
+        </div>
+      </div>
     </div>
 
     <div class="card pipeline" id="pipeline">
