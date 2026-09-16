@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<!--
+  TEST PAGE 05 — Mixed-PII Business Dashboard (Over-Redaction Resistance Test)
+  
+  PURPOSE: Tests that the extension does NOT over-redact.
+  Has many text-dense UI elements; only a few are truly PII.
+  Metric under test: Over-Redaction Rate (must be ≤10%)
+  
+  Ground-truth PII elements (should be redacted):
+    - #employee-ssn         → SSN regex
+    - #employee-salary      → financial PII (sensitive numeric)
+    - #bank-account         → account number (sensitive)
+    - #api-secret           → secret/password keyword + value
+    - .password-field       → input[type=password]
+    
+  Ground-truth NON-sensitive (must NOT be redacted):
+    - All chart labels, navigation, headings
+    - #revenue-total        → company revenue — public financial data
+    - #employee-name        → NOT sensitive alone in this business context (edge case)
+    - #team-size, #product-count, #customer-count
+    - All table cells without PII content
+  Layout: full-width dashboard, sidebar + charts + tables, gray/purple theme
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>TP05 — Business Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Inter", sans-serif; background: #f5f5f5; display: flex; min-height: 100vh; }
+    .sidebar { width: 220px; background: #4c1d95; flex-shrink: 0; padding: 20px 0; }
+    .logo { color: #ddd6fe; font-size: 1rem; font-weight: 700; padding: 0 16px 20px; }
+    .nav-group { margin-bottom: 8px; }
+    .nav-group-label { color: #7c3aed; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; padding: 8px 16px 4px; letter-spacing: 1px; }
+    .nav-link { padding: 8px 16px; color: #c4b5fd; font-size: 0.83rem; cursor: pointer; display: block; }
+    .nav-link:hover, .nav-link.active { background: #5b21b6; color: #fff; }
+    .main { flex: 1; padding: 24px; overflow: auto; }
+    h1 { font-size: 1.2rem; color: #1a1a2e; margin-bottom: 20px; }
+    .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+    .kpi { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.07); }
+    .kpi-label { font-size: 0.72rem; color: #9ca3af; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .kpi-value { font-size: 1.5rem; font-weight: 700; color: #111; }
+    .kpi-change { font-size: 0.75rem; color: #059669; margin-top: 4px; }
+    .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 20px; }
+    .card { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.07); }
+    .card-title { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: #4c1d95; margin-bottom: 14px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th { background: #f3f4f6; padding: 8px 12px; text-align: left; color: #6b7280; font-weight: 600; font-size: 0.75rem; }
+    td { padding: 8px 12px; border-bottom: 1px solid #f3f4f6; color: #374151; }
+    tr:hover td { background: #faf5ff; }
+    .sensitive-section { background: #fdf2f8; border: 1.5px solid #f0abfc; border-radius: 10px; padding: 20px; }
+    .sensitive-section .card-title { color: #86198f; }
+    .field-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #fce7f3; font-size: 0.85rem; }
+    .field-label { color: #86198f; font-weight: 600; font-size: 0.8rem; }
+    .field-value { color: #1f2937; font-family: monospace; }
+    .pii-input { width: 200px; padding: 6px 10px; border: 1.5px solid #e879f9; border-radius: 6px; font-size: 0.85rem; background: #fdf2f8; }
+    .bar-chart { display: flex; flex-direction: column; gap: 10px; }
+    .bar-row { display: flex; align-items: center; gap: 10px; font-size: 0.8rem; }
+    .bar-label { width: 80px; color: #6b7280; text-align: right; flex-shrink: 0; }
+    .bar-track { flex: 1; background: #f3f4f6; border-radius: 4px; height: 12px; }
+    .bar-fill { height: 100%; border-radius: 4px; background: #7c3aed; }
+    .bar-val { width: 50px; color: #374151; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="logo">BizFlow</div>
+    <div class="nav-group">
+      <div class="nav-group-label">Overview</div>
+      <a class="nav-link active">Dashboard</a>
+      <a class="nav-link">Analytics</a>
+      <a class="nav-link">Reports</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">People</div>
+      <a class="nav-link">Employees</a>
+      <a class="nav-link">Payroll</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">System</div>
+      <a class="nav-link">API Keys</a>
+      <a class="nav-link">Security</a>
+      <a class="nav-link">Logs</a>
+    </div>
+  </nav>
+
+  <main class="main">
+    <h1>Business Dashboard — Q3 2026</h1>
+
+    <!-- KPI Cards — NON-SENSITIVE public metrics -->
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-label">Total Revenue</div>
+        <div class="kpi-value" id="revenue-total">₹48.2L</div>
+        <div class="kpi-change">+12.3% vs last quarter</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Team Size</div>
+        <div class="kpi-value" id="team-size">142</div>
+        <div class="kpi-change">+8 new hires</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Products</div>
+        <div class="kpi-value" id="product-count">24</div>
+        <div class="kpi-change">+3 launched</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Customers</div>
+        <div class="kpi-value" id="customer-count">3,847</div>
+        <div class="kpi-change">+387 new</div>
+      </div>
+    </div>
+
+    <!-- Grid: Table + Bar Chart -->
+    <div class="grid-2">
+      <!-- Recent transactions — NON-SENSITIVE (amounts but no PII) -->
+      <div class="card">
+        <div class="card-title">Recent Transactions</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Category</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>25 Aug</td><td>AWS Infrastructure</td><td>IT</td><td>₹82,400</td></tr>
+            <tr><td>24 Aug</td><td>Office Supplies</td><td>Admin</td><td>₹12,300</td></tr>
+            <tr><td>23 Aug</td><td>Marketing Campaign</td><td>Marketing</td><td>₹1,45,000</td></tr>
+            <tr><td>22 Aug</td><td>Software Licenses</td><td>IT</td><td>₹67,200</td></tr>
+            <tr><td>21 Aug</td><td>Team Training</td><td>HR</td><td>₹34,800</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Department Bar Chart — NON-SENSITIVE -->
+      <div class="card">
+        <div class="card-title">Revenue by Department</div>
+        <div class="bar-chart">
+          <div class="bar-row">
+            <span class="bar-label">Engineering</span>
+            <div class="bar-track"><div class="bar-fill" style="width:85%"></div></div>
+            <span class="bar-val">₹18.4L</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">Sales</span>
+            <div class="bar-track"><div class="bar-fill" style="width:70%"></div></div>
+            <span class="bar-val">₹15.2L</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">Marketing</span>
+            <div class="bar-track"><div class="bar-fill" style="width:45%"></div></div>
+            <span class="bar-val">₹9.7L</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">Support</span>
+            <div class="bar-track"><div class="bar-fill" style="width:22%"></div></div>
+            <span class="bar-val">₹4.9L</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SENSITIVE SECTION — PII fields that should be detected -->
+    <div class="sensitive-section">
+      <div class="card-title">⚠ Employee Sensitive Data (HR Access Only)</div>
+
+      <div class="field-row">
+        <span class="field-label">Employee Name</span>
+        <span id="employee-name" class="field-value">Suresh Balakrishnan</span>
+      </div>
+      <div class="field-row">
+        <span class="field-label">SSN / PAN</span>
+        <span id="employee-ssn" class="field-value">ABCDE1234F</span>
+      </div>
+      <div class="field-row">
+        <span class="field-label">Annual Salary</span>
+        <span id="employee-salary" class="field-value">₹32,00,000</span>
+      </div>
+      <div class="field-row">
+        <span class="field-label">Bank Account</span>
+        <span id="bank-account" class="field-value">HDFC-008811234567</span>
+      </div>
+      <div class="field-row">
+        <span class="field-label">API Secret Key</span>
+        <span id="api-secret" class="field-value">sk-live-xK9mP2rQvLzH8nWbTdCjY4sA</span>
+      </div>
+      <div class="field-row" style="margin-top:12px;">
+        <span class="field-label">Admin Password</span>
+        <input type="password" class="pii-input password-field" id="admin-password" value="Adm!n@2026Secure" />
+      </div>
+    </div>
+  </main>
+
+  <!-- Benchmark metadata -->
+  <div id="benchmark-meta" style="display:none"
+    data-page-id="tp05-business-dashboard"
+    data-gt-sensitive='[
+      {"selector":"#employee-ssn","type":"ssn_pii","reason":"PAN/SSN identifier"},
+      {"selector":"#employee-salary","type":"financial_pii","reason":"individual salary = financial PII"},
+      {"selector":"#bank-account","type":"financial_pii","reason":"bank account number"},
+      {"selector":"#api-secret","type":"credential","reason":"secret keyword + API secret value"},
+      {"selector":"#admin-password","type":"password_input","reason":"type=password"},
+      {"selector":"#employee-name","type":"ner_person","reason":"NER PERSON in HR sensitive section"}
+    ]'
+    data-gt-non-sensitive='[
+      {"selector":"#revenue-total","type":"business_metric","note":"company public revenue"},
+      {"selector":"#team-size","type":"business_metric"},
+      {"selector":"#product-count","type":"business_metric"},
+      {"selector":"#customer-count","type":"business_metric"},
+      {"selector":"table td","type":"transaction_data","note":"amounts without personal identifiers"},
+      {"selector":".kpi","type":"kpi_card"},
+      {"selector":".bar-chart","type":"chart"},
+      {"selector":".nav-link","type":"navigation"}
+    ]'
+  ></div>
+</body>
+</html>

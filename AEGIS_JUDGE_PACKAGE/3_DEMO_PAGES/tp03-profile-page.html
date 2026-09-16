@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<!--
+  TEST PAGE 03 — User Profile Page
+  Ground-truth PII elements:
+    - #profile-photo    → face (BlazeFace target — actual <img> of face)
+    - #user-name        → NER PERSON
+    - #user-email       → email regex + NER EMAIL
+    - #user-phone       → phone regex + NER PHONE
+    - #user-location    → NER LOC (city/state)
+    - #user-dob         → date of birth — sensitive personal data
+  Non-sensitive elements:
+    - Bio text, follower count, buttons, tabs, page title
+  Layout: social profile card, left sidebar + main content, green accent
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>TP03 — User Profile</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Helvetica Neue", sans-serif; background: #f7f7f7; min-height: 100vh; }
+    .header { background: #2d6a4f; height: 180px; position: relative; }
+    .profile-wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      display: flex;
+      gap: 24px;
+      padding: 0 24px;
+    }
+    .sidebar {
+      width: 260px;
+      flex-shrink: 0;
+    }
+    .avatar-box {
+      position: relative;
+      margin-top: -64px;
+    }
+    .avatar-box img {
+      width: 128px;
+      height: 128px;
+      border-radius: 50%;
+      border: 4px solid #fff;
+      object-fit: cover;
+      background: #ccc;
+      display: block;
+    }
+    .avatar-placeholder {
+      width: 128px;
+      height: 128px;
+      border-radius: 50%;
+      border: 4px solid #fff;
+      background: linear-gradient(135deg, #d4a8f0, #7fb3f5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .sidebar-body { padding: 12px 0; }
+    h2 { font-size: 1.25rem; color: #1a202c; margin-bottom: 2px; }
+    .handle { font-size: 0.85rem; color: #718096; margin-bottom: 12px; }
+    .info-row { font-size: 0.82rem; color: #4a5568; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .info-row span.label { font-weight: 600; min-width: 60px; }
+    .tag { display: inline-block; background: #c6f6d5; color: #276749; border-radius: 4px; padding: 2px 8px; font-size: 0.75rem; font-weight: 600; margin-right: 4px; }
+    .main { flex: 1; padding-top: 24px; }
+    .tabs { display: flex; gap: 0; border-bottom: 2px solid #e2e8f0; margin-bottom: 20px; }
+    .tab { padding: 10px 20px; font-size: 0.9rem; font-weight: 600; color: #718096; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+    .tab.active { color: #2d6a4f; border-bottom-color: #2d6a4f; }
+    .card { background: #fff; border-radius: 10px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+    .card h3 { font-size: 0.9rem; font-weight: 700; color: #2d6a4f; margin-bottom: 10px; }
+    .bio { font-size: 0.9rem; color: #4a5568; line-height: 1.6; }
+    .stats { display: flex; gap: 24px; margin-top: 12px; }
+    .stat { text-align: center; }
+    .stat-num { font-size: 1.3rem; font-weight: 700; color: #2d6a4f; }
+    .stat-label { font-size: 0.75rem; color: #a0aec0; }
+  </style>
+</head>
+<body>
+  <div class="header"></div>
+  <div class="profile-wrap" style="padding-top:0;">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="avatar-box">
+        <!-- Face image — BlazeFace detection target -->
+        <!-- In a real test, replace with an actual face image URL -->
+        <div class="avatar-placeholder" id="profile-photo" aria-label="Profile photo of Arjun Mehta">
+          AM
+        </div>
+      </div>
+      <div class="sidebar-body">
+        <h2 id="user-name">Arjun Mehta</h2>
+        <p class="handle">@arjunmehta</p>
+
+        <div class="info-row">
+          <span class="label">Email</span>
+          <span id="user-email">arjun.mehta@hotmail.com</span>
+        </div>
+        <div class="info-row">
+          <span class="label">Phone</span>
+          <span id="user-phone">+91 98765 43210</span>
+        </div>
+        <div class="info-row">
+          <span class="label">Location</span>
+          <span id="user-location">Bengaluru, Karnataka</span>
+        </div>
+        <div class="info-row">
+          <span class="label">DOB</span>
+          <span id="user-dob">14 March 1992</span>
+        </div>
+        <div class="info-row" style="margin-top:10px;">
+          <span class="tag">Developer</span>
+          <span class="tag">Open Source</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main content -->
+    <div class="main">
+      <div class="tabs">
+        <div class="tab active">Activity</div>
+        <div class="tab">Projects</div>
+        <div class="tab">Connections</div>
+      </div>
+
+      <div class="card">
+        <h3>About</h3>
+        <p class="bio">
+          Full-stack developer with 8 years experience in distributed systems. Currently working
+          at InnovateTech, Bengaluru. Passionate about privacy engineering and on-device AI.
+          Open source contributor to multiple WebAssembly runtimes.
+        </p>
+        <div class="stats">
+          <div class="stat"><div class="stat-num">247</div><div class="stat-label">Followers</div></div>
+          <div class="stat"><div class="stat-num">183</div><div class="stat-label">Following</div></div>
+          <div class="stat"><div class="stat-num">42</div><div class="stat-label">Projects</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Recent Activity</h3>
+        <p class="bio">No recent activity to show.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Benchmark metadata -->
+  <div id="benchmark-meta" style="display:none"
+    data-page-id="tp03-profile-page"
+    data-gt-sensitive='[
+      {"selector":"#user-name","type":"ner_person","reason":"NER PERSON entity"},
+      {"selector":"#user-email","type":"email_pii","reason":"email regex + NER EMAIL"},
+      {"selector":"#user-phone","type":"phone_pii","reason":"phone regex + NER PHONE"},
+      {"selector":"#user-location","type":"ner_location","reason":"NER LOC"},
+      {"selector":"#user-dob","type":"personal_info","reason":"date of birth"},
+      {"selector":"#profile-photo","type":"face","reason":"BlazeFace — profile face image"}
+    ]'
+    data-gt-non-sensitive='[
+      {"selector":".bio","type":"descriptive_text","note":"bio text with no PII"},
+      {"selector":".stat-num","type":"statistics"},
+      {"selector":".tab","type":"navigation"},
+      {"selector":".tag","type":"tag"}
+    ]'
+  ></div>
+</body>
+</html>
