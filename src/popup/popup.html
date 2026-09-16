@@ -75,9 +75,13 @@
     .pipeline-step.done { color: #15803d; }
     .pipeline-step.active { color: #2563eb; font-weight: 600; }
 
-    .preview-wrap { display: none; }
-    .preview-wrap.visible { display: block; }
-    .preview-wrap img { width: 100%; max-height: 160px; object-fit: contain; border-radius: 8px; background: #f1f5f9; border: 1px solid #e2e8f0; }
+    .preview-wrap { display: block; margin: 0 12px 12px; }
+    .preview-wrap img { display: none; width: 100%; max-height: 240px; object-fit: contain; border-radius: 8px; background: #f1f5f9; border: 1px solid #e2e8f0; }
+    .preview-wrap.has-image img { display: block; }
+    .preview-empty { font-size: 12px; color: #64748b; line-height: 1.45; }
+    .preview-wrap.has-image .preview-empty { display: none; }
+    .preview-caption { font-size: 11px; color: #64748b; margin-top: 8px; line-height: 1.4; }
+    .preview-legend { font-size: 11px; font-weight: 600; color: #334155; margin-top: 8px; line-height: 1.4; }
 
     input[type="text"], input[type="url"], input[type="password"], select, textarea {
       width: 100%; padding: 8px 10px; background: #ffffff; border: 1px solid #e2e8f0;
@@ -117,6 +121,11 @@
       margin-top: 10px; padding: 10px; background: #eff6ff; border: 1px solid #bfdbfe;
       border-radius: 8px;
     }
+    .transcript-mini {
+      margin-top: 8px; padding: 8px; background: #ffffff; border: 1px solid #e2e8f0;
+      border-radius: 6px; font-size: 12px; color: #334155; min-height: 36px;
+    }
+    .btn-sm.recording { background: #e11d48; color: #fff; border-color: #e11d48; }
     .field-preview { max-height: 140px; overflow-y: auto; margin: 8px 0; }
     .fp-row { display: flex; gap: 8px; font-size: 12px; padding: 4px 0; border-bottom: 1px solid #dbeafe; }
     .fp-row:last-child { border-bottom: none; }
@@ -161,6 +170,7 @@
     body.dark-mode .drop-zone { background: #0f172a; border-color: #334155; }
     body.dark-mode .doc-preview-text { background: #0f172a; border-color: #334155; color: #e2e8f0; }
     body.dark-mode .doc-save-card { background: #0f172a; border-color: #1d4ed8; }
+    body.dark-mode .transcript-mini { background: #0f172a; border-color: #334155; color: #e2e8f0; }
     body.dark-mode .fp-row { border-color: #334155; }
     body.dark-mode .fp-key { color: #94a3b8; }
     body.dark-mode .fp-val { color: #f1f5f9; }
@@ -176,6 +186,8 @@
     body.dark-mode .pipeline-step.done { color: #4ade80; }
     body.dark-mode .pipeline-step.active { color: #60a5fa; }
     body.dark-mode .preview-wrap img { background: #0f172a; border-color: #334155; }
+    body.dark-mode .preview-caption, body.dark-mode .preview-empty { color: #94a3b8; }
+    body.dark-mode .preview-legend { color: #e2e8f0; }
     body.dark-mode .header .badge { background: #1e3a8a; color: #bfdbfe; }
     body.dark-mode .btn-stop { background: #450a0a; color: #fecaca; border-color: #7f1d1d; }
     body.dark-mode .btn-stop:hover { background: #7f1d1d; }
@@ -224,11 +236,6 @@
       <div class="pipeline-step" id="step-vlm">3. Local model on sanitized context</div>
     </div>
 
-    <div class="card preview-wrap" id="preview-wrap">
-      <div class="card-title">Sanitized preview</div>
-      <img id="sanitize-preview" alt="Sanitized screenshot preview">
-    </div>
-
     <div class="card">
       <div class="card-title">This page</div>
       <textarea id="task-input" placeholder="Optional: what to fill on this page"></textarea>
@@ -240,12 +247,67 @@
       <div class="btn-row" style="margin-top:6px;">
         <button class="btn-sm" id="run-btn">Run Agent</button>
       </div>
-      <p class="hint" id="fill-form-hint" style="margin-top:8px;">Uses the profile and documents you saved on this device. Missing fields stay blank.</p>
+      <p class="hint" id="fill-form-hint" style="margin-top:8px;">Speak or drop a PDF on the <strong>Profile</strong> tab first. Fill uses the selected profile. Missing fields stay blank.</p>
     </div>
   </div>
 
   <!-- Profile -->
   <div class="tab-content" id="tab-profile">
+    <div class="card">
+      <div class="card-title">
+        <span>Profiles</span>
+        <span class="hint">Separate people / roles</span>
+      </div>
+      <select id="profile-switcher" aria-label="Active profile" style="font-weight:600; background:#f1f5f9; margin-bottom:8px;">
+        <option value="Personal">Personal</option>
+        <option value="Work">Work</option>
+        <option value="Family">Family</option>
+      </select>
+      <div class="btn-row">
+        <button class="btn-sm" id="profile-new-btn" type="button">+ New</button>
+        <button class="btn-sm" id="profile-rename-btn" type="button">Rename</button>
+        <button class="btn-sm" id="profile-delete-btn" type="button">Delete</button>
+      </div>
+      <div id="profile-name-card" class="add-field-card" style="display:none; margin-top:8px;">
+        <input type="text" id="profile-name-input" maxlength="32" placeholder="Profile name">
+        <div class="btn-row">
+          <button class="btn-sm btn-accent" id="profile-name-save-btn" type="button">Create</button>
+          <button class="btn-sm" id="profile-name-cancel-btn" type="button">Cancel</button>
+        </div>
+      </div>
+      <p class="hint" style="display:block; margin-top:6px;">Speak, upload, and Fill Form all use the selected profile. Each profile keeps its own fields.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>Speak details</span>
+        <span class="hint">10 languages</span>
+      </div>
+      <select id="voice-lang-select" aria-label="Speech language">
+        <option value="en-US">English (US / India)</option>
+        <option value="hi-IN">Hindi</option>
+        <option value="bn-IN">Bengali</option>
+        <option value="ta-IN">Tamil</option>
+        <option value="te-IN">Telugu</option>
+        <option value="mr-IN">Marathi</option>
+        <option value="kn-IN">Kannada</option>
+        <option value="gu-IN">Gujarati</option>
+        <option value="ml-IN">Malayalam</option>
+        <option value="pa-IN">Punjabi</option>
+      </select>
+      <div class="btn-row">
+        <button class="btn-sm" id="voice-start-btn" type="button">Start listening</button>
+        <button class="btn-sm" id="open-voice-page-btn" type="button">Full mic page</button>
+      </div>
+      <p class="hint" style="display:block; margin-top:6px;">Chrome speech may send audio to Google. After that, text stays here. Click Save to store fields.</p>
+      <div id="voice-transcript" class="transcript-mini" style="display:none;"></div>
+      <div id="voice-field-preview" class="field-preview" style="display:none;"></div>
+      <div class="btn-row" id="voice-save-row" style="display:none; margin-top:6px;">
+        <button class="btn-sm btn-accent" id="save-voice-btn" type="button">Save spoken fields</button>
+        <button class="btn-sm" id="discard-voice-btn" type="button">Don't save</button>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-title">
         <span>Upload document</span>
@@ -293,13 +355,8 @@
     <div class="card">
       <div class="card-title">
         <span>Saved fields</span>
-        <span class="hint">On-device</span>
+        <span class="hint" id="saved-fields-hint">On-device</span>
       </div>
-      <select id="profile-switcher" style="font-weight:600; background:#f1f5f9; margin-bottom:8px;">
-        <option value="Personal">Personal</option>
-        <option value="Work">Work</option>
-        <option value="Family">Family</option>
-      </select>
       <div id="profile-list" class="profile-list">
         <div class="p-empty">Loading profile...</div>
       </div>
@@ -337,15 +394,33 @@
       <button class="btn-sm" id="scan-faces-page-btn" style="width:100%; margin-top:6px;">Scan faces on this page</button>
     </div>
     <div class="card">
+      <div class="card-title">More</div>
+      <div class="btn-row">
+        <button class="btn-sm" id="open-dashboard-btn" type="button">Open dashboard</button>
+        <button class="btn-sm" id="open-voice-settings-btn" type="button">Open voice page</button>
+      </div>
+      <p class="hint" style="display:block; margin-top:6px;">Dashboard shows saved fields and scan counts from this device. Shortcut: Ctrl/Cmd+Shift+F fills the page.</p>
+    </div>
+    <div class="card">
       <div class="card-title">Local model</div>
       <input type="url" id="vlm-endpoint" placeholder="http://localhost:8000/v1/chat/completions">
       <input type="text" id="vlm-model" placeholder="qwen2.5vl:7b">
       <input type="password" id="vlm-api-key" placeholder="API key (hosted only)" autocomplete="off">
-      <p class="hint" id="api-key-hint">Leave empty for local Ollama / gateway on :8000.</p>
+      <p class="hint" id="api-key-hint">Leave empty. Local Ollama on this laptop does not need a key.</p>
+      <p class="hint" id="local-llm-status">Checking Ollama on this laptop…</p>
     </div>
   </div>
 
   <div class="status" id="status"></div>
+
+  <div class="card preview-wrap" id="preview-wrap">
+    <div class="card-title">What the agent would see</div>
+    <p class="preview-empty" id="preview-empty">Run <strong>Privacy Scan</strong> on Fill (or Scan faces in Settings). This frame shows faces, passwords, and PII already hidden — the only screenshot any AI agent is allowed to receive.</p>
+    <img id="sanitize-preview" alt="Redacted screenshot: faces and personal fields hidden before any model">
+    <p class="preview-legend" id="preview-legend" hidden></p>
+    <p class="preview-caption" id="preview-caption">Solid black boxes on this device. Faces, photos, passwords, and filled personal fields never go on the network.</p>
+  </div>
+
   <script src="popup.js" type="module"></script>
 </body>
 </html>

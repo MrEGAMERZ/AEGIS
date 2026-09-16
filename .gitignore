@@ -18,6 +18,10 @@ yarn-error.log*
 # Generated Load-unpacked root
 dist/
 
+# Packed Chrome extension + private signing key (never commit)
+*.crx
+*.pem
+
 # Secrets / local Chrome profile
 .env
 .env.local

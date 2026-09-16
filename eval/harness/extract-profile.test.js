@@ -40,6 +40,50 @@ async function main() {
   check("maps to Full Name", mapped["Full Name"] === "Ananya");
   check("maps to Email", mapped.Email === "a@b.com");
 
+  const { extractLabeledFieldsFromText, mergeProfileFieldMaps, resolveProfileKeyFromLabel } = mod;
+
+  const fixture = `Full Name: Mohammad Rehan
+Email: mohammadrehan432432@gmail.com
+Phone: 8008667486
+Date of Birth: 2006-03-22
+Father's Name: Imran Ahmed
+Mother's Name: Sameera Begum
+Blood Group: B+
+Job Title: GenAI Developer Intern
+Organization: Lensara Technology
+College: Presidency University
+Year of Study: 2
+GitHub: https://github.com/MrEGAMERZ
+Project description: Built AEGIS on-device redaction.
+Aadhaar: 2345 6789 0123
+`;
+  const rich = extractProfileFromText(fixture);
+  check("rich pack extracts fullName", rich.fullName === "Mohammad Rehan");
+  check("rich pack extracts fatherName", rich.fatherName === "Imran Ahmed");
+  check("rich pack extracts motherName", rich.motherName === "Sameera Begum");
+  check("rich pack extracts bloodGroup", rich.bloodGroup === "B+");
+  check("rich pack extracts jobTitle", /GenAI/i.test(rich.jobTitle || ""));
+  check("rich pack extracts organization", rich.organization === "Lensara Technology");
+  check("rich pack extracts yearOfStudy", rich.yearOfStudy === "2");
+  check("rich pack extracts many fields (≥12)", Object.keys(rich).length >= 12, JSON.stringify(Object.keys(rich)));
+  check("rich pack drops Aadhaar", !Object.values(rich).some((v) => /2345/.test(String(v))));
+
+  const labeled = extractLabeledFieldsFromText("**Website:** https://rehandev.live\nSkills: Python, JS");
+  check("markdown bold label → website", labeled.website === "https://rehandev.live");
+  check("Skills line kept", labeled.skills === "Python, JS");
+
+  check("resolve Father's Name → fatherName", resolveProfileKeyFromLabel("Father's Name") === "fatherName");
+  check("resolve PIN Code → pincode", resolveProfileKeyFromLabel("PIN Code") === "pincode");
+
+  const merged = mergeProfileFieldMaps(
+    { fullName: "FromRegex", email: "a@b.com", bloodGroup: "B+" },
+    { fullName: "FromAI", skills: "Python" }
+  );
+  check("merge: AI overrides same key", merged["Full Name"] === "FromAI");
+  check("merge: regex-only key kept", merged["Blood Group"] === "B+");
+  check("merge: AI-only key kept", merged.Skills === "Python");
+  check("merge: shared email kept", merged.Email === "a@b.com");
+
   // ── D4: licence / UPI / passport / bank-account never-store coverage ──
   // Acceptance fixture: "DL: MH12 12345678901", "upi://rahul@oksbi",
   // "Passport L1234567" → no stored field for those.
@@ -65,6 +109,13 @@ async function main() {
   check("D4: 10-digit [6-9] phone still extracted (bank regex exclusion)", phoneKept.phone === "9876543210");
   const emailKept = extractProfileFromText("Contact ananya@example.com");
   check("D4: email still extracted (UPI regex excludes dotted TLD)", emailKept.email === "ananya@example.com");
+
+  const hindiDev = extractProfileFromText("मेरा नाम राहुल शर्मा है ईमेल rahul@example.com फोन 9876543210");
+  check("Hindi Devanagari extracts name", hindiDev.fullName && /राहुल/.test(hindiDev.fullName), hindiDev.fullName);
+  check("Hindi speech still extracts email", hindiDev.email === "rahul@example.com");
+  check("Hindi speech still extracts phone", hindiDev.phone === "9876543210");
+  const hinglish = extractProfileFromText("mera naam Priya Sharma email priya@test.com");
+  check("Hinglish mera naam extracts name", hinglish.fullName && /Priya/.test(hinglish.fullName), hinglish.fullName);
 
   console.log(`\n${pass}/${pass + fail} passed, ${fail} failed.`);
   if (fail > 0) process.exit(1);

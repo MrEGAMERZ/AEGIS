@@ -10,7 +10,7 @@ Companion: [02_ARCHITECTURE.md](02_ARCHITECTURE.md) (sanitization + VLM agent). 
 
 | Work | Content script | Service worker | Offscreen | Local gateway `:8000` | Remote VLM |
 |---|---|---|---|---|---|
-| Idle browse overlays | DOM password/PII only (`includeFaces: false`) | — | — | — | **never** |
+| Idle browse | No live-page covers (page stays usable) | — | — | — | **never** |
 | Privacy Scan / Run Agent (faces **on**) | `DOM_SCAN`, face overlays | `SCAN_AND_OVERLAY` / `CAPTURE_AND_SANITIZE` | BlazeFace + NER + mask | Agent leftovers / Run Agent if endpoint is loopback | Sanitized image + page structure + **profile** only. **No vault document text.** |
 | Privacy Scan / Run Agent (faces **off**) | Field overlays only | Same handlers; `faceDetection: false` | NER + password masks; **no** BlazeFace | Same as above | Same as above; face gate skipped |
 | “Scan faces now” | Same as faces-on scan | `SCAN_AND_OVERLAY` with `forceFaces: true` | BlazeFace + NER | — (scan has no VLM) | **never** |

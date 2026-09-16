@@ -55,10 +55,11 @@ The canonical shape below is now the **verified, shipped** contract, not specula
 
 | Key | Shape / Type | Written by | Read by | Sensitivity | Retention |
 |---|---|---|---|---|---|
-| `lastReceipt` | Privacy receipt object: `{ timestamp, url, masked: { passwordFields, faces, piiSpans }, backend, latencyMs: { capture, domScan, inference, vlm }, totalMs }` | `handleCaptureAndSanitize()` after every sanitize run | `GET_LAST_RECEIPT` → popup `loadLastReceipt()` | **Low-Medium** — local demo receipt; **never sent to the VLM**. Contains page `url` for the user only. Never raw PII or screenshots. | Session only |
+| `lastReceipt` | Privacy receipt object: `{ timestamp, url, masked: { passwordFields, faces, piiSpans }, backend, latencyMs: { capture, domScan, inference, vlm }, totalMs }` | `persistLastScanArtifacts()` after Privacy Scan / Run Agent sanitize | `GET_LAST_RECEIPT` → popup `loadLastReceipt()` | **Low-Medium** — local demo receipt; **never sent to the VLM**. Contains page `url` for the user only. Never raw PII or the unsanitized screenshot. | Session only |
+| `lastSanitizedImage` | JPEG/PNG `data:image/...` — **already redacted**, downscaled preview of the viewport (faces/passwords/PII painted out). Full PNG stays in the sanitize pass for the VLM and is not the session key. | `persistLastScanArtifacts(scanPreviewDataUrl)` | `GET_LAST_SANITIZED_IMAGE` + popup `loadLastReceipt()` | **Low-Medium** — the same pixels an agent is allowed to receive, smaller than the capture PNG. Not the raw capture. Session only. | Session only |
 | `vlmApiKey` | `string` (API key / bearer token) | popup `#vlm-api-key` → `SET_VLM_API_KEY` | `handleCaptureAndSanitize` (Bearer for non-localhost VLM); `GET_VLM_API_KEY_STATUS` returns `{ configured }` only, never the key | **High** — credential | Session only. **MUST NOT** be written to `chrome.storage.local`. |
 
-No other `storage.session` keys exist besides `lastReceipt` and `vlmApiKey`. `SET_CONFIG` / `GET_CONFIG` strip `vlmApiKey`, `apiKey`, `authorization`, `token`, and `secret` so a mistaken popup write cannot persist a credential to disk.
+No other `storage.session` keys exist besides `lastReceipt`, `lastSanitizedImage`, and `vlmApiKey`. `SET_CONFIG` / `GET_CONFIG` strip `vlmApiKey`, `apiKey`, `authorization`, `token`, and `secret` so a mistaken popup write cannot persist a credential to disk.
 
 ---
 
@@ -77,7 +78,7 @@ Static, checked-into-git fixtures (`ground-truth-master.json`, `gt-tp01.json`, �
 Per the db-engineer rule — **Aadhaar/PAN/licence numbers must never be persisted**:
 
 - The only PII detection code path is `detectTextPII()` in `src/offscreen/offscreen.js` (regex stage, `AADHAAR`/`PAN`/`SSN`/`PHONE`/`EMAIL`/`IN_MOBILE` patterns) and the worker's NER stage. Both produce `maskedRegions` (bounding boxes + entity type + confidence) which are used only to draw pixelation on the in-memory canvas and are returned in the message response to `background.js`.
-- `background.js` reduces `maskedRegions` down to **counts only** (`passwordFields`, `faces`, `piiSpans`) before writing to `chrome.storage.session.lastReceipt` (`background.js:200-204`). The actual matched text (`pii.text`, e.g. the Aadhaar/PAN digits themselves) is **never** written to `chrome.storage.local`, `chrome.storage.session`, or any other persistence layer — confirmed by reading every `storage.*.set(...)` call site in the codebase (there are exactly 3: two in `onInstalled`/`SET_CONFIG` for config, one for the receipt counts).
+- `background.js` reduces `maskedRegions` down to **counts only** (`passwordFields`, `faces`, `piiSpans`) before writing to `chrome.storage.session.lastReceipt`. The actual matched text (`pii.text`, e.g. the Aadhaar/PAN digits themselves) is **never** written to `chrome.storage.local`. `lastSanitizedImage` is the **pixel-redacted** PNG data URL only (same pixels as the agent frame), session-scoped, never the raw capture.
 - **Verdict: PASS.** No sensitive extracted PII (Aadhaar/PAN/licence/SSN/email/phone matches) is persisted anywhere. Only aggregate counts and non-sensitive config survive a sanitize run.
 
 ---

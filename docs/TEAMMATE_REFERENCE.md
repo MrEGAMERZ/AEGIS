@@ -44,9 +44,9 @@ Toolbar icon → 360px panel, **three tabs**.
 
 | Tab | What it does |
 |---|---|
-| **Fill** | Privacy Scan, Fill Form, Run Agent. After a scan: receipt (fields / faces / PII / time) + sanitized preview. Stop cancels a stuck scan. |
-| **Profile** | Saved fields on this device. Drop a PDF/DOCX. Personal / Work / Family. Demo pack: `eval/fixtures/`. |
-| **Settings** | Face / password / PII toggles. VLM URL default **`http://localhost:8000/v1/chat/completions`**. Leave the API key empty. |
+| **Fill** | Privacy Scan, Fill Form, Run Agent. After a scan: receipt + sanitized preview. Stop cancels a stuck scan. |
+| **Profile** | Multiple named profiles (Personal / Work / Family, plus **+ New**). Speak or drop a PDF into the **selected** one. Demo pack: `eval/fixtures/`. |
+| **Settings** | Face / password / PII toggles. Links to full voice page and dashboard. VLM URL default **`http://localhost:8000/v1/chat/completions`**. |
 
 | You click | Stays on device | Leaves the browser |
 |---|---|---|
@@ -55,7 +55,7 @@ Toolbar icon → 360px panel, **three tabs**.
 | Run Agent | Same redaction, then action loop | Sanitized image + page structure + task |
 | Drop a PDF | Extract text here; strip Aadhaar/PAN/etc. | Only if “structure with local AI” is ticked — and only to `localhost` |
 
-Everyday browsing may outline password/PII fields. It does **not** run face detection on strangers. Faces run on Privacy Scan, Run Agent, or **Scan faces now**.
+Everyday browsing does **not** cover the page. Password and face hides apply only to the sanitized frame a local agent may see (Privacy Scan / Run Agent preview). Faces still run only on those explicit actions.
 
 ---
 
@@ -160,6 +160,7 @@ We never use `chrome.storage.sync`.
 | `faceDetection` / `passwordDetection` / `piiDetection` | Toggles |
 | `vlmEndpoint` / `vlmModel` | Local gateway URL + model id |
 | `lastReceipt` (session) | Last scan counts + latency, not raw PII |
+| `lastSanitizedImage` (session) | Redacted viewport PNG for the Fill-tab judge preview; wiped on browser close |
 | `aegisTheme` | Light / Dark / Auto |
 
 Profile and vault are **plaintext on disk**. Say that honestly if asked.

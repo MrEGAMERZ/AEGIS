@@ -1,199 +1,172 @@
-// Aegis — Multilingual Voice Assistant (standalone page)
-// Extracts profile data from speech in 10 Indian languages
+// AEGIS — multilingual speech → profile (full page).
+// Uses Chrome Web Speech (same path as the teammate build). Persist only on Save.
 
-const LANGUAGES = [
-  { code: "en-US", label: "English (US / India)" },
-  { code: "hi-IN", label: "Hindi" },
-  { code: "bn-IN", label: "Bengali" },
-  { code: "ta-IN", label: "Tamil" },
-  { code: "te-IN", label: "Telugu" },
-  { code: "mr-IN", label: "Marathi" },
-  { code: "kn-IN", label: "Kannada" },
-  { code: "gu-IN", label: "Gujarati" },
-  { code: "ml-IN", label: "Malayalam" },
-  { code: "pa-IN", label: "Punjabi" },
-];
+import {
+  extractProfileFromText,
+  toUserProfileFields,
+  KEY_LABELS,
+} from "../shared/extract-profile.js";
+import {
+  VOICE_LANGUAGES,
+  speechRecognitionSupported,
+  requestMicrophone,
+  createSpeechSession,
+} from "../shared/speech-listen.js";
 
-const PROFILE_KEYS = [
-  "fullName", "email", "phone", "dob", "gender", "city", "state",
-  "pincode", "college", "occupation", "annualIncome",
-];
-
-const KEY_LABELS = {
-  fullName: "Full name", email: "Email", phone: "Phone", dob: "Date of birth",
-  gender: "Gender", city: "City", state: "State", pincode: "PIN code",
-  college: "College / institution", occupation: "Occupation", annualIncome: "Annual income",
-};
-
-function extractProfileFromText(text) {
-  const extracted = {};
-  if (!text) return extracted;
-
-  // Try JSON first
-  try {
-    const j = JSON.parse(text);
-    for (const k of PROFILE_KEYS) {
-      if (j[k]) extracted[k] = String(j[k]).trim();
-      else if (j[KEY_LABELS[k]]) extracted[k] = String(j[KEY_LABELS[k]]).trim();
-    }
-    if (Object.keys(extracted).length > 0) return extracted;
-  } catch {}
-
-  // Email
-  const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-  if (emailMatch) extracted.email = emailMatch[0];
-
-  // Phone (Indian)
-  const phoneMatch = text.match(/(?:\+91[\s-]?)?[6-9]\d{9}/);
-  if (phoneMatch) extracted.phone = phoneMatch[0].replace(/\D/g, "").slice(-10);
-
-  // DOB
-  const dobMatch = text.match(/(?:DOB|Date of Birth|Birth\s*Date)[\s:]*(\d{2}[-/.]\d{2}[-/.]\d{4}|\d{4}[-/.]\d{2}[-/.]\d{2})/i);
-  if (dobMatch) extracted.dob = dobMatch[1];
-
-  // Full name
-  const nameMatch = text.match(/(?:Full\s*Name|Name|Mera\s*naam|My\s*name\s*is)[\s:]*([A-Za-z\s]{3,35})/i);
-  if (nameMatch) {
-    const n = nameMatch[1].replace(/hai|is|and|email|phone/gi, "").trim();
-    if (n.length >= 3) extracted.fullName = n;
-  }
-
-  // City
-  const cityMatch = text.match(/(?:City|Location|Rehta\s*hoon|Raho)[\s:]*([A-Za-z\s]{3,20})/i);
-  if (cityMatch) {
-    const c = cityMatch[1].replace(/hai|in|is/gi, "").trim();
-    if (c) extracted.city = c;
-  }
-
-  // State
-  const stateMatch = text.match(/(?:State)[\s:]*([A-Za-z\s]{3,20})/i);
-  if (stateMatch) extracted.state = stateMatch[1].trim();
-
-  // PIN
-  const pinMatch = text.match(/(?:PIN|Pincode|Zip)[\s:]*(\d{6})/i);
-  if (pinMatch) extracted.pincode = pinMatch[1];
-
-  // College
-  const collegeMatch = text.match(/(?:College|University|Institution)[\s:]*([A-Za-z\s]{3,40})/i);
-  if (collegeMatch) extracted.college = collegeMatch[1].trim();
-
-  // Income
-  const incomeMatch = text.match(/(?:Income|Salary)[\s:]*(\d{5,10})/i);
-  if (incomeMatch) extracted.annualIncome = incomeMatch[1];
-
-  return extracted;
-}
-
-// ── DOM refs ──────────────────────────────────────────────────────
 const micBtn = document.getElementById("mic-btn");
 const langSelect = document.getElementById("voice-lang-select");
 const transcriptBox = document.getElementById("transcript-box");
 const extractedBox = document.getElementById("extracted-box");
 const extractedTags = document.getElementById("extracted-tags");
+const saveBtn = document.getElementById("save-voice-btn");
+const discardBtn = document.getElementById("discard-voice-btn");
 const closeBtn = document.getElementById("close-btn");
+const statusEl = document.getElementById("voice-status");
 
-let recognition = null;
-let isRecording = false;
+let session = null;
+let pendingFields = null;
+let lastTranscript = "";
 
-// ── Speech Recognition ────────────────────────────────────────────
-function initRecognition() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    transcriptBox.textContent = "Speech recognition not supported in this browser.";
-    micBtn.disabled = true;
-    return null;
-  }
-  const rec = new SR();
-  rec.continuous = false;
-  rec.interimResults = true;
-
-  rec.onstart = () => {
-    isRecording = true;
-    micBtn.classList.add("recording");
-    transcriptBox.textContent = "Listening...";
-  };
-
-  rec.onresult = (e) => {
-    let interimText = "";
-    let finalText = "";
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) finalText += t;
-      else interimText += t;
-    }
-    transcriptBox.textContent = finalText || interimText || "Listening...";
-
-    if (finalText) processTranscript(finalText);
-  };
-
-  rec.onerror = (e) => {
-    isRecording = false;
-    micBtn.classList.remove("recording");
-    transcriptBox.textContent = `Error: ${e.error}`;
-  };
-
-  rec.onend = () => {
-    isRecording = false;
-    micBtn.classList.remove("recording");
-  };
-
-  return rec;
+function setStatus(msg, kind) {
+  if (!statusEl) return;
+  statusEl.textContent = msg || "";
+  statusEl.className = kind ? `voice-status ${kind}` : "voice-status";
 }
 
-// ── Process transcript ────────────────────────────────────────────
-function processTranscript(text) {
-  const extracted = extractProfileFromText(text);
-  const keys = Object.keys(extracted);
-  if (keys.length === 0) {
+function fillLangSelect() {
+  if (!langSelect) return;
+  langSelect.innerHTML = "";
+  for (const { code, label } of VOICE_LANGUAGES) {
+    const opt = document.createElement("option");
+    opt.value = code;
+    opt.textContent = label;
+    langSelect.appendChild(opt);
+  }
+  langSelect.value = "en-US";
+}
+
+function showFields(fields) {
+  pendingFields = fields;
+  extractedTags.innerHTML = "";
+  const entries = Object.entries(fields || {});
+  if (!entries.length) {
     extractedBox.style.display = "none";
+    saveBtn.disabled = true;
     return;
   }
   extractedBox.style.display = "block";
-  extractedTags.innerHTML = "";
-  for (const k of keys) {
+  saveBtn.disabled = false;
+  for (const [k, v] of entries) {
     const tag = document.createElement("span");
     tag.className = "tag";
-    tag.textContent = `${KEY_LABELS[k] || k}: ${extracted[k]}`;
+    tag.textContent = `${KEY_LABELS[k] || k}: ${v}`;
     extractedTags.appendChild(tag);
   }
+}
 
-  // Save to chrome.storage.local for popup to pick up
-  chrome.storage.local.get(["aegisProfiles", "aegisCurrentProfile"], (stored) => {
-    const name = stored.aegisCurrentProfile || "Personal";
-    const profiles = stored.aegisProfiles || {};
-    const profile = profiles[name] || {};
-    Object.assign(profile, extracted);
-    profiles[name] = profile;
-    chrome.storage.local.set({ aegisProfiles: profiles, userProfile: profile });
+function applyTranscript(text, { final: isFinal }) {
+  lastTranscript = text;
+  transcriptBox.textContent = text;
+  if (!isFinal) return;
+  const fields = toUserProfileFields(extractProfileFromText(text));
+  showFields(fields);
+  const n = Object.keys(fields).length;
+  if (n) setStatus(`${n} field(s) found. Click Save to store them on this device.`, "ok");
+  else setStatus("Heard you, but no phone/email/name to save. Try again.", "warn");
+}
+
+function bindSession() {
+  session = createSpeechSession({
+    lang: langSelect?.value || "en-US",
+    onStart() {
+      micBtn.classList.add("recording");
+      transcriptBox.textContent = "Listening...";
+      setStatus("Listening…", "");
+    },
+    onInterim(t) { applyTranscript(t, { final: false }); },
+    onFinal(t) { applyTranscript(t, { final: true }); },
+    onError(err) {
+      micBtn.classList.remove("recording");
+      const msg = String(err || "error");
+      if (msg === "not-allowed") setStatus("Microphone blocked. Allow mic for this page in Chrome.", "err");
+      else if (msg === "no-speech") setStatus("No speech heard. Click the mic and try again.", "warn");
+      else setStatus(`Speech error: ${msg}`, "err");
+    },
+    onEnd() { micBtn.classList.remove("recording"); },
   });
 }
 
-// ── Mic button ────────────────────────────────────────────────────
 micBtn.addEventListener("click", async () => {
-  // Request microphone permission first
-  if (!isRecording) {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((t) => t.stop());
-    } catch {
-      transcriptBox.textContent = "Microphone permission denied. Check Chrome settings.";
-      return;
-    }
-  }
-
-  if (isRecording) {
-    recognition?.stop();
+  if (!speechRecognitionSupported()) {
+    transcriptBox.textContent = "Speech recognition is not available in this browser. Use Google Chrome.";
+    micBtn.disabled = true;
     return;
   }
-
-  if (!recognition) recognition = initRecognition();
-  if (recognition) {
-    recognition.lang = langSelect?.value || "en-US";
-    try { recognition.start(); } catch { /* already started */ }
+  if (session?.isRecording()) {
+    session.stop();
+    return;
+  }
+  try {
+    await requestMicrophone();
+  } catch {
+    setStatus("Microphone permission denied. Check Chrome settings.", "err");
+    return;
+  }
+  bindSession();
+  session.setLang(langSelect?.value || "en-US");
+  try {
+    session.start();
+  } catch {
+    setStatus("Could not start listening. Click again.", "warn");
   }
 });
 
-// ── Close button ──────────────────────────────────────────────────
-closeBtn.addEventListener("click", () => {
-  window.close();
+langSelect?.addEventListener("change", () => {
+  session?.setLang(langSelect.value);
 });
+
+saveBtn?.addEventListener("click", async () => {
+  if (!pendingFields || !Object.keys(pendingFields).length) {
+    setStatus("Nothing to save yet. Speak first.", "warn");
+    return;
+  }
+  const stored = await chrome.storage.local.get(["aegisCurrentProfile", "aegisProfiles", "userProfile"]);
+  const name = stored.aegisCurrentProfile || "Personal";
+  const profiles = stored.aegisProfiles || {};
+  const profile = { ...(profiles[name] || stored.userProfile || {}) };
+  Object.assign(profile, pendingFields);
+  profiles[name] = profile;
+  await chrome.storage.local.set({ aegisProfiles: profiles, userProfile: profile });
+  if (lastTranscript) {
+    try {
+      await chrome.runtime.sendMessage({
+        type: "ADD_DOC_TO_VAULT",
+        docName: `spoken-${name}.txt`,
+        format: "txt",
+        text: lastTranscript,
+      });
+    } catch {
+      // vault is optional for speech
+    }
+  }
+  setStatus(`Saved ${Object.keys(pendingFields).length} field(s) to ${name}.`, "ok");
+});
+
+discardBtn?.addEventListener("click", () => {
+  pendingFields = null;
+  lastTranscript = "";
+  extractedBox.style.display = "none";
+  extractedTags.innerHTML = "";
+  saveBtn.disabled = true;
+  transcriptBox.textContent = "Not saved. Click the microphone to speak again.";
+  setStatus("Discarded. Nothing stored.", "");
+});
+
+closeBtn?.addEventListener("click", () => window.close());
+
+fillLangSelect();
+if (!speechRecognitionSupported()) {
+  transcriptBox.textContent = "Speech recognition is not available in this browser. Use Google Chrome.";
+  micBtn.disabled = true;
+}
+saveBtn.disabled = true;

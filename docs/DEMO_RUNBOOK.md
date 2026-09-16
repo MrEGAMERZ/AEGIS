@@ -1,6 +1,6 @@
 # AEGIS Demo Runbook — Chrome E2E on TP08
 
-**LIVE CARD (real Chrome):** extension name is **AEGIS**. Load unpacked from **`dist/` only** (never the repo root). Preferred TP08: `http://127.0.0.1:8765/tp08-kitchen-sink-registration.html`. Popup → **Profile** → drop `eval/fixtures/Aegis-Demo-Profile-Mohammad-Rehan.pdf` → review fields → **Save** (or Import `dummy-profile-rehan.json`). **Fill** → **Fill Form** (Mohammad Rehan, not John Doe). **Privacy Scan** on Fill; face scan is under **Settings**. Reload unpacked after every rebuild. One-pager: [`LIVE_DEMO.md`](LIVE_DEMO.md).
+**LIVE CARD (real Chrome):** extension name is **AEGIS**. Load unpacked from **`dist/` only** (never the repo root). Preferred TP08: `http://127.0.0.1:8765/tp08-kitchen-sink-registration.html`. Popup → **Profile** → speak or drop `eval/fixtures/Aegis-Demo-Profile-Mohammad-Rehan.pdf` → review fields → **Save** (or Import `dummy-profile-rehan.json`). **Fill** → **Fill Form** (Mohammad Rehan, not John Doe). **Privacy Scan** on Fill; face scan is under **Settings**. The live page is **not** covered — redaction is in the popup’s **What the agent would see** frame. Reload unpacked after every rebuild. One-pager: [`LIVE_DEMO.md`](LIVE_DEMO.md).
 
 **Audience:** judges, evaluators, and developers running the live demo.  
 **Goal:** load the extension from `dist/`, open TP08, and complete **Scan page** or **Run Agent** without hitting known footguns.  
@@ -21,10 +21,10 @@ For VLM server details and measured latencies, see [`docs/SERVER_SETUP.md`](SERV
 | 1 | Load **unpacked** from **`dist/`** | Extension size 15–80 MB in `chrome://extensions` |
 | 2 | Enable **Allow access to file URLs** | Checkbox ON on the AEGIS card |
 | 3 | Open TP08 (`file://…/eval/test-pages/tp08-kitchen-sink-registration.html`) | Page renders; sidebar face photo visible |
-| 4 | Open popup → wait for **BlazeFace ready (WASM)** badge | Badge turns green (first open may take up to 60 s while WASM compiles) |
-| 5 | Click **Privacy scan** (primary blue button) | Orange overlays on password/card fields; status success |
-| 6 | Check popup | **Sanitized preview** shows blurred face + black password fields |
-| 7 | Check **Last Privacy Receipt** | `faces > 0`, `piiSpans > 0`, password field count > 0 |
+| 4 | Open popup → wait until **Loading models** disappears (or **Not loaded**) | First open may take up to 60 s while WASM compiles |
+| 5 | Click **Privacy Scan** on Fill | Status success; the page itself stays usable (no frost overlays) |
+| 6 | Check the bottom card **What the agent would see** | Redacted JPEG: blurred face + black password fields |
+| 7 | Check **Last privacy receipt** | `faces > 0`, `piiSpans > 0`, password field count > 0 |
 
 **What to say:** “All redaction runs locally in the browser. The sanitized preview is what would be sent to a VLM — raw faces and passwords never leave the device.”
 
@@ -32,7 +32,7 @@ For VLM server details and measured latencies, see [`docs/SERVER_SETUP.md`](SERV
 
 **First Privacy scan latency:** allow **30–90 s** on a cold extension load (WASM compile + NER init). Subsequent scans are faster.
 
-**Idle browsing:** the content script may outline password/PII fields as you browse, but it does **not** run BlazeFace on photos of other people. Face boxes appear only on **Privacy Scan**, **Run Agent**, or an explicit **Scan faces now** / **Scan faces on this page** action (Fill tab or Settings).
+**Idle browsing:** the live page is **not** covered. Faces and passwords are hidden only on the sanitized agent frame (popup preview). Face detection still runs only on **Privacy Scan**, **Run Agent**, or **Scan faces on this page** (Settings).
 
 ---
 
@@ -45,9 +45,9 @@ For VLM server details and measured latencies, see [`docs/SERVER_SETUP.md`](SERV
 | 2 | Enable **Allow access to file URLs** on the extension card | Checkbox is on |
 | 3 | `ollama serve` + `ollama pull qwen2.5vl:7b` + pre-warm | `ollama ps` shows model loaded; warm ping < 5 s |
 | 4 | Open TP08 via `file://` (or local static server) | Page renders; yellow “How to use” box visible |
-| 5 | Paste profile JSON → **Save Profile** | Popup status: “Profile saved locally.” |
-| 6 | **Privacy Scan** (face toggle ON, or **Scan faces now**) | Overlays on face, passwords, card fields; receipt counts > 0 |
-| 7 | **Fill Form** or **Run Agent** | Fill Form: local profile/vault match first, then one local-VLM pass for leftovers; Run Agent: full multi-step loop |
+| 5 | Profile tab → drop the demo PDF or speak → **Save** | Fields appear in Saved fields; Don't save stores nothing |
+| 6 | **Privacy Scan** (face toggle ON) | Bottom preview is redacted; receipt counts > 0; the form stays typeable |
+| 7 | **Fill Form** or **Run Agent** | Fill Form: writes matches then leftover warning (no VLM). Run Agent: full loop via `:8000` |
 | 8 | On any extension **Reload** | **Refresh the TP08 tab**, then retry |
 
 **Expected latencies (dev machine, pre-warmed Ollama):**
@@ -202,7 +202,7 @@ The page loads a face image from `eval/test-pages/assets/applicant-face.jpg` (re
 
 The profile intentionally **excludes** Aadhaar, PAN, Blood Group, and Emergency Contact — those fields are hallucination traps on TP08.
 
-**Optional document upload:** Profile tab → drop a **PDF** (or DOCX/TXT). Text is extracted **on-device** (vendored pdf.js, zero network). Optionally **Structure with local AI** (localhost only). Nothing is stored until **Save**: fields go into the Profile list; document text stays in `aegisDocVault` as local knowledge. **Don't save** discards RAM only. **Fill Form** reads saved profile + vault via `FILL_MATCHING_FIELDS` before any VLM call.
+**Optional document upload:** Profile tab → drop a **PDF** (or DOCX/TXT). Text is extracted **on-device** (vendored pdf.js, zero network). Optionally **Structure with local AI** (localhost only). Nothing is stored until **Save**: fields go into the Profile list; document text stays in `aegisDocVault` as local knowledge. **Don't save** discards RAM only. **Fill Form** reads saved profile + vault via `FILL_MATCHING_FIELDS` and does **not** call the VLM. Scanned/image-only PDFs that need extra CMaps fail closed (no text) — that is accepted, not a crash.
 
 ---
 
@@ -215,11 +215,10 @@ The profile intentionally **excludes** Aadhaar, PAN, Blood Group, and Emergency 
 
 **Success:**
 
-- Orange/red overlay boxes on sensitive fields (passwords, card number, CVV, Aadhaar/PAN inputs, etc.)  
-- Face region highlighted on `#applicant-photo` after sanitize completes  
-- **Sanitized preview** in popup: blurred face, black password fields, masked PII text  
+- The live TP08 page stays usable (no frost overlays on the form)  
+- Bottom popup card **What the agent would see**: blurred face, black password fields, masked PII  
 - **Privacy receipt:** `faces > 0`, `piiSpans > 0`, password/card fields counted  
-- Status: `Privacy scan complete — N sensitive field(s) overlaid, M face(s) redacted.`
+- Status reports scan complete (not a VLM error)
 
 Privacy scan does **not** call the VLM. This is the judge hero path when the gateway/Ollama is offline.
 
@@ -229,17 +228,14 @@ With **Scan human faces** OFF, Privacy Scan still masks passwords and NER PII bu
 
 Same as Path A — the button is labeled **Privacy Scan** in the popup UI.
 
-### Path B0 — Fill Form (local first, then one VLM batch)
+### Path B0 — Fill Form (local only)
 
 1. Focus the TP08 tab  
 2. Popup → **Fill Form** (Fill tab, blue button)
 
-**Pipeline:**
+**Pipeline:** `FILL_MATCHING_FIELDS` maps saved profile + document vault text to visible form labels. **No VLM.** Leftovers stay blank with “Not enough data available to fill the rest.”
 
-1. `FILL_MATCHING_FIELDS` — maps saved profile + document vault text to visible form labels (no VLM)  
-2. If fields remain → **one** local-VLM agent loop (`CAPTURE_AND_SANITIZE` → execute actions; stops on `fill_many` or `done`)
-
-**Success:** status reports N fields filled locally; any leftovers filled via local AI. Trap fields stay empty. Requires gateway at `:8000` for the VLM step.
+**Success:** status reports N fields filled. Trap fields (Aadhaar, PAN, PIN, card) stay empty. Works without Ollama.
 
 ### Path B — Run Agent — form fill
 
@@ -287,6 +283,14 @@ Run Agent may execute multiple VLM rounds (click + type). Re-run with the same t
 ## 6. Recovery — known errors
 
 Popup errors use a **`[CODE]`** prefix. Match the code, then follow the fix.
+
+### PDF with no text layer / extra CMaps
+
+**Symptoms:** Drop a scanned (image-only) PDF; preview is empty or extract fails closed.
+
+**Why:** Vendored pdf.js does not ship extra CMap files. That is accepted — we fail closed rather than fetch CMaps from the network.
+
+**Fix for demo:** use `eval/fixtures/Aegis-Demo-Profile-Mohammad-Rehan.pdf` or a text-layer PDF.
 
 ### `[TIMEOUT]` / `[INIT_FAILED]` — on-device models
 

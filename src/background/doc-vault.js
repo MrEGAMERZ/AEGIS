@@ -37,9 +37,9 @@
   const DEFAULT_TOP_K = 3; // default number of snippets retrieved
   const MAX_DOC_NAME_CHARS = 160;
   const MAX_DOC_FORMAT_CHARS = 32;
-  const MAX_STRUCT_FIELD_KEY_CHARS = 40;
-  const MAX_STRUCT_FIELD_VALUE_CHARS = 500;
-  const MAX_STRUCT_FIELDS = 60; // hard cap on structured output fields
+  const MAX_STRUCT_FIELD_KEY_CHARS = 64;
+  const MAX_STRUCT_FIELD_VALUE_CHARS = 2000;
+  const MAX_STRUCT_FIELDS = 120; // rich resumes / form packs
   const MAX_STRUCT_INPUT_CHARS = 60000; // structure request text guard
   const DEFAULT_STRUCT_RATE_INTERVAL_MS = 1000; // local-model rate limiter
 

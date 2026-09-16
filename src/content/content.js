@@ -133,10 +133,30 @@
         selector,
         label: labelForFormControl(el),
         type: "text_input",
+        hasValue: String(el.value || "").trim().length > 0,
         rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
       });
     }
     return results;
+  }
+
+  // Photos in view (applicant headshot, ID image). Masked with a black box
+  // on the sanitize canvas. Tiny icons and wide banners are skipped.
+  function scanVisiblePhotos() {
+    const photos = [];
+    for (const el of document.querySelectorAll("img")) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 48 || rect.height < 48) continue;
+      if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+      if (rect.right < 0 || rect.left > window.innerWidth) continue;
+      const ratio = rect.width / rect.height;
+      if (ratio > 3 || ratio < 0.25) continue;
+      photos.push({
+        type: "photo",
+        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      });
+    }
+    return photos;
   }
 
   function filterFieldsForPasswordDetection(fields, passwordDetectionEnabled) {
@@ -349,16 +369,15 @@
   let overlayRaf = 0;
   let overlayListenersAttached = false;
 
-  // On-device models (BlazeFace + DistilBERT NER + regex) decide what is
-  // private. Covers hide those regions on the live page. pointer-events:none.
-  // The sanitized capture (offscreen) is a second hide for any VLM.
+  // Live-page boxes are unused: password/PII/face hides belong on the
+  // offscreen SANITIZE canvas that agents see, not on the user's display.
   const TYPE_COLORS = {
-    password_input:      { border: "#16a34a", badge: "#16a34a", fill: "rgba(15, 23, 42, 0.92)" },
-    sensitive_input:     { border: "#2563eb", badge: "#2563eb", fill: "rgba(15, 23, 42, 0.88)" },
-    contenteditable_pii: { border: "#7c3aed", badge: "#7c3aed", fill: "rgba(15, 23, 42, 0.88)" },
-    face:                { border: "#2563eb", badge: "#2563eb", fill: "rgba(15, 23, 42, 0.94)" },
+    password_input:      { border: "transparent", badge: "transparent", fill: "transparent" },
+    sensitive_input:     { border: "transparent", badge: "transparent", fill: "transparent" },
+    contenteditable_pii: { border: "transparent", badge: "transparent", fill: "transparent" },
+    face:                { border: "transparent", badge: "transparent", fill: "transparent" },
   };
-  const DEFAULT_COLOR = { border: "#64748b", badge: "#64748b", fill: "rgba(15, 23, 42, 0.88)" };
+  const DEFAULT_COLOR = { border: "transparent", badge: "transparent", fill: "transparent" };
 
   function getOrCreateOverlayRoot() {
     let root = document.getElementById(OVERLAY_ROOT_ID);
@@ -444,35 +463,13 @@
     const box = document.createElement("div");
     Object.assign(box.style, {
       position: "fixed",
-      border: `1.5px solid ${colors.border}`,
-      backgroundColor: colors.fill || "rgba(15, 23, 42, 0.88)",
-      backdropFilter: "blur(10px)",
-      WebkitBackdropFilter: "blur(10px)",
+      border: "0",
+      backgroundColor: "transparent",
       boxSizing: "border-box",
-      borderRadius: type === "face" ? "10px" : "6px",
-      boxShadow: `0 0 0 1px ${colors.border}22`,
       pointerEvents: "none",
     });
-
-    const badge = document.createElement("div");
-    Object.assign(badge.style, {
-      position: "absolute",
-      top: "-14px",
-      left: "4px",
-      background: colors.badge || colors.border,
-      color: "#fff",
-      fontSize: "9px",
-      fontFamily: "system-ui,sans-serif",
-      fontWeight: "600",
-      padding: "0 5px",
-      borderRadius: "3px",
-      whiteSpace: "nowrap",
-      lineHeight: "14px",
-      letterSpacing: "0.02em",
-      opacity: "0.92",
-    });
-    badge.textContent = labelText;
-    box.appendChild(badge);
+    void colors;
+    void labelText;
     return box;
   }
 
@@ -580,14 +577,12 @@
     repositionOverlays();
   }
 
-  // includeFaces:false = idle (hide DOM password/PII fields; no BlazeFace).
-  // includeFaces:true  = Privacy Scan / Run Agent (also hide faces).
-  function showRedactionOverlay(fields, faces, dpr, options) {
-    const includeFaces = !!(options && options.includeFaces);
-    renderFieldOverlays(fields);
-    if (includeFaces) {
-      renderFaceOverlays(faces, dpr);
-    }
+  // Live page stays usable. Blur/masks are applied only on the offscreen
+  // SANITIZE frame that a local agent may see. includeFaces is accepted so
+  // existing Privacy Scan / idle messages stay valid, then discarded.
+  function showRedactionOverlay(_fields, _faces, _dpr, options) {
+    void (options && options.includeFaces);
+    clearRedactionOverlay();
   }
 
   function clearRedactionOverlay() {
@@ -605,6 +600,7 @@
     if (msg.type === "DOM_SCAN") {
       const fields = scanDOMForSensitiveFields();
       const fillableFields = scanFillableFormFields();
+      const photos = scanVisiblePhotos();
       const visibleText = extractVisibleText();
       // dpr is critical: captureVisibleTab() returns physical pixels,
       // but getBoundingClientRect() returns CSS pixels.
@@ -614,6 +610,7 @@
       sendResponse({
         fields,
         fillableFields,
+        photos,
         visibleText,
         dpr: window.devicePixelRatio || 1,
         viewport: { width: window.innerWidth, height: window.innerHeight },

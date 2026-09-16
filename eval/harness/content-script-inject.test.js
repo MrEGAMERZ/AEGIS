@@ -274,6 +274,11 @@ function runRestrictedAndFailureCases() {
         "onInstalled best-effort re-injects",
         backgroundSrc.includes("reinjectContentScriptsBestEffort")
       );
+      check(
+        "context menu create swallows duplicate-id lastError",
+        backgroundSrc.includes("ensureAutofillContextMenu") &&
+          backgroundSrc.includes("void chrome.runtime.lastError")
+      );
 
       check(
         "content overlay repositions on scroll via rAF",
@@ -297,6 +302,11 @@ function runRestrictedAndFailureCases() {
         contentSrc.includes("scanFillableFormFields") &&
           contentSrc.includes("fillableFields")
       );
+      check(
+        "DOM_SCAN marks filled inputs without sending the value",
+        contentSrc.includes("hasValue: String(el.value") && !contentSrc.includes("value: el.value")
+      );
+      check("DOM_SCAN lists viewport photos for black-box masking", contentSrc.includes("scanVisiblePhotos") && contentSrc.includes("photos"));
 
       console.log("");
       if (fail) {

@@ -83,12 +83,12 @@ The toolbar icon opens a 360px panel. Three tabs. That is the whole product surf
 | **Profile** | Your data, on this device. Drop a PDF. Save fields. Switch Personal / Work / Family. Ananya’s demo JSON lives in [`eval/fixtures/dummy-profile-ananya.json`](eval/fixtures/dummy-profile-ananya.json). |
 | **Settings** | Face / password / PII toggles, plus the local model URL. Default endpoint is `http://localhost:8000/v1/chat/completions`. Leave the API key empty. |
 
-Everyday browsing may outline password and PII fields. It does **not** run face detection on strangers in the tab. Faces only happen on Privacy Scan, Run Agent, or **Scan faces now**.
+Everyday browsing does **not** cover the page. Password and face hides apply only to the sanitized frame a local agent may see. Faces still only run on Privacy Scan, Run Agent, or **Scan faces now**.
 
 | You click | On the device | Off the device |
 |---|---|---|
 | Privacy Scan | Capture, detect, redact, overlay, receipt | Nothing |
-| Fill Form | Match profile + vault text to labels | Leftover empty fields, local model, sanitized frame |
+| Fill Form | Match profile + vault text to labels | **Nothing** (leftovers stay empty with a small warning) |
 | Run Agent | Same redaction, then a loop of actions | Sanitized image + page structure + the task |
 | Drop a PDF | Extract text here. Strip Aadhaar, PAN, and friends | Only if you tick local AI — and only to `localhost` |
 

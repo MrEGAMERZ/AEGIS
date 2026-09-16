@@ -199,12 +199,16 @@ check(
 
 const vlmPayloadSlice = backgroundSrc.slice(
   backgroundSrc.indexOf("const vlmPayload"),
-  fetchIdx === -1 ? backgroundSrc.length : fetchIdx
+  backgroundSrc.indexOf("max_tokens: 768")
 );
 check(
   "VLM image_url uses sanitizeResponse.sanitizedImage (not the raw capture)",
   vlmPayloadSlice.includes("sanitizeResponse.sanitizedImage") &&
     !vlmPayloadSlice.includes("screenshotDataUrl")
+);
+check(
+  "VLM transport refuses a raw screenshot in the JSON body",
+  /function requestVlmContent[\s\S]{0,500}screenshotDataUrl/.test(backgroundSrc)
 );
 
 check(
@@ -255,9 +259,9 @@ check(
     offscreenSrc.includes("init.faceModelReady !== true")
 );
 check(
-  "offscreen maps worker ERROR on DETECT_FACES back to the pending request",
-  offscreenSrc.includes("DETECT_FACES: \"FACES_DETECTED\"") ||
-    offscreenSrc.includes("DETECT_FACES: 'FACES_DETECTED'")
+  "offscreen paints faces with a solid black box",
+  offscreenSrc.includes("applyBlackMask") &&
+    /detectFaces\(screenshot\)[\s\S]{0,400}applyBlackMask/.test(offscreenSrc)
 );
 
 // ── 4. Model asset + WAR so the live path can actually load BlazeFace ─

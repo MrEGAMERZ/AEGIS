@@ -57,7 +57,7 @@
 |---|---|---|---|
 | E1 | `normalize-profile.test.js` tests an embedded copy, not a live import — diff the copy against current `src/background/background.js` (`normalizeProfile`), convert to live import or document the drift | eval + codebase | Harness runs against the REAL function; stale-copy note removed |
 | E2 | Remove stale root `patch_vlm_stream.js` / `patch_vlm_json.js` (superseded by `server/index.js` gateway; verify dead references before deleting) | codebase | **DONE 2026-09-06** — both deleted; grep shows zero references (only `graphify-out/` index + task docs named them); no behavior change; dist rebuilt |
-| E3 | Document CMap-needing PDFs as an accepted fail-closed limitation (pdf.js lazy load) in demo runbook §known-limitations | frontend + codebase | One honest bullet in `docs/DEMO_RUNBOOK.md` |
+| E3 | Document CMap-needing PDFs as an accepted fail-closed limitation (pdf.js lazy load) in demo runbook §known-limitations | frontend + codebase | **DONE 2026-09-16** — recovery bullet + document-upload note in `docs/DEMO_RUNBOOK.md` |
 | E4 | Standing rule: re-run `scripts/build-dist.sh` + manifest-path check after ANY `src/` change; record dist size in the commit/log | lead (whoever changes src) | `dist/` byte-identical to `src/` semantics; size logged (currently 81M) |
 
 ### F. Demo rehearsal & judge prep (final gate)

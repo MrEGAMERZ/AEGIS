@@ -15,11 +15,13 @@ const POPUP_JS = path.join(ROOT, "src", "popup", "popup.js");
 const POPUP_HTML = path.join(ROOT, "src", "popup", "popup.html");
 const CONTENT_PATH = path.join(ROOT, "src", "content", "content.js");
 const CONTRACT_PATH = path.join(ROOT, "docs", "STORAGE_CONTRACT.md");
+const OFFSCREEN_PATH = path.join(ROOT, "src", "offscreen", "offscreen.js");
 
 const backgroundSrc = fs.readFileSync(BACKGROUND_PATH, "utf8");
 const popupJs = fs.readFileSync(POPUP_JS, "utf8");
 const popupHtml = fs.readFileSync(POPUP_HTML, "utf8");
 const contentSrc = fs.readFileSync(CONTENT_PATH, "utf8");
+const offscreenSrc = fs.readFileSync(OFFSCREEN_PATH, "utf8");
 const contract = fs.readFileSync(CONTRACT_PATH, "utf8");
 
 const localSets = [];
@@ -210,7 +212,27 @@ check(
 console.log("\n5. Demo UI: loading + sanitized preview + receipt");
 check("pipeline loading UI exists", popupHtml.includes('id="pipeline"') && popupJs.includes("setPipeline"));
 check("sanitized preview is an img of the redacted frame", popupHtml.includes('id="sanitize-preview"') && popupJs.includes("showSanitizedPreview(response.sanitizedImage)"));
+check(
+  "judge preview is at the bottom of the popup and explains agents cannot see the raw page",
+  popupHtml.indexOf('id="tab-settings"') < popupHtml.indexOf('id="preview-wrap"') &&
+    popupHtml.includes("What the agent would see") &&
+    popupHtml.includes("never go on the network") &&
+    popupHtml.includes("preview-empty")
+);
+check("scan preview is persisted in session storage", backgroundSrc.includes("lastSanitizedImage") && backgroundSrc.includes("persistLastScanArtifacts"));
+check("scan returns a compact previewImage to the popup, not only the full PNG", backgroundSrc.includes("scanPreviewDataUrl") && backgroundSrc.includes("GET_LAST_SANITIZED_IMAGE"));
 check("receipt still rendered", popupJs.includes("showReceipt"));
+check(
+  "sanitize paints solid black boxes, not pixelation",
+  offscreenSrc.includes("function applyBlackMask") &&
+    !/function handleSanitize[\s\S]*applyPixelation/.test(offscreenSrc) &&
+    offscreenSrc.includes("filled_input") &&
+    offscreenSrc.includes("photos")
+);
+check(
+  "VLM fetch refuses a raw screenshot key in the JSON body",
+  /function requestVlmContent[\s\S]*screenshotDataUrl[\s\S]*refusing to put a raw capture/.test(backgroundSrc)
+);
 
 console.log("\n6. Dynamic DOM re-scan (no VLM)");
 check("content script uses MutationObserver", contentSrc.includes("new MutationObserver"));
@@ -222,10 +244,11 @@ check("idle rescan does not send DETECT_FACES", (() => {
   return start !== -1 && end > start && !contentSrc.slice(start, end).includes("DETECT_FACES");
 })());
 check(
-  "overlay covers hide private regions (not transparent)",
-  contentSrc.includes('fill: "rgba(15, 23, 42, 0.92)"') &&
-    contentSrc.includes("backdropFilter") &&
-    !/backgroundColor:\s*"transparent"/.test(contentSrc)
+  "live overlay does not hide fields from the user",
+  /function showRedactionOverlay[\s\S]*clearRedactionOverlay\(\)/.test(contentSrc) &&
+    contentSrc.includes('backgroundColor: "transparent"') &&
+    !contentSrc.includes("backdropFilter") &&
+    !contentSrc.includes('fill: "rgba(15, 23, 42, 0.92)"')
 );
 
 console.log("\n7. Face-scan + Fill Form copy");
@@ -234,9 +257,11 @@ check("Settings copy says browsing does not scan other people's faces", /Browsin
 check("Settings has Scan faces on this page", popupHtml.includes('id="scan-faces-page-btn"'));
 check("popup persists faceDetection from Settings", popupJs.includes("face-detection") && popupJs.includes("faceDetection"));
 check("Privacy Scan / Scan faces send forceFaces on SCAN_AND_OVERLAY", popupJs.includes("forceFaces") && popupJs.includes("SCAN_AND_OVERLAY"));
-check("Fill Form copy says profile and documents stay on device", popupHtml.includes('id="fill-form-hint"') && /profile and documents you saved on this device/.test(popupHtml));
+check("Fill Form copy points to Profile for speak and upload", popupHtml.includes('id="fill-form-hint"') && /Speak or drop a PDF/.test(popupHtml) && /selected profile/.test(popupHtml));
 check("upload copy asks to Save after review", /Review fields, then Save to your profile and local knowledge/.test(popupHtml));
 check("nothing stored until Save", /Nothing is stored until you Save/.test(popupHtml));
+check("speech copy admits Chrome may send audio to Google", /Chrome speech may send audio to Google/.test(popupHtml));
+check("spoken fields still wait for Save", popupHtml.includes('id="save-voice-btn"') && popupJs.includes("pendingVoiceFields"));
 check("overlay includeFaces follows faceDetectionEnabled", backgroundSrc.includes("includeFaces: faceDetectionEnabled"));
 check("FILL_MATCHING_FIELDS consumes vault via extract-profile", backgroundSrc.includes("enrichProfileFromVaultText"));
 check(
@@ -276,6 +301,23 @@ check(
 check("ABORT_SCAN bumps scanEpoch and ignores late results", backgroundSrc.includes("ABORT_SCAN") && backgroundSrc.includes("SCAN_ABORTED") && backgroundSrc.includes("assertScanNotAborted"));
 check("classifyError still maps timed out to TIMEOUT", /timed out[\s\S]{0,40}TIMEOUT/.test(backgroundSrc) || backgroundSrc.includes('if (msg.includes("timed out")) return "TIMEOUT"'));
 check("popup still maps STRUCTURE_CONSENT_REQUIRED", popupJs.includes("STRUCTURE_CONSENT_REQUIRED") && popupJs.includes("SCAN_ABORTED"));
+check(
+  "STRUCTURE allows a full field list (max_tokens ≥ 8192)",
+  /max_tokens:\s*8192/.test(backgroundSrc)
+);
+check(
+  "STRUCTURE prompt asks for every useful field",
+  backgroundSrc.includes("Extract EVERY useful profile field")
+);
+check(
+  "structured field caps allow a rich document (≥100 fields, long values)",
+  /MAX_STRUCT_FIELDS\s*=\s*120/.test(backgroundSrc) === false
+    ? (() => {
+        const vault = fs.readFileSync(path.join(ROOT, "src", "background", "doc-vault.js"), "utf8");
+        return /MAX_STRUCT_FIELDS\s*=\s*120/.test(vault) && /MAX_STRUCT_FIELD_VALUE_CHARS\s*=\s*2000/.test(vault);
+      })()
+    : true
+);
 check("Stop scan restores idle overlays", contentSrc.includes("REFRESH_IDLE_OVERLAY") && contentSrc.includes("scheduleSensitiveRescan"));
 check("Theme is light, dark, or system (not binary only)", popupJs.includes("prefers-color-scheme") && popupHtml.includes("theme-toggle-btn"));
 check("Stop scan control exists in popup", popupHtml.includes('id="stop-scan-btn"'));
@@ -283,6 +325,12 @@ check("Popup chrome says AEGIS, not AGs", popupHtml.includes("<h1>AEGIS</h1>") &
 check("Ready waits for nerModelReady as well as faces", popupJs.includes("nerModelReady") && popupJs.includes("applyInitDone"));
 check("Popup sends WARM_MODELS on open", popupJs.includes('type: "WARM_MODELS"'));
 check("Chrome start warms models", backgroundSrc.includes("onStartup") && backgroundSrc.includes("warmOnDeviceModelsBestEffort"));
+check(
+  "local VLM probe requires Ollama reachable through :8000",
+  backgroundSrc.includes("upstreamReachable === true") &&
+    backgroundSrc.includes("probeGatewayHealth") &&
+    backgroundSrc.includes("ollamaUp")
+);
 check("Popup only shows Loading models / Not loaded", popupJs.includes("Loading models") && popupJs.includes("Not loaded") && !popupJs.includes("On-device ready"));
 
 console.log("");

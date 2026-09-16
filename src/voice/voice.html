@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>AEGIS — Multilingual Voice Assistant</title>
+  <title>AEGIS — Voice</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -26,22 +26,23 @@
       text-align: center;
     }
     h1 { font-size: 22px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
-    p.subtitle { font-size: 13px; color: #64748b; margin-bottom: 24px; }
+    p.subtitle { font-size: 13px; color: #64748b; margin-bottom: 16px; }
     select {
       width: 100%; padding: 10px 14px; border: 1px solid #cbd5e1;
       border-radius: 8px; font-size: 14px; background: #ffffff;
-      color: #0f172a; margin-bottom: 20px; outline: none;
+      color: #0f172a; margin-bottom: 16px; outline: none;
     }
     select:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12); }
     .mic-button {
       width: 110px; height: 110px; border-radius: 50%;
       background: linear-gradient(135deg, #2563eb, #1d4ed8);
       color: #ffffff; border: none; font-size: 42px; cursor: pointer;
-      margin: 0 auto 20px; display: flex; justify-content: center; align-items: center;
+      margin: 0 auto 16px; display: flex; justify-content: center; align-items: center;
       transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       box-shadow: 0 8px 24px rgba(37, 99, 235, 0.35);
     }
-    .mic-button:hover { transform: scale(1.05); box-shadow: 0 12px 30px rgba(37, 99, 235, 0.45); }
+    .mic-button:hover { transform: scale(1.05); }
+    .mic-button:disabled { background: #94a3b8; box-shadow: none; cursor: not-allowed; transform: none; }
     @keyframes pulse {
       0% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.6); }
       70% { box-shadow: 0 0 0 24px rgba(225, 29, 72, 0); }
@@ -51,29 +52,39 @@
     .transcript-box {
       background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
       padding: 16px; min-height: 80px; font-size: 14px; color: #334155;
-      text-align: left; margin-bottom: 20px; font-style: italic;
+      text-align: left; margin-bottom: 12px;
     }
     .extracted-box {
       background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px;
       padding: 14px; font-size: 13px; color: #166534; text-align: left; display: none;
+      margin-bottom: 12px;
     }
     .extracted-title { font-weight: 700; font-size: 12px; text-transform: uppercase; margin-bottom: 8px; }
     .tag {
       display: inline-block; background: #ffffff; border: 1px solid #86efac;
       padding: 3px 8px; border-radius: 6px; margin: 2px 4px 2px 0; font-weight: 500;
     }
-    .btn-done {
-      margin-top: 16px; padding: 10px 20px; background: #2563eb;
-      color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer;
+    .btn-row { display: flex; gap: 8px; margin-top: 8px; }
+    .btn {
+      flex: 1; padding: 10px 16px; border-radius: 8px; font-weight: 600; cursor: pointer;
+      border: 1px solid #e2e8f0; background: #ffffff; color: #334155;
     }
+    .btn-primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .btn-primary:disabled { background: #cbd5e1; border-color: #cbd5e1; cursor: not-allowed; }
+    .voice-status { font-size: 12px; color: #64748b; margin-top: 10px; min-height: 18px; }
+    .voice-status.ok { color: #166534; }
+    .voice-status.warn { color: #92400e; }
+    .voice-status.err { color: #991b1b; }
+    .privacy { font-size: 11px; color: #94a3b8; margin-bottom: 16px; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>Multilingual Voice Assistant</h1>
-    <p class="subtitle">Speak details or tasks in your preferred language</p>
+    <h1>AEGIS Voice</h1>
+    <p class="subtitle">Speak name, email, phone, or city in your language</p>
+    <p class="privacy">Chrome speech may send audio to Google. After that, text stays on this device until you Save.</p>
 
-    <select id="voice-lang-select">
+    <select id="voice-lang-select" aria-label="Speech language">
       <option value="en-US">English (US / India)</option>
       <option value="hi-IN">Hindi</option>
       <option value="bn-IN">Bengali</option>
@@ -86,20 +97,25 @@
       <option value="pa-IN">Punjabi</option>
     </select>
 
-    <button id="mic-btn" class="mic-button">&#127908;</button>
+    <button id="mic-btn" class="mic-button" type="button" aria-label="Start listening">&#127908;</button>
 
     <div id="transcript-box" class="transcript-box">
-      Click the microphone and speak (e.g. "My name is Rahul, email is rahul@example.com")...
+      Click the microphone and speak (e.g. "My name is Rahul, email is rahul@example.com").
     </div>
 
     <div id="extracted-box" class="extracted-box">
-      <div class="extracted-title">Extracted Profile Data:</div>
+      <div class="extracted-title">Extracted fields</div>
       <div id="extracted-tags"></div>
     </div>
 
-    <button id="close-btn" class="btn-done">Done & Return to Chrome</button>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="save-voice-btn" type="button">Save to profile</button>
+      <button class="btn" id="discard-voice-btn" type="button">Don't save</button>
+    </div>
+    <button class="btn" id="close-btn" type="button" style="width:100%; margin-top:8px;">Close</button>
+    <p id="voice-status" class="voice-status"></p>
   </div>
 
-  <script src="voice.js"></script>
+  <script src="voice.js" type="module"></script>
 </body>
 </html>

@@ -6,7 +6,14 @@ import {
   KEY_LABELS,
   extractProfileFromText,
   toUserProfileFields,
+  mergeProfileFieldMaps,
 } from "../shared/extract-profile.js";
+import {
+  VOICE_LANGUAGES,
+  speechRecognitionSupported,
+  requestMicrophone,
+  createSpeechSession,
+} from "../shared/speech-listen.js";
 
 // ── Tab Navigation ────────────────────────────────────────────────
 document.querySelectorAll(".tab").forEach((tab) => {
@@ -69,16 +76,59 @@ function showReceipt(receipt) {
     badges.appendChild(b);
   }
   receiptEl.classList.add("visible");
+  updatePreviewLegend(receipt);
 }
 
-function showSanitizedPreview(dataUrl) {
-  if (typeof dataUrl !== "string" || dataUrl.indexOf("data:image/") !== 0) {
-    previewWrap.classList.remove("visible");
+function updatePreviewLegend(receipt) {
+  const el = document.getElementById("preview-legend");
+  if (!el) return;
+  const masked = receipt?.masked;
+  if (!masked) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  const faces = masked.faces || 0;
+  const fields = masked.passwordFields || 0;
+  const pii = masked.piiSpans || 0;
+  el.hidden = false;
+  el.textContent = `Hidden from agents: ${faces} face(s), ${fields} password/sensitive field(s), ${pii} PII span(s).`;
+}
+
+function showSanitizedPreview(dataUrl, opts = {}) {
+  if (!previewWrap || !previewImg) return;
+  const ok = typeof dataUrl === "string" && dataUrl.indexOf("data:image/") === 0;
+  if (!ok) {
+    previewWrap.classList.remove("has-image");
     previewImg.removeAttribute("src");
     return;
   }
   previewImg.src = dataUrl;
-  previewWrap.classList.add("visible");
+  previewWrap.classList.add("has-image");
+  if (opts.persist !== false) {
+    chrome.storage?.session?.set({ lastSanitizedImage: dataUrl }).catch(() => {});
+  }
+  if (opts.scroll !== false) {
+    requestAnimationFrame(() => {
+      previewWrap.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }
+}
+
+async function revealScanPreview(preferredUrl) {
+  let url = preferredUrl;
+  if (typeof url !== "string" || url.indexOf("data:image/") !== 0) {
+    try {
+      url = await chrome.runtime.sendMessage({ type: "GET_LAST_SANITIZED_IMAGE" });
+    } catch {}
+  }
+  if (typeof url !== "string" || url.indexOf("data:image/") !== 0) {
+    try {
+      const stored = await chrome.storage.session.get("lastSanitizedImage");
+      url = stored?.lastSanitizedImage;
+    } catch {}
+  }
+  showSanitizedPreview(url, { persist: false, scroll: true });
 }
 
 function setPipeline(stage, options = {}) {
@@ -100,6 +150,10 @@ async function loadLastReceipt() {
   try {
     const receipt = await chrome.runtime.sendMessage({ type: "GET_LAST_RECEIPT" });
     if (receipt) showReceipt(receipt);
+    const stored = await chrome.storage.session.get("lastSanitizedImage");
+    if (stored?.lastSanitizedImage) {
+      showSanitizedPreview(stored.lastSanitizedImage, { persist: false, scroll: false });
+    }
   } catch {}
 }
 
@@ -120,15 +174,30 @@ async function loadConfig() {
 }
 
 async function syncGatewayEndpoint() {
+  const hint = document.getElementById("local-llm-status");
   try {
     const status = await chrome.runtime.sendMessage({ type: "GET_GATEWAY_STATUS" });
-    if (!status || !status.endpoint) return;
+    if (!status || !status.endpoint) {
+      if (hint) hint.textContent = "Could not reach the local gateway.";
+      return;
+    }
     const input = document.getElementById("vlm-endpoint");
-    if (input && status.usingGateway) {
-      input.value = status.endpoint;
+    if (input) input.value = status.endpoint;
+    if (status.usingGateway) {
       chrome.runtime.sendMessage({ type: "SET_CONFIG", config: { vlmEndpoint: status.endpoint } }).catch(() => {});
     }
-  } catch {}
+    if (hint) {
+      if (status.ollamaUp) {
+        hint.textContent = `Connected: this laptop → :8000 → Ollama (${status.model || "qwen2.5vl:7b"}).`;
+      } else if (status.gatewayUp) {
+        hint.textContent = "Gateway is up on :8000. Start Ollama on this laptop, then reopen the popup.";
+      } else {
+        hint.textContent = "Start Ollama, then `cd server && node index.js`. Endpoint stays http://localhost:8000/v1/chat/completions.";
+      }
+    }
+  } catch {
+    if (hint) hint.textContent = "Could not reach the local gateway.";
+  }
 }
 
 async function loadApiKeyStatus() {
@@ -142,7 +211,7 @@ async function loadApiKeyStatus() {
       hint.textContent = "Session-only. Not stored on disk.";
     } else {
       input.placeholder = "API key (Gemini / hosted VLM)";
-      hint.textContent = "Session-only. Leave empty for local Ollama.";
+      hint.textContent = "Leave empty. Local Ollama on this laptop does not need a key.";
     }
   } catch {}
 }
@@ -243,28 +312,95 @@ function parseUserProfile(raw) {
 }
 
 // ── Multi-Profile System ──────────────────────────────────────────
+const DEFAULT_PROFILE_NAMES = ["Personal", "Work", "Family"];
+const MAX_PROFILES = 8;
+const MAX_PROFILE_NAME_CHARS = 32;
+
+function sanitizeProfileName(raw) {
+  const name = String(raw || "").replace(/\s+/g, " ").trim();
+  if (!name) return "";
+  return name.slice(0, MAX_PROFILE_NAME_CHARS);
+}
+
+function profileNameTaken(profiles, name, except) {
+  const needle = name.toLowerCase();
+  return Object.keys(profiles || {}).some((n) => n.toLowerCase() === needle && n !== except);
+}
+
+async function loadProfileBag() {
+  const stored = await chrome.storage.local.get(["aegisProfiles", "aegisCurrentProfile", "userProfile"]);
+  const profiles = stored.aegisProfiles && typeof stored.aegisProfiles === "object" && !Array.isArray(stored.aegisProfiles)
+    ? { ...stored.aegisProfiles }
+    : {};
+  let current = stored.aegisCurrentProfile || "Personal";
+  if (!Object.keys(profiles).length) {
+    const seed = stored.userProfile && typeof stored.userProfile === "object" && !Array.isArray(stored.userProfile)
+      ? stored.userProfile
+      : {};
+    profiles.Personal = seed;
+    profiles.Work = {};
+    profiles.Family = {};
+    current = "Personal";
+    await chrome.storage.local.set({
+      aegisProfiles: profiles,
+      aegisCurrentProfile: current,
+      userProfile: seed,
+    });
+  }
+  if (!profiles[current]) {
+    current = Object.keys(profiles)[0] || "Personal";
+    if (!profiles[current]) profiles[current] = {};
+    await chrome.storage.local.set({ aegisCurrentProfile: current, aegisProfiles: profiles });
+  }
+  return { profiles, current };
+}
+
+async function setActiveProfile(name, extra = {}) {
+  const { profiles } = await loadProfileBag();
+  if (!profiles[name]) profiles[name] = extra.data || {};
+  const data = extra.data !== undefined ? extra.data : (profiles[name] || {});
+  profiles[name] = data;
+  await chrome.storage.local.set({
+    aegisProfiles: profiles,
+    aegisCurrentProfile: name,
+    userProfile: data,
+  });
+}
+
 async function getProfile() {
-  const stored = await chrome.storage.local.get(["aegisCurrentProfile", "aegisProfiles", "userProfile"]);
-  const activeName = stored.aegisCurrentProfile || "Personal";
-  const profiles = stored.aegisProfiles || {};
-  if (profiles[activeName]) return profiles[activeName];
-  return stored.userProfile || {};
+  const { profiles, current } = await loadProfileBag();
+  return profiles[current] && typeof profiles[current] === "object" ? profiles[current] : {};
 }
 
 async function saveProfileData(profile) {
-  const stored = await chrome.storage.local.get(["aegisCurrentProfile", "aegisProfiles"]);
-  const activeName = stored.aegisCurrentProfile || "Personal";
-  const profiles = stored.aegisProfiles || {};
-  profiles[activeName] = profile;
-  await chrome.storage.local.set({ aegisProfiles: profiles, userProfile: profile });
+  const { current } = await loadProfileBag();
+  await setActiveProfile(current, { data: profile });
+}
+
+async function renderProfileSwitcher() {
+  const sel = document.getElementById("profile-switcher");
+  if (!sel) return;
+  const { profiles, current } = await loadProfileBag();
+  const names = Object.keys(profiles).sort((a, b) => a.localeCompare(b));
+  sel.innerHTML = "";
+  for (const n of names) {
+    const o = document.createElement("option");
+    o.value = n;
+    o.textContent = n;
+    if (n === current) o.selected = true;
+    sel.appendChild(o);
+  }
+  const hint = document.getElementById("saved-fields-hint");
+  if (hint) hint.textContent = current;
 }
 
 async function renderProfile() {
+  await renderProfileSwitcher();
   const profile = await getProfile();
   const profileList = document.getElementById("profile-list");
   profileList.innerHTML = "";
   const entries = Object.keys(profile).filter((k) => k !== "_skipped").map((k) => [k, profile[k]]).sort((a, b) => a[0].localeCompare(b[0]));
-  if (entries.length === 0) { profileList.innerHTML = '<div class="p-empty">No details yet. Drop a PDF or text file above.</div>'; }
+  if (entries.length === 0) { profileList.innerHTML = '<div class="p-empty">No details yet in this profile. Speak, drop a PDF, or add a field.</div>'; }
   for (const [key, val] of entries) {
     const row = document.createElement("div"); row.className = "p-row";
     const input = document.createElement("input"); input.type = "text"; input.value = typeof val === "object" ? val.value : val; input.placeholder = labelFor(key);
@@ -274,6 +410,101 @@ async function renderProfile() {
     row.appendChild(input); row.appendChild(del); profileList.appendChild(row);
   }
 }
+
+let profileNameMode = "new";
+
+function showProfileNameCard(mode) {
+  profileNameMode = mode;
+  const card = document.getElementById("profile-name-card");
+  const input = document.getElementById("profile-name-input");
+  const save = document.getElementById("profile-name-save-btn");
+  if (!card || !input || !save) return;
+  card.style.display = "block";
+  save.textContent = mode === "rename" ? "Rename" : "Create";
+  input.value = "";
+  input.focus();
+}
+
+function hideProfileNameCard() {
+  const card = document.getElementById("profile-name-card");
+  if (card) card.style.display = "none";
+}
+
+document.getElementById("profile-new-btn")?.addEventListener("click", async () => {
+  const { profiles } = await loadProfileBag();
+  if (Object.keys(profiles).length >= MAX_PROFILES) {
+    setStatus(`At most ${MAX_PROFILES} profiles on this device.`, "warn");
+    return;
+  }
+  showProfileNameCard("new");
+});
+
+document.getElementById("profile-rename-btn")?.addEventListener("click", () => showProfileNameCard("rename"));
+
+document.getElementById("profile-name-cancel-btn")?.addEventListener("click", hideProfileNameCard);
+
+document.getElementById("profile-name-save-btn")?.addEventListener("click", async () => {
+  const next = sanitizeProfileName(document.getElementById("profile-name-input")?.value);
+  if (!next) { setStatus("Enter a profile name.", "error"); return; }
+  const { profiles, current } = await loadProfileBag();
+  if (profileNameMode === "new") {
+    if (Object.keys(profiles).length >= MAX_PROFILES) {
+      setStatus(`At most ${MAX_PROFILES} profiles on this device.`, "warn");
+      return;
+    }
+    if (profileNameTaken(profiles, next)) {
+      setStatus("That profile name already exists.", "error");
+      return;
+    }
+    profiles[next] = {};
+    await chrome.storage.local.set({ aegisProfiles: profiles, aegisCurrentProfile: next, userProfile: {} });
+    hideProfileNameCard();
+    setStatus(`Created ${next}. Speak or drop a document into this profile.`, "success");
+    await renderProfile();
+    return;
+  }
+  if (next === current) { hideProfileNameCard(); return; }
+  if (profileNameTaken(profiles, next, current)) {
+    setStatus("That profile name already exists.", "error");
+    return;
+  }
+  profiles[next] = profiles[current] || {};
+  delete profiles[current];
+  await chrome.storage.local.set({
+    aegisProfiles: profiles,
+    aegisCurrentProfile: next,
+    userProfile: profiles[next],
+  });
+  hideProfileNameCard();
+  setStatus(`Renamed to ${next}.`, "success");
+  await renderProfile();
+});
+
+document.getElementById("profile-delete-btn")?.addEventListener("click", async () => {
+  const { profiles, current } = await loadProfileBag();
+  const names = Object.keys(profiles);
+  if (names.length <= 1) {
+    setStatus("Keep at least one profile.", "warn");
+    return;
+  }
+  if (!confirm(`Delete the "${current}" profile and its fields?`)) return;
+  delete profiles[current];
+  const next = DEFAULT_PROFILE_NAMES.find((n) => profiles[n]) || Object.keys(profiles)[0];
+  await chrome.storage.local.set({
+    aegisProfiles: profiles,
+    aegisCurrentProfile: next,
+    userProfile: profiles[next] || {},
+  });
+  setStatus(`Deleted ${current}. Now using ${next}.`, "active");
+  await renderProfile();
+});
+
+document.getElementById("profile-switcher")?.addEventListener("change", async (e) => {
+  const name = e.target.value;
+  await setActiveProfile(name);
+  setStatus(`Switched to ${name}. Fill Form will use this profile.`, "success");
+  await renderProfile();
+});
 
 // ── Inline Add Field ──────────────────────────────────────────────
 document.getElementById("profile-add-btn")?.addEventListener("click", async () => {
@@ -304,19 +535,13 @@ document.getElementById("profile-save-btn")?.addEventListener("click", async () 
 
 // ── Profile Clear / Demo ──────────────────────────────────────────
 document.getElementById("profile-clear-btn")?.addEventListener("click", async () => {
-  if (!confirm("Clear all saved profile data?")) return;
+  if (!confirm("Clear fields in this profile only?")) return;
   await saveProfileData({}); setStatus("Cleared.", "active"); renderProfile();
 });
 document.getElementById("profile-sample-btn")?.addEventListener("click", async () => {
   const sample = { fullName: "Aarav Sharma", email: "aarav.sharma@example.com", phone: "9876543210", dob: "1998-05-15", gender: "male", addressLine1: "123 MG Road, Koramangala", city: "Bengaluru", state: "Karnataka", pincode: "560034", college: "Indian Institute of Technology", occupation: "Software Engineer", annualIncome: "1200000" };
   const profile = await getProfile(); Object.assign(profile, sample); await saveProfileData(profile);
   setStatus("Loaded sample profile!", "success"); renderProfile();
-});
-
-// ── Multi-Profile Switcher ────────────────────────────────────────
-document.getElementById("profile-switcher")?.addEventListener("change", async (e) => {
-  await chrome.storage.local.set({ aegisCurrentProfile: e.target.value });
-  setStatus(`Switched to: ${e.target.value}`, "success"); renderProfile();
 });
 
 // ── Export / Import ───────────────────────────────────────────────
@@ -339,12 +564,21 @@ document.getElementById("import-file-input")?.addEventListener("change", async (
       const json = JSON.parse(await file.text());
       const data = json.data || json;
       if (data && typeof data === "object" && !Array.isArray(data) && (json.profileName || json.data)) {
-        const profile = await getProfile();
+        const target = sanitizeProfileName(json.profileName) || (await loadProfileBag()).current;
+        const { profiles } = await loadProfileBag();
+        if (profiles[target] == null) {
+          if (Object.keys(profiles).length >= MAX_PROFILES) {
+            setStatus(`At most ${MAX_PROFILES} profiles. Switch to one, then import.`, "warn");
+            return;
+          }
+          profiles[target] = {};
+        }
+        const profile = { ...(profiles[target] || {}) };
         for (const [k, v] of Object.entries(data)) {
           profile[k] = typeof v === "object" && v && v.value ? v.value : typeof v === "string" ? v : String(v);
         }
-        await saveProfileData(profile);
-        setStatus(`Imported ${file.name}.`, "success");
+        await setActiveProfile(target, { data: profile });
+        setStatus(`Imported ${file.name} into ${target}.`, "success");
         renderProfile();
         return;
       }
@@ -500,7 +734,7 @@ fillBtn.addEventListener("click", async () => {
     setStatus("Save a profile first.", "warn");
     return;
   }
-  fillBtn.disabled = true; scanBtn.disabled = true; runBtn.disabled = true; clearStatus(); previewWrap.classList.remove("visible");
+  fillBtn.disabled = true; scanBtn.disabled = true; runBtn.disabled = true; clearStatus();
   try {
     setStatus("Filling matching fields from your profile and documents…", "active");
     const local = await chrome.runtime.sendMessage({ type: "FILL_MATCHING_FIELDS" });
@@ -521,7 +755,7 @@ async function runPrivacyScan(opts = {}) {
   const token = ++scanGeneration;
   setScanBusy(true);
   clearStatus();
-  previewWrap.classList.remove("visible");
+  document.querySelector('.tab[data-tab="fill"]')?.click();
   setPipeline("capture", { includeVlm: false });
   setStatus("Capturing viewport and running local redaction...");
   try {
@@ -542,7 +776,7 @@ async function runPrivacyScan(opts = {}) {
       return;
     }
     if (result.receipt) showReceipt(result.receipt);
-    showSanitizedPreview(result.sanitizedImage);
+    await revealScanPreview(result.sanitizedImage);
     setPipeline(null);
     const faces = result.receipt?.masked?.faces || 0;
     const fields = result.fieldCount || 0;
@@ -582,7 +816,7 @@ runBtn.addEventListener("click", async () => {
   if (!task) { setStatus("Enter a task description.", "error"); return; }
   const saveErr = await persistProfileFromTextarea();
   if (saveErr && saveErr !== "Profile is empty.") { setStatus(saveErr, "error"); return; }
-  runBtn.disabled = true; scanBtn.disabled = true; fillBtn.disabled = true; clearStatus(); previewWrap.classList.remove("visible");
+  runBtn.disabled = true; scanBtn.disabled = true; fillBtn.disabled = true; clearStatus();
   try { await runAgentLoop(task); } catch (err) { setPipeline(null); setStatus(formatRuntimeDisconnect(err), "error"); }
   finally { runBtn.disabled = false; scanBtn.disabled = false; fillBtn.disabled = false; }
 });
@@ -739,8 +973,10 @@ async function handleUploadedFile(file) {
     // Structure in RAM only. Persistence waits for confirmSaveExtracted.
     // Extracted TEXT goes to the LOCAL VLM via STRUCTURE_DOCUMENT_TEXT —
     // the backend refuses remote endpoints before any request.
+    // Always harvest Label: value lines on-device first. Local AI (if on)
+    // overlays / fills gaps — it must not replace a rich extract with 3 fields.
     const analyzeChecked = document.getElementById("analyze-with-ai")?.checked !== false;
-    const profileFields = {};
+    let profileFields = mergeProfileFieldMaps(extractProfileFromText(text));
     let usedAi = false;
     let aiError = "";
 
@@ -753,14 +989,13 @@ async function handleUploadedFile(file) {
       });
       if (r?.error) {
         aiError = formatAgentError(r.errorCode || "UNKNOWN", r.error);
-      } else {
-        Object.assign(profileFields, toUserProfileFields(r.fields || {}));
-        usedAi = Object.keys(profileFields).length > 0;
+      } else if (r?.fields && typeof r.fields === "object") {
+        const aiCount = Object.keys(r.fields).length;
+        if (aiCount > 0) {
+          profileFields = mergeProfileFieldMaps(profileFields, r.fields);
+          usedAi = true;
+        }
       }
-    }
-
-    if (!usedAi) {
-      Object.assign(profileFields, toUserProfileFields(extractProfileFromText(text)));
     }
 
     pendingUpload = {
@@ -878,6 +1113,191 @@ if (typeof matchMedia === "function") {
   if (typeof mq.addEventListener === "function") mq.addEventListener("change", onScheme);
   else if (typeof mq.addListener === "function") mq.addListener(onScheme);
 }
+
+// ── Multilingual speech (Chrome Web Speech, 10 languages) ─────────
+const voiceStartBtn = document.getElementById("voice-start-btn");
+const voiceLangSelect = document.getElementById("voice-lang-select");
+const voiceTranscriptEl = document.getElementById("voice-transcript");
+const voiceFieldPreview = document.getElementById("voice-field-preview");
+const voiceSaveRow = document.getElementById("voice-save-row");
+
+let voiceSession = null;
+let pendingVoiceFields = null;
+let lastVoiceTranscript = "";
+
+function openExtensionPage(relPath) {
+  const url = chrome.runtime.getURL(relPath);
+  chrome.tabs.create({ url });
+}
+
+function fillVoiceLangSelect() {
+  if (!voiceLangSelect) return;
+  const current = voiceLangSelect.value;
+  voiceLangSelect.innerHTML = "";
+  for (const { code, label } of VOICE_LANGUAGES) {
+    const opt = document.createElement("option");
+    opt.value = code;
+    opt.textContent = label;
+    voiceLangSelect.appendChild(opt);
+  }
+  voiceLangSelect.value = current && [...voiceLangSelect.options].some((o) => o.value === current)
+    ? current
+    : "en-US";
+}
+
+function showVoiceFields(fields) {
+  pendingVoiceFields = fields;
+  if (!voiceFieldPreview || !voiceSaveRow) return;
+  voiceFieldPreview.textContent = "";
+  const entries = Object.entries(fields || {});
+  if (!entries.length) {
+    voiceFieldPreview.style.display = "none";
+    voiceSaveRow.style.display = "none";
+    return;
+  }
+  voiceFieldPreview.style.display = "block";
+  voiceSaveRow.style.display = "flex";
+  for (const [key, val] of entries) {
+    const row = document.createElement("div");
+    row.className = "fp-row";
+    const k = document.createElement("span");
+    k.className = "fp-key";
+    k.textContent = key;
+    const v = document.createElement("span");
+    v.className = "fp-val";
+    v.textContent = String(val);
+    row.appendChild(k);
+    row.appendChild(v);
+    voiceFieldPreview.appendChild(row);
+  }
+}
+
+function bindVoiceSession() {
+  voiceSession = createSpeechSession({
+    lang: voiceLangSelect?.value || "en-US",
+    onStart() {
+      voiceStartBtn?.classList.add("recording");
+      if (voiceStartBtn) voiceStartBtn.textContent = "Stop";
+      if (voiceTranscriptEl) {
+        voiceTranscriptEl.style.display = "block";
+        voiceTranscriptEl.textContent = "Listening...";
+      }
+      setStatus("Listening… speak name, email, or phone.", "active");
+    },
+    onInterim(t) {
+      lastVoiceTranscript = t;
+      if (voiceTranscriptEl) voiceTranscriptEl.textContent = t;
+    },
+    onFinal(t) {
+      lastVoiceTranscript = t;
+      if (voiceTranscriptEl) {
+        voiceTranscriptEl.style.display = "block";
+        voiceTranscriptEl.textContent = t;
+      }
+      const fields = toUserProfileFields(extractProfileFromText(t));
+      showVoiceFields(fields);
+      const n = Object.keys(fields).length;
+      if (n) setStatus(`${n} field(s) from speech. Save to keep them.`, "active");
+      else setStatus("Heard you, but no phone/email/name to save.", "warn");
+    },
+    onError(err) {
+      voiceStartBtn?.classList.remove("recording");
+      if (voiceStartBtn) voiceStartBtn.textContent = "Start listening";
+      const msg = String(err || "error");
+      if (msg === "not-allowed") {
+        setStatus("Microphone blocked. Use Full mic page, or allow mic for this extension.", "error");
+      } else if (msg === "no-speech") {
+        setStatus("No speech heard. Try again, or open the full mic page.", "warn");
+      } else {
+        setStatus(`Speech error: ${msg}`, "error");
+      }
+    },
+    onEnd() {
+      voiceStartBtn?.classList.remove("recording");
+      if (voiceStartBtn) voiceStartBtn.textContent = "Start listening";
+    },
+  });
+}
+
+voiceStartBtn?.addEventListener("click", async () => {
+  if (!speechRecognitionSupported()) {
+    setStatus("Speech needs Google Chrome. Open the full mic page if the popup blocks the mic.", "error");
+    return;
+  }
+  if (voiceSession?.isRecording()) {
+    voiceSession.stop();
+    return;
+  }
+  try {
+    await requestMicrophone();
+  } catch {
+    setStatus("Microphone denied. Open Full mic page and allow the mic there.", "error");
+    return;
+  }
+  bindVoiceSession();
+  voiceSession.setLang(voiceLangSelect?.value || "en-US");
+  try {
+    voiceSession.start();
+  } catch {
+    setStatus("Could not start listening. Try Full mic page.", "warn");
+  }
+});
+
+voiceLangSelect?.addEventListener("change", () => {
+  voiceSession?.setLang(voiceLangSelect.value);
+});
+
+document.getElementById("save-voice-btn")?.addEventListener("click", async () => {
+  if (!pendingVoiceFields || !Object.keys(pendingVoiceFields).length) {
+    setStatus("Nothing to save. Speak first.", "warn");
+    return;
+  }
+  const profile = await getProfile();
+  Object.assign(profile, pendingVoiceFields);
+  await saveProfileData(profile);
+  if (lastVoiceTranscript) {
+    try {
+      await chrome.runtime.sendMessage({
+        type: "ADD_DOC_TO_VAULT",
+        docName: "spoken-note.txt",
+        format: "txt",
+        text: lastVoiceTranscript,
+      });
+      await renderVaultList();
+    } catch {
+      // vault optional
+    }
+  }
+  const n = Object.keys(pendingVoiceFields).length;
+  pendingVoiceFields = null;
+  if (voiceSaveRow) voiceSaveRow.style.display = "none";
+  await renderProfile();
+  setStatus(`Saved ${n} spoken field(s) to this profile.`, "success");
+});
+
+document.getElementById("discard-voice-btn")?.addEventListener("click", () => {
+  pendingVoiceFields = null;
+  lastVoiceTranscript = "";
+  if (voiceFieldPreview) {
+    voiceFieldPreview.textContent = "";
+    voiceFieldPreview.style.display = "none";
+  }
+  if (voiceSaveRow) voiceSaveRow.style.display = "none";
+  if (voiceTranscriptEl) voiceTranscriptEl.style.display = "none";
+  setStatus("Not saved. Nothing stored from speech.", "active");
+});
+
+document.getElementById("open-voice-page-btn")?.addEventListener("click", () => {
+  openExtensionPage("src/voice/voice.html");
+});
+document.getElementById("open-voice-settings-btn")?.addEventListener("click", () => {
+  openExtensionPage("src/voice/voice.html");
+});
+document.getElementById("open-dashboard-btn")?.addEventListener("click", () => {
+  openExtensionPage("src/dashboard/dashboard.html");
+});
+
+fillVoiceLangSelect();
 
 // ── Init ──────────────────────────────────────────────────────────
 initTheme();

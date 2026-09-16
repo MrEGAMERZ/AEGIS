@@ -285,8 +285,8 @@ async function main() {
       panRef: "ABCDE1234F", // PAN-shaped value → dropped
       emptyValue: "   ",
       nonString: 42,
-      ["x".repeat(41)]: "v", // KEY over 40 chars → dropped
-      longValue: "y".repeat(501),
+      ["x".repeat(65)]: "v", // KEY over 64 chars → dropped
+      longValue: "y".repeat(2001),
     };
     const { fields, dropped } = V.validateStructuredFields(parsed);
     check("dynamic keys survive validation", fields.skills === "React, Node.js" && fields.university === "IIT Bombay" && fields.motherTongue === "Tamil");
@@ -295,17 +295,17 @@ async function main() {
     check("PAN-shaped VALUE dropped (panRef)", !("panRef" in fields));
     check("empty value dropped", !("emptyValue" in fields));
     check("non-string value dropped (fail closed)", !("nonString" in fields));
-    check("key over 40 chars dropped", !("longKey" in fields));
-    check("value over 500 chars dropped", !("longValue" in fields));
+    check("key over 64 chars dropped", !("longKey" in fields));
+    check("value over 2000 chars dropped", !("longValue" in fields));
     check("dropped count matches (7 non-kept)", dropped === 7, `dropped=${dropped}`);
   }
 
   {
     const many = {};
-    for (let i = 0; i < 65; i++) many[`field${i}`] = `value${i}`;
+    for (let i = 0; i < 130; i++) many[`field${i}`] = `value${i}`;
     const { fields, dropped } = V.validateStructuredFields(many);
-    check("field cap ≤ 60 enforced", Object.keys(fields).length === 60, `got ${Object.keys(fields).length}`);
-    check("excess fields counted as dropped", dropped === 5, `dropped=${dropped}`);
+    check("field cap ≤ 120 enforced", Object.keys(fields).length === 120, `got ${Object.keys(fields).length}`);
+    check("excess fields counted as dropped", dropped === 10, `dropped=${dropped}`);
   }
 
   {

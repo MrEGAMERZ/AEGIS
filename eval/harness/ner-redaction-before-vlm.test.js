@@ -265,8 +265,9 @@ check(
   offscreenSrc.includes("nerPassComplete = true")
 );
 check(
-  "offscreen forwards nerEntities for on-device label redaction",
-  offscreenSrc.includes("nerEntities")
+  "offscreen paints NER/regex PII with a solid black box",
+  offscreenSrc.includes("applyBlackMask") &&
+    /detectTextPII[\s\S]{0,800}applyBlackMask/.test(offscreenSrc)
 );
 check(
   "SANITIZE message forwards piiDetection flag",

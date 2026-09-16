@@ -251,22 +251,43 @@ async function handleSanitize({ screenshot, domScanResults, faceDetection, piiDe
 
   const maskedRegions = [];
 
+  function maskRect(rect, type, padRatio = 0) {
+    if (!rect) return;
+    const scaled = scaleToDPR(rect, dpr);
+    const painted = applyBlackMask(ctx, scaled.x, scaled.y, scaled.width, scaled.height, padRatio);
+    if (!painted) return;
+    maskedRegions.push({
+      type,
+      bbox: [painted.x, painted.y, painted.x + painted.w, painted.y + painted.h],
+    });
+  }
+
   // 2. Mask sensitive DOM fields (solid black fill)
   if (domScanResults && domScanResults.fields) {
     for (const field of domScanResults.fields) {
       const MASK_TYPES = ["password_input", "sensitive_input", "contenteditable_pii"];
       if (MASK_TYPES.includes(field.type)) {
-        // Scale CSS pixel rect → physical image pixel rect
-        const { x, y, width, height } = scaleToDPR(field.rect, dpr);
-        ctx.fillStyle = "black";
-        ctx.fillRect(x, y, width, height);
-        maskedRegions.push({ type: field.type, bbox: [x, y, x + width, y + height] });
+        maskRect(field.rect, field.type);
       }
     }
   }
 
+  // Filled name/email/phone boxes are not password fields, but the value is
+  // still PII. Black the control; do not send the value string anywhere.
+  if (domScanResults && Array.isArray(domScanResults.fillableFields)) {
+    for (const field of domScanResults.fillableFields) {
+      if (field && field.hasValue) maskRect(field.rect, "filled_input");
+    }
+  }
+
+  if (domScanResults && Array.isArray(domScanResults.photos)) {
+    for (const photo of domScanResults.photos) {
+      maskRect(photo.rect, "photo");
+    }
+  }
+
   // 3. Face detection — HARD GATE. When enabled (default), BlazeFace MUST
-  // run and pixelate before this function returns a sanitized image.
+  // run and paint a black box before this function returns a sanitized image.
   // Fail closed if the model is missing or inference throws: never hand a
   // live frame to background.js for a VLM call.
   let facePassComplete = false;
@@ -280,8 +301,14 @@ async function handleSanitize({ screenshot, domScanResults, faceDetection, piiDe
     const faceDetections = await detectFaces(screenshot);
     for (const face of faceDetections) {
       const [x1, y1, x2, y2] = face.bbox;
-      applyPixelation(ctx, x1, y1, x2 - x1, y2 - y1);
-      maskedRegions.push({ type: "face", bbox: [x1, y1, x2, y2], confidence: face.confidence });
+      const painted = applyBlackMask(ctx, x1, y1, x2 - x1, y2 - y1, 0.45);
+      if (painted) {
+        maskedRegions.push({
+          type: "face",
+          bbox: [painted.x, painted.y, painted.x + painted.w, painted.y + painted.h],
+          confidence: face.confidence,
+        });
+      }
     }
     facePassComplete = true;
   } else {
@@ -301,14 +328,16 @@ async function handleSanitize({ screenshot, domScanResults, faceDetection, piiDe
     for (const pii of detected) {
       piiDetections.push(pii);
       if (pii.bbox) {
-        const { x, y, width, height } = scaleToDPR(pii.bbox, dpr);
-        applyPixelation(ctx, x, y, width, height);
-        maskedRegions.push({
-          type: "pii",
-          entity: pii.entity_type,
-          bbox: [x, y, x + width, y + height],
-          confidence: pii.confidence,
-        });
+        const scaled = scaleToDPR(pii.bbox, dpr);
+        const painted = applyBlackMask(ctx, scaled.x, scaled.y, scaled.width, scaled.height);
+        if (painted) {
+          maskedRegions.push({
+            type: "pii",
+            entity: pii.entity_type,
+            bbox: [painted.x, painted.y, painted.x + painted.w, painted.y + painted.h],
+            confidence: pii.confidence,
+          });
+        }
       }
       if (pii.source === "ner") {
         nerEntities.push({
@@ -324,9 +353,11 @@ async function handleSanitize({ screenshot, domScanResults, faceDetection, piiDe
 
   // 5. Export sanitized image — only after face + NER passes have completed
   const sanitizedImage = canvas.toDataURL("image/png");
+  const previewImage = canvasToPreviewDataUrl(canvas);
 
   return {
     sanitizedImage,
+    previewImage,
     maskedRegions,
     dpr,
     facePassComplete,
@@ -340,6 +371,25 @@ async function handleSanitize({ screenshot, domScanResults, faceDetection, piiDe
 
 // ── Helpers ───────────────────────────────────────────────────────
 
+const PREVIEW_MAX_WIDTH = 720;
+
+function canvasToPreviewDataUrl(sourceCanvas) {
+  try {
+    let out = sourceCanvas;
+    if (sourceCanvas.width > PREVIEW_MAX_WIDTH) {
+      const scale = PREVIEW_MAX_WIDTH / sourceCanvas.width;
+      const tmp = document.createElement("canvas");
+      tmp.width = PREVIEW_MAX_WIDTH;
+      tmp.height = Math.max(1, Math.round(sourceCanvas.height * scale));
+      tmp.getContext("2d").drawImage(sourceCanvas, 0, 0, tmp.width, tmp.height);
+      out = tmp;
+    }
+    return out.toDataURL("image/jpeg", 0.72);
+  } catch {
+    return sourceCanvas.toDataURL("image/png");
+  }
+}
+
 function loadImage(dataUrl) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -349,52 +399,28 @@ function loadImage(dataUrl) {
   });
 }
 
-function applyPixelation(ctx, x, y, w, h, blockSize = 12) {
-  if (w <= 0 || h <= 0) return;
-
-  // Read the pixels in the region once, then write back as solid-color blocks.
-  // This avoids the self-copy issue with ctx.filter = "blur" and works reliably
-  // across all browsers without edge artifacts.
-  x = Math.round(x); y = Math.round(y);
-  w = Math.round(w); h = Math.round(h);
-
-  // Clamp to canvas bounds
-  const cx = Math.max(0, x), cy = Math.max(0, y);
+function applyBlackMask(ctx, x, y, w, h, padRatio = 0) {
+  if (w <= 0 || h <= 0) return null;
+  if (padRatio > 0) {
+    const px = w * padRatio;
+    const py = h * padRatio;
+    x -= px;
+    y -= py;
+    w += 2 * px;
+    h += 2 * py;
+  }
+  x = Math.round(x);
+  y = Math.round(y);
+  w = Math.round(w);
+  h = Math.round(h);
+  const cx = Math.max(0, x);
+  const cy = Math.max(0, y);
   const cw = Math.min(w, ctx.canvas.width - cx);
   const ch = Math.min(h, ctx.canvas.height - cy);
-  if (cw <= 0 || ch <= 0) return;
-
-  const imageData = ctx.getImageData(cx, cy, cw, ch);
-  const data = imageData.data;
-
-  for (let by = 0; by < ch; by += blockSize) {
-    for (let bx = 0; bx < cw; bx += blockSize) {
-      // Average color of this block
-      let r = 0, g = 0, b = 0, count = 0;
-      const bh = Math.min(blockSize, ch - by);
-      const bw = Math.min(blockSize, cw - bx);
-      for (let py = by; py < by + bh; py++) {
-        for (let px = bx; px < bx + bw; px++) {
-          const i = (py * cw + px) * 4;
-          r += data[i]; g += data[i + 1]; b += data[i + 2];
-          count++;
-        }
-      }
-      r = Math.round(r / count);
-      g = Math.round(g / count);
-      b = Math.round(b / count);
-
-      // Fill block with averaged colour
-      for (let py = by; py < by + bh; py++) {
-        for (let px = bx; px < bx + bw; px++) {
-          const i = (py * cw + px) * 4;
-          data[i] = r; data[i + 1] = g; data[i + 2] = b; // alpha unchanged
-        }
-      }
-    }
-  }
-
-  ctx.putImageData(imageData, cx, cy);
+  if (cw <= 0 || ch <= 0) return null;
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(cx, cy, cw, ch);
+  return { x: cx, y: cy, w: cw, h: ch };
 }
 
 // ── Face Detection — worker bridge ────────────────────────────────

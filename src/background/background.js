@@ -232,30 +232,9 @@ async function sendTabMessage(tab, message) {
   }
 }
 
-// ── Keyboard Shortcut Listener (Ctrl+Shift+F) ─────────────────────
-chrome.commands?.onCommand?.addListener(async (command) => {
-  if (command === "autofill_page") {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id) {
-      sendTabMessage(tab, { type: "PROFILE_PREFILL" }).catch(() => {});
-    }
-  }
-});
-
-// ── Context Menu (Right-Click "Fill with AEGIS Profile") ─────────
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus?.create({
-    id: "aegis_autofill_context",
-    title: "Fill Form with AEGIS Profile",
-    contexts: ["page", "editable"],
-  });
-});
-
-chrome.contextMenus?.onClicked?.addListener(async (info, tab) => {
-  if (info.menuItemId === "aegis_autofill_context" && tab?.id) {
-    sendTabMessage(tab, { type: "PROFILE_PREFILL" }).catch(() => {});
-  }
-});
+// Keyboard shortcut + context menu are registered once at the bottom of this
+// file (onInstalled / onStartup). Creating the same menu id twice on Reload
+// unpacked is what Chrome logs as "duplicate id aegis_autofill_context".
 
 // ── Message Router ─────────────────────────────────────────────────
 
@@ -340,11 +319,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "GET_GATEWAY_STATUS") {
     (async () => {
-      const gateway = await probeRealGateway();
+      const health = await probeGatewayHealth();
+      const endpoint = DEFAULT_GATEWAY_VLM;
       sendResponse({
-        ok: !!gateway,
-        endpoint: gateway || DEFAULT_GATEWAY_VLM,
-        usingGateway: !!gateway,
+        ok: health.ollamaUp,
+        endpoint,
+        usingGateway: health.ollamaUp,
+        gatewayUp: health.gatewayUp,
+        ollamaUp: health.ollamaUp,
+        mock: health.mock === true,
+        model: health.model || DEFAULT_VLM_MODEL,
       });
     })();
     return true;
@@ -380,6 +364,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.storage.session
       .get("lastReceipt")
       .then((r) => sendResponse(r.lastReceipt || null));
+    return true;
+  }
+
+  if (msg.type === "GET_LAST_SANITIZED_IMAGE") {
+    chrome.storage.session
+      .get("lastSanitizedImage")
+      .then((r) => sendResponse(r.lastSanitizedImage || null));
     return true;
   }
 
@@ -496,20 +487,30 @@ function sanitizeLocalConfig(config) {
   return out;
 }
 
-async function probeRealGateway() {
+async function probeGatewayHealth() {
   try {
     const res = await fetch(DEFAULT_GATEWAY_HEALTH, {
       signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) return { gatewayUp: false, ollamaUp: false, mock: false };
     const health = await res.json();
-    if (health && health.status === "ok" && health.mock !== true) {
-      return DEFAULT_GATEWAY_VLM;
-    }
+    const gatewayUp = !!(health && health.status === "ok");
+    const mock = health?.mock === true;
+    const ollamaUp = gatewayUp && !mock && health.upstreamReachable === true;
+    return {
+      gatewayUp,
+      ollamaUp,
+      mock,
+      model: health?.upstream?.model || DEFAULT_VLM_MODEL,
+    };
   } catch {
-    // Down, slow, or fake (--mock). Do not treat that as a working VLM.
+    return { gatewayUp: false, ollamaUp: false, mock: false };
   }
-  return null;
+}
+
+async function probeRealGateway() {
+  const health = await probeGatewayHealth();
+  return health.ollamaUp ? DEFAULT_GATEWAY_VLM : null;
 }
 
 async function resolveVlmEndpoint(stored) {
@@ -592,10 +593,10 @@ function buildPrivacyReceipt(tab, sanitizeResponse, timing) {
     url: tab.url,
     masked: {
       passwordFields: (sanitizeResponse.maskedRegions || []).filter(
-        (r) => r.type === "password_input" || r.type === "sensitive_input"
+        (r) => r.type === "password_input" || r.type === "sensitive_input" || r.type === "contenteditable_pii"
       ).length,
-      faces: (sanitizeResponse.maskedRegions || []).filter((r) => r.type === "face").length,
-      piiSpans: (sanitizeResponse.maskedRegions || []).filter((r) => r.type === "pii").length,
+      faces: (sanitizeResponse.maskedRegions || []).filter((r) => r.type === "face" || r.type === "photo").length,
+      piiSpans: (sanitizeResponse.maskedRegions || []).filter((r) => r.type === "pii" || r.type === "filled_input").length,
     },
     backend: sanitizeResponse.backend || "wasm",
     vlmRetried: timing.vlmRetried || false,
@@ -729,6 +730,26 @@ async function handleFillMatchingFields() {
   };
 }
 
+function scanPreviewDataUrl(sanitizeResponse) {
+  const preview = sanitizeResponse?.previewImage;
+  if (typeof preview === "string" && preview.indexOf("data:image/") === 0) return preview;
+  const full = sanitizeResponse?.sanitizedImage;
+  if (typeof full === "string" && full.indexOf("data:image/") === 0) return full;
+  return null;
+}
+
+async function persistLastScanArtifacts(receipt, sanitizedImage) {
+  const payload = { lastReceipt: receipt };
+  if (typeof sanitizedImage === "string" && sanitizedImage.indexOf("data:image/") === 0) {
+    payload.lastSanitizedImage = sanitizedImage;
+  }
+  try {
+    await chrome.storage.session.set(payload);
+  } catch {
+    await chrome.storage.session.set({ lastReceipt: receipt });
+  }
+}
+
 async function handleScanAndOverlay(msg) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("No active tab");
@@ -751,7 +772,7 @@ async function handleScanAndOverlay(msg) {
   );
   assertScanNotAborted(epoch);
 
-  await chrome.storage.session.set({ lastReceipt: receipt });
+  await persistLastScanArtifacts(receipt, scanPreviewDataUrl(sanitizeResponse));
 
   const maskedFaces = receipt?.masked?.faces || 0;
   const maskedPii = receipt?.masked?.piiSpans || 0;
@@ -768,7 +789,7 @@ async function handleScanAndOverlay(msg) {
     fieldCount: domScanResults.fields?.length || 0,
     dpr: domScanResults.dpr || 1,
     url: tab.url,
-    sanitizedImage: sanitizeResponse.sanitizedImage,
+    sanitizedImage: scanPreviewDataUrl(sanitizeResponse),
     receipt,
   };
 }
@@ -832,15 +853,17 @@ async function handleStructureDocumentText(msg) {
   const systemPrompt =
     `You are a privacy-preserving local document structurer. The user uploaded their own document and explicitly consented to analyzing it with the LOCAL model only.
 
-Convert the document text into a JSON object that maps profile field names to their values. Example: {"fullName": "...", "email": "...", "skills": "...", "university": "..."}
+Convert the document text into ONE JSON object. Extract EVERY useful profile field you can find — do not stop after a few. Include contact, address, education, family, job, languages, projects, and any other Label: value pairs.
+
+Example shape (many keys, not just these): {"fullName":"...","email":"...","phone":"...","dob":"...","college":"...","fatherName":"...","bloodGroup":"...","jobTitle":"...","skills":"..."}
 
 RULES:
-1. Output ONLY a single JSON object — no prose, no explanations, no markdown code fences. Start with { and end with }.
-2. Field names are short lowercase keys (max 40 characters), one per distinct piece of information. ANY key is allowed — invent the key that best matches the information (e.g. "skills", "university", "motherTongue").
-3. Values are the exact text found in the document, trimmed (max 500 characters), always as JSON strings.
-4. NEVER include Aadhaar, PAN, CVV, passport, UPI, or bank/card numbers in the output — omit those fields entirely.
-5. If the document contains no extractable fields, output an empty object: {}
-6. Do not infer or invent information that is not stated in the document.`;
+1. Output ONLY a single JSON object — no prose, no markdown fences. Start with { and end with }.
+2. Short lowercase keys (max 40 chars). ANY key is allowed — invent one that matches the label (e.g. "skills", "yearOfStudy", "motherName").
+3. Values are exact document text, trimmed, JSON strings (max 500 chars each).
+4. NEVER include Aadhaar, PAN, CVV, passport, UPI, or bank/card numbers — omit those fields.
+5. Prefer completeness: capture all distinct facts from the document. Aim for every Label: value pair. Empty object {} only if nothing is extractable.
+6. Do not invent information that is not stated in the document.`;
 
   const t0 = Date.now();
   let raw;
@@ -852,7 +875,9 @@ RULES:
         { role: "system", content: systemPrompt },
         { role: "user", content: `Document text:\n${text}` },
       ],
-      max_tokens: 512,
+      // Room for a full resume as JSON (dozens of string fields). Truncation
+      // here is why users only saw a handful of profile rows after upload.
+      max_tokens: 8192,
       temperature: 0.1,
     });
   } catch (err) {
@@ -1307,10 +1332,10 @@ Only use actions that do NOT require reading redacted screen regions.`;
     tRag: tRagMs,
   });
 
-  // Store receipt in session storage (cleared on browser close, not persisted)
-  await chrome.storage.session.set({ lastReceipt: receipt });
+  // Store receipt + redacted frame in session (cleared on browser close)
+  await persistLastScanArtifacts(receipt, scanPreviewDataUrl(sanitizeResponse));
 
-  return { pageStructure, action, sanitizedImage: sanitizeResponse.sanitizedImage, receipt, vlmError };
+  return { pageStructure, action, sanitizedImage: scanPreviewDataUrl(sanitizeResponse), receipt, vlmError };
 }
 
 // ── VLM transport ─────────────────────────────────────────────────
@@ -1350,6 +1375,10 @@ function describeVlmHttpError(status, statusText, body) {
 // VLM_* message on transport, HTTP, or body-shape failure — never a bare
 // SyntaxError.
 async function requestVlmContent(vlmEndpoint, vlmHeaders, vlmPayload) {
+  const serialized = JSON.stringify(vlmPayload);
+  if (serialized.includes("screenshotDataUrl") || /"screenshot"\s*:/.test(serialized)) {
+    throw new Error("FACE_REDACTION_REQUIRED: refusing to put a raw capture on the network");
+  }
   // Chrome sends Origin: chrome-extension://… — Ollama :11434 answers 403.
   // Always go through the local gateway for that host.
   if (isOllamaDirectEndpoint(vlmEndpoint)) {
@@ -2046,6 +2075,29 @@ async function handleExecuteAction(action, tabId) {
 
 // ── Extension Install ──────────────────────────────────────────────
 
+function ensureAutofillContextMenu() {
+  if (!chrome.contextMenus?.create) return;
+  const spec = {
+    id: "aegis_autofill_context",
+    title: "Fill form from AEGIS profile",
+    contexts: ["page", "editable"],
+  };
+  const create = () => {
+    chrome.contextMenus.create(spec, () => {
+      // Reload unpacked keeps the previous menu; Chrome reports that as lastError.
+      void chrome.runtime.lastError;
+    });
+  };
+  if (typeof chrome.contextMenus.removeAll === "function") {
+    chrome.contextMenus.removeAll(() => {
+      void chrome.runtime.lastError;
+      create();
+    });
+    return;
+  }
+  create();
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({
     // Verified working — see docs/SERVER_SETUP.md
@@ -2056,15 +2108,7 @@ chrome.runtime.onInstalled.addListener(() => {
     passwordDetection: true,
     piiDetection: true,
   });
-  try {
-    chrome.contextMenus?.create?.({
-      id: "aegis_autofill_context",
-      title: "Fill form from AEGIS profile",
-      contexts: ["page", "editable"],
-    });
-  } catch {
-    // Duplicate id after reload is fine.
-  }
+  ensureAutofillContextMenu();
   // Unpacked Reload fires onInstalled (reason "update"). Best-effort
   // re-inject so existing file:// / http(s) tabs can be messaged without
   // a manual refresh. Failures are swallowed; sendTabMessage still retries.

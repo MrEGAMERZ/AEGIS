@@ -50,12 +50,13 @@ const sandbox = {
 vm.createContext(sandbox);
 vm.runInContext(
   source +
-    "\n;globalThis.__EXPORTS__ = { probeRealGateway, resolveVlmEndpoint, classifyError, DEFAULT_GATEWAY_VLM, DEFAULT_OLLAMA_VLM };",
+    "\n;globalThis.__EXPORTS__ = { probeRealGateway, probeGatewayHealth, resolveVlmEndpoint, classifyError, DEFAULT_GATEWAY_VLM, DEFAULT_OLLAMA_VLM };",
   sandbox,
   { filename: SRC_PATH }
 );
 const {
   probeRealGateway,
+  probeGatewayHealth,
   resolveVlmEndpoint,
   classifyError,
   DEFAULT_GATEWAY_VLM,
@@ -75,8 +76,11 @@ function check(name, cond, extra) {
 }
 
 async function main() {
-  sandbox.__health = { ok: true, json: async () => ({ status: "ok", mock: false }) };
+  sandbox.__health = { ok: true, json: async () => ({ status: "ok", mock: false, upstreamReachable: true }) };
   check("real gateway probe returns :8000", (await probeRealGateway()) === DEFAULT_GATEWAY_VLM);
+
+  sandbox.__health = { ok: true, json: async () => ({ status: "ok", mock: false, upstreamReachable: false }) };
+  check("gateway without Ollama is not a working VLM", (await probeRealGateway()) === null);
 
   sandbox.__health = { ok: true, json: async () => ({ status: "ok", mock: true }) };
   check("mock health is ignored", (await probeRealGateway()) === null);
@@ -89,7 +93,7 @@ async function main() {
   };
   check("down gateway is ignored", (await probeRealGateway()) === null);
 
-  sandbox.fetch = async () => ({ ok: true, json: async () => ({ status: "ok", mock: false }) });
+  sandbox.fetch = async () => ({ ok: true, json: async () => ({ status: "ok", mock: false, upstreamReachable: true }) });
   const resolved = await resolveVlmEndpoint(DEFAULT_OLLAMA_VLM);
   check("resolve upgrades stored Ollama URL to gateway", resolved === DEFAULT_GATEWAY_VLM);
 
