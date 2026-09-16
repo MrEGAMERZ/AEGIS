@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AEGIS Chat</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <div class="app-container">
+    <header class="header">
+      <div class="logo">
+        <img src="../icons/icon32.png" alt="AEGIS" width="24" height="24">
+        <span>AEGIS Assistant</span>
+      </div>
+      <div class="header-controls">
+        <select id="model-select">
+          <option value="SARA-Distillation-0.5B" selected>SARA-0.5B (Local)</option>
+          <option value="qwen2.5vl:7b">Qwen2.5-VL 7B</option>
+          <option value="llama3.2-vision">Llama 3.2 Vision</option>
+        </select>
+        <button id="btn-clear" title="Clear Chat">🗑️</button>
+      </div>
+    </header>
+
+    <div class="chat-container" id="chat-container">
+      <div class="welcome-message">
+        <div class="bot-icon">🤖</div>
+        <h3>How can I help you today?</h3>
+        <p>I am a fully private, on-device assistant. I can answer questions, write code, or execute actions on your browser. Your screen and data stay local.</p>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="status-bar" id="status-bar" hidden>
+        <span class="status-icon">🔄</span> <span id="status-text">Processing...</span>
+      </div>
+      <div class="input-wrapper">
+        <button id="btn-screenshot" class="btn-icon" title="Share Sanitized Screen">
+          📸
+        </button>
+        <textarea id="chat-input" placeholder="Message AEGIS..." rows="1"></textarea>
+        <button id="btn-send" class="btn-icon send-btn" title="Send Message">
+          ➤
+        </button>
+      </div>
+      <div class="privacy-note">
+        🔒 End-to-End Encrypted & Local
+      </div>
+    </div>
+  </div>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

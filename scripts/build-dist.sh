@@ -23,6 +23,7 @@ RUNTIME_DIRS=(
   src/background
   src/content
   src/popup
+  src/sidepanel
   src/offscreen
   src/inference
   src/icons
