@@ -242,16 +242,16 @@ Priority: **Working → Measurable → Explainable → Privacy-safe → Lightwei
 
 ## What is still open (demo gate)
 
-Canonical board: [`TASK_MASTER.md`](TASK_MASTER.md). Short version:
+Live Chrome on a judge-like machine is the remaining proof. Node harness is green.
 
-| ID | Still owed |
-|---|---|
-| **A1–A6** | Live Chrome proof on TP08 (scan, redaction-before-VLM, HiDPI clicks, Fill/Agent with Ollama, PDF → Save → fill, drag-drop) |
-| **B1–B2** | Measured SIH numbers on the demo machine; two unseen pages |
-| **C1** | Privacy re-audit sign-off in a real browser |
-| **D** | WebGPU path, full TP matrix, self-learning profile — **after** demo unless we re-prioritize |
+| Still owed |
+|---|
+| Privacy Scan + receipt + bottom preview on TP08 in real Chrome |
+| Fill Form with the demo PDF saved into Profile |
+| Run Agent only if Ollama + `:8000` are up |
+| Measured SIH latency/resource numbers on the demo laptop |
 
-Code + Node harness are largely in. **Live Chrome on a judge-like machine is the remaining proof.**
+Use [`LIVE_DEMO.md`](LIVE_DEMO.md) and [`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md) for the click path.
 
 ---
 
@@ -267,6 +267,5 @@ Code + Node harness are largely in. **Live Chrome on a judge-like machine is the
 | Gateway / 403 story | [`BACKEND_DEPLOY.md`](BACKEND_DEPLOY.md) |
 | Spoken pitch | [`INDUSTRY_PITCH_SCRIPT.md`](INDUSTRY_PITCH_SCRIPT.md) |
 | Doc index | [`00_INDEX.md`](00_INDEX.md) |
-| Open work | [`TASK_MASTER.md`](TASK_MASTER.md) |
 
 If ONNX / WASM still feel made-up: [`06_TECH_EXPLAINER.md`](06_TECH_EXPLAINER.md).

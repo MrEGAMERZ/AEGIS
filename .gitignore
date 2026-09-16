@@ -21,6 +21,16 @@ dist/
 # Packed Chrome extension + private signing key (never commit)
 *.crx
 *.pem
+*.zip
+
+# Duplicate / internal docs (stay on disk, not GitHub)
+docs/PITCH SCRIPT.md
+docs/PITCH SCRIPT .md
+docs/designs/
+docs/TASK_MASTER.md
+docs/ENGINEERING_RULES.md
+docs/IMPROVEMENT_IDEAS.md
+docs/Aegis_Pitch_Storytelling_Framework.md
 
 # Secrets / local Chrome profile
 .env

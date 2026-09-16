@@ -31,22 +31,20 @@ A privacy-preserving browser extension that intercepts screen content before it 
 | Doc | Purpose | Link |
 |---|---|---|
 | Teammate reference | **Give this to teammates** — short system tour, folder map, run steps, demo-gate leftovers | [TEAMMATE_REFERENCE.md](TEAMMATE_REFERENCE.md) |
-| Master Task Board | **Canonical outstanding-work board (OPEN WORK A–H)** — what is not done, owners, dependencies, acceptance criteria | [TASK_MASTER.md](TASK_MASTER.md) |
 | 01 | Requirements — functional/non-functional reqs, redaction taxonomy, MVP scope | [01_REQUIREMENTS.md](01_REQUIREMENTS.md) |
 | 02 | Architecture — components, data flow, sanitization pipeline, server contract | [02_ARCHITECTURE.md](02_ARCHITECTURE.md) |
-| Profile / Fill Form | PDF → on-device text → optional local AI; face-scan idle/toggle/on-demand; Fill Form client-then-local-VLM (code-accurate) | [PROFILE_FILL_ARCHITECTURE.md](PROFILE_FILL_ARCHITECTURE.md) |
-| Two-scene demo (design) | Live DOM covers then Scan + Fill — not all slices implemented yet | [designs/two-scene-demo-loop.md](designs/two-scene-demo-loop.md) |
+| Profile / Fill Form | PDF → on-device text → optional local AI; Fill Form is local-only | [PROFILE_FILL_ARCHITECTURE.md](PROFILE_FILL_ARCHITECTURE.md) |
 | 03 | Tech Stack & Models — model selection matrix, ADRs, latency budgets | [03_TECH_STACK_MODELS.md](03_TECH_STACK_MODELS.md) |
 | 04 | Evaluation & Test Plan — metrics, ground-truth test pages, instrumentation | [04_EVAL_TEST_PLAN.md](04_EVAL_TEST_PLAN.md) |
 | 05 | Milestones — phased build plan, dependencies, deliverables | [05_MILESTONES.md](05_MILESTONES.md) |
+| 06 | Tech explainer — ONNX / WASM in plain language | [06_TECH_EXPLAINER.md](06_TECH_EXPLAINER.md) |
 
 ## Research Documents (from analysis phase)
 
 | Doc | Purpose | Link |
 |---|---|---|
 | Deep Structured Analysis | Problem understanding, feasibility, competitor landscape, evaluator lens | [Aegis_Deep_Structured_Analysis.md](Aegis_Deep_Structured_Analysis.md) |
-| Pitch Storytelling Framework | Narrative arc for the final pitch | [Aegis_Pitch_Storytelling_Framework.md](Aegis_Pitch_Storytelling_Framework.md) |
-| Industry review script | **Canonical spoken pitch** — gunshot lines, split seats, live TP08 demo, Q&A, copy-table for slides | [INDUSTRY_PITCH_SCRIPT.md](INDUSTRY_PITCH_SCRIPT.md) |
+| Industry review script | **Canonical spoken pitch** — gunshot lines, split seats, live TP08 demo, Q&A | [INDUSTRY_PITCH_SCRIPT.md](INDUSTRY_PITCH_SCRIPT.md) |
 
 ## Privacy & Security Documents
 
@@ -64,7 +62,6 @@ A privacy-preserving browser extension that intercepts screen content before it 
 | VLM server setup | Measured Ollama install, `qwen2.5vl:7b`, cold/warm smoke tests on `:11434` | [SERVER_SETUP.md](SERVER_SETUP.md) |
 | Backend deploy | Operator path: Node gateway `:8000` → Ollama; Chrome 403 if you hit `:11434` directly | [BACKEND_DEPLOY.md](BACKEND_DEPLOY.md) |
 | Extension size | Measured `du` of `dist/` vs repo root, JS/models/pdfjs/icons breakdown (Resource criterion) | [EXTENSION_SIZE.md](EXTENSION_SIZE.md) |
-| Improvement ideas | Ranked demo-week vs post-demo backlog | [IMPROVEMENT_IDEAS.md](IMPROVEMENT_IDEAS.md) |
 
 ---
 

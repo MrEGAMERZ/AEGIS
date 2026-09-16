@@ -474,7 +474,6 @@ If the mentor is enjoying the demo, skip 3.7 and let them drive. The ask still h
 |---|---|
 | This file | On the call, second screen |
 | [`DEMO_RUNBOOK.md`](DEMO_RUNBOOK.md) | Prep and recovery codes |
-| [`Aegis_Pitch_Storytelling_Framework.md`](Aegis_Pitch_Storytelling_Framework.md) | Why the story is in this order |
 | [`02_ARCHITECTURE.md`](02_ARCHITECTURE.md) | If they want a whiteboard after |
 | [`PRIVACY_DOC_UPLOAD.md`](PRIVACY_DOC_UPLOAD.md) | If they push on document upload |
 | [`../README.md`](../README.md) | Send them this after the call |
