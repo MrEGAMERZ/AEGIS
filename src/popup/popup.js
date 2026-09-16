@@ -96,12 +96,146 @@ function setPipeline(stage, options = {}) {
   order.forEach((name, i) => { if (steps[name]) steps[name].className = "pipeline-step" + (i < idx ? " done" : i === idx ? " active" : ""); });
 }
 
+// ── Scan Progress Bar ─────────────────────────────────────────────
+// Stages map: stage key → { pct: fill %, stageId: dot element id }
+const SCAN_STAGES = [
+  { key: "capture", pct: 15,  stageId: "sp-stage-capture" },
+  { key: "dom",     pct: 35,  stageId: "sp-stage-dom"     },
+  { key: "detect",  pct: 75,  stageId: "sp-stage-detect"  },
+  { key: "done",    pct: 100, stageId: "sp-stage-done"    },
+];
+
+const scanProgressEl   = document.getElementById("scan-progress");
+const scanProgressFill = document.getElementById("scan-progress-fill");
+const scanProgressPct  = document.getElementById("scan-progress-pct");
+
+function setScanProgress(stage, { error = false } = {}) {
+  if (!stage) {
+    // hide and reset
+    scanProgressEl?.classList.remove("visible");
+    if (scanProgressFill) { scanProgressFill.style.width = "0%"; scanProgressFill.className = "scan-progress-fill"; }
+    if (scanProgressPct) scanProgressPct.textContent = "0%";
+    SCAN_STAGES.forEach(({ stageId }) => {
+      const el = document.getElementById(stageId);
+      if (el) el.className = "scan-stage";
+    });
+    return;
+  }
+  scanProgressEl?.classList.add("visible");
+  const idx = SCAN_STAGES.findIndex((s) => s.key === stage);
+  if (idx === -1) return;
+  const { pct } = SCAN_STAGES[idx];
+  if (scanProgressFill) {
+    scanProgressFill.style.width = `${pct}%`;
+    scanProgressFill.className = "scan-progress-fill" + (error ? " error" : stage === "done" ? " done" : "");
+  }
+  if (scanProgressPct) scanProgressPct.textContent = `${pct}%`;
+  SCAN_STAGES.forEach(({ key, stageId }, i) => {
+    const el = document.getElementById(stageId);
+    if (!el) return;
+    if (i < idx) el.className = "scan-stage done";
+    else if (i === idx) el.className = "scan-stage" + (error ? "" : " active") + (key === "done" && !error ? " done" : "");
+    else el.className = "scan-stage";
+  });
+}
+
+
 async function loadLastReceipt() {
   try {
     const receipt = await chrome.runtime.sendMessage({ type: "GET_LAST_RECEIPT" });
     if (receipt) showReceipt(receipt);
   } catch {}
 }
+
+// ── Privacy Risk Score Card ───────────────────────────────────────
+const riskGradeEl   = document.getElementById("risk-grade-badge");
+const riskScoreEl   = document.getElementById("risk-score-num");
+const riskHostEl    = document.getElementById("risk-host");
+const riskFactorsEl = document.getElementById("risk-factors");
+const riskRefreshBtn = document.getElementById("risk-refresh-btn");
+
+function renderRiskScore(report) {
+  if (!report) {
+    const badge = document.getElementById("risk-grade-badge");
+    if (badge) { badge.className = "risk-grade-badge loading"; badge.textContent = "\u00a0"; }
+    if (riskScoreEl)   { riskScoreEl.textContent = "--"; riskScoreEl.style.color = "#94a3b8"; }
+    if (riskHostEl)    riskHostEl.textContent = "Scanning\u2026";
+    if (riskFactorsEl) riskFactorsEl.innerHTML = "";
+    return;
+  }
+
+  // Unscannable page (chrome://, new tab, system page)
+  if (report.unscannable) {
+    const badge = document.getElementById("risk-grade-badge");
+    if (badge) {
+      badge.className = "risk-grade-badge";
+      badge.style.background = "#94a3b8";
+      badge.textContent = "?";
+    }
+    if (riskScoreEl)   { riskScoreEl.textContent = "--"; riskScoreEl.style.color = "#94a3b8"; }
+    if (riskHostEl)    riskHostEl.textContent = "Navigate to a website to scan";
+    if (riskFactorsEl) {
+      riskFactorsEl.innerHTML = "";
+      const msg = document.createElement("div");
+      msg.className = "risk-safe-msg";
+      msg.style.color = "#94a3b8";
+      msg.textContent = "Open any website and re-scan";
+      riskFactorsEl.appendChild(msg);
+    }
+    return;
+  }
+
+  const { grade, score, color, risks = [], host } = report;
+  // Grade badge — re-insert to replay pop animation
+  const oldBadge = document.getElementById("risk-grade-badge");
+  if (oldBadge) {
+    const nb = oldBadge.cloneNode(false);
+    nb.id = "risk-grade-badge";
+    nb.className = "risk-grade-badge";
+    nb.style.background = color;
+    nb.textContent = grade;
+    oldBadge.parentNode.replaceChild(nb, oldBadge);
+  }
+  if (riskScoreEl)   { riskScoreEl.textContent = String(score); riskScoreEl.style.color = color; }
+  if (riskHostEl)    riskHostEl.textContent = host || "this page";
+  if (riskFactorsEl) {
+    riskFactorsEl.innerHTML = "";
+    if (risks.length === 0) {
+      const msg = document.createElement("div");
+      msg.className = "risk-safe-msg";
+      msg.innerHTML = "✅ No threats detected on this page";
+      riskFactorsEl.appendChild(msg);
+    } else {
+      risks.forEach(({ label, severity }) => {
+        const row = document.createElement("div");
+        row.className = "risk-factor";
+        row.innerHTML = `<span class="rf-dot ${severity}"></span>${label}`;
+        riskFactorsEl.appendChild(row);
+      });
+    }
+  }
+}
+
+async function loadRiskScore() {
+  try {
+    const report = await chrome.runtime.sendMessage({ type: "GET_PAGE_RISK_SCORE" });
+    renderRiskScore(report);
+  } catch {
+    renderRiskScore(null);
+  }
+}
+
+riskRefreshBtn?.addEventListener("click", async () => {
+  riskRefreshBtn.classList.add("spinning");
+  // Reset to loading state
+  const badge = document.getElementById("risk-grade-badge");
+  if (badge) { badge.className = "risk-grade-badge loading"; badge.textContent = "\u00a0"; }
+  if (riskScoreEl) { riskScoreEl.textContent = "--"; riskScoreEl.style.color = "#94a3b8"; }
+  if (riskHostEl) riskHostEl.textContent = "Scanning\u2026";
+  if (riskFactorsEl) riskFactorsEl.innerHTML = "";
+  await loadRiskScore();
+  setTimeout(() => riskRefreshBtn.classList.remove("spinning"), 700);
+});
 
 // ── Load saved config ─────────────────────────────────────────────
 async function loadConfig() {
@@ -188,6 +322,9 @@ function formatVlmOfflineMessage(vlmError) {
 
 if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === "RISK_SCORE_UPDATE" && msg.report) {
+      renderRiskScore(msg.report);
+    }
     if (msg.type === "INIT_PROGRESS") {
       updateModelStatus("Loading...", "loading");
       setStatus(msg.status || "Loading on-device models...", "active");
@@ -195,8 +332,14 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
     if (msg.type === "INIT_DONE") {
       updateModelStatus(msg.faceModelReady ? "On-device ready" : "On-device failed", msg.faceModelReady ? "ready" : "failed");
     }
+    // Background pipeline stages — advance the progress bar to reflect real work
+    if (msg.type === "SCAN_PROGRESS" && msg.stage) {
+      setScanProgress(msg.stage);
+      if (msg.label) setStatus(msg.label, "active");
+    }
   });
 }
+
 
 function labelFor(k) { return KEY_LABELS[k] || k; }
 
@@ -428,6 +571,7 @@ function setScanBusy(busy) {
 async function abortPrivacyScan() {
   scanGeneration += 1;
   setScanBusy(false);
+  setScanProgress(null);
   setPipeline(null);
   setStatus("Scan stopped.", "warn");
   try {
@@ -436,6 +580,7 @@ async function abortPrivacyScan() {
     // Background may already be gone; UI is already reset.
   }
 }
+
 
 stopScanBtn?.addEventListener("click", () => abortPrivacyScan());
 
@@ -473,28 +618,48 @@ async function runPrivacyScan(opts = {}) {
   setScanBusy(true);
   clearStatus();
   previewWrap.classList.remove("visible");
+
+  // Stage 1 — Capture
+  setScanProgress("capture");
   setPipeline("capture", { includeVlm: false });
-  setStatus("Capturing viewport and running local redaction...");
+  setStatus("Capturing viewport...");
+
   try {
+    // Stage 2 — DOM Scan (background emits SCAN_PROGRESS but we also advance
+    // optimistically once we've kicked off the message)
+    setScanProgress("dom");
     setPipeline("redact", { includeVlm: false });
+    setStatus("Scanning DOM and running local redaction...");
+
     const result = await withStuckHint(
       () => chrome.runtime.sendMessage({ type: "SCAN_AND_OVERLAY", forceFaces }),
       "Still scanning... Click Stop scan to cancel."
     );
     if (token !== scanGeneration) return;
+
     if (result?.aborted || result?.errorCode === "SCAN_ABORTED") {
+      setScanProgress(null);
       setPipeline(null);
       setStatus("Scan stopped.", "warn");
       return;
     }
     if (result?.error) {
+      setScanProgress("detect", { error: true });
       setPipeline(null);
       setStatus(formatAgentError(result.errorCode || "UNKNOWN", result.error), "error");
+      setTimeout(() => setScanProgress(null), 2500);
       return;
     }
+
+    // Stage 3 — Detect & Mask (completed — advance to done)
+    setScanProgress("detect");
+    await new Promise((r) => setTimeout(r, 180)); // brief pause so user sees the step
+    setScanProgress("done");
+    setPipeline(null);
+
     if (result.receipt) showReceipt(result.receipt);
     showSanitizedPreview(result.sanitizedImage);
-    setPipeline(null);
+
     const faces = result.receipt?.masked?.faces || 0;
     const fields = result.fieldCount || 0;
     const facesOn = forceFaces || document.getElementById("face-detection")?.checked !== false;
@@ -503,14 +668,20 @@ async function runPrivacyScan(opts = {}) {
     } else {
       setStatus(`Secured ${fields} field(s). Faces not scanned (toggle off).`, fields > 0 ? "success" : "active");
     }
+
+    // Auto-hide the bar after a short success pause
+    setTimeout(() => { if (token === scanGeneration) setScanProgress(null); }, 2000);
   } catch (err) {
     if (token !== scanGeneration) return;
+    setScanProgress("detect", { error: true });
     setPipeline(null);
     setStatus(formatRuntimeDisconnect(err), "error");
+    setTimeout(() => setScanProgress(null), 2500);
   } finally {
     if (token === scanGeneration) setScanBusy(false);
   }
 }
+
 
 scanBtn.addEventListener("click", () => runPrivacyScan());
 
@@ -793,8 +964,12 @@ function applyTheme(theme) {
   document.body.classList.toggle("dark-mode", dark);
   if (!themeToggleBtn) return;
   const label = aegisTheme === "light" ? "Light" : aegisTheme === "dark" ? "Dark" : "Auto";
-  const next = aegisTheme === "light" ? "Dark" : aegisTheme === "dark" ? "System" : "Light";
-  themeToggleBtn.textContent = label;
+  const icon  = aegisTheme === "dark" ? "🌙" : aegisTheme === "system" ? "✨" : "☀️";
+  const next  = aegisTheme === "light" ? "Dark" : aegisTheme === "dark" ? "System" : "Light";
+  const iconEl  = themeToggleBtn.querySelector(".theme-icon");
+  const labelEl = themeToggleBtn.querySelector("#theme-label");
+  if (iconEl)  iconEl.textContent  = icon;
+  if (labelEl) labelEl.textContent = label;
   themeToggleBtn.title = `Theme: ${aegisTheme === "system" ? "System" : label} — click for ${next}`;
   themeToggleBtn.setAttribute("aria-label", `Theme: ${aegisTheme === "system" ? "System" : label}`);
 }
@@ -837,3 +1012,4 @@ setupConfigListeners();
 loadLastReceipt();
 renderProfile();
 renderVaultList();
+loadRiskScore();
