@@ -1,91 +1,263 @@
-// sidepanel.js — Chat tab logic only.
+// sidepanel.js — Chat tab with multi-session management + quick commands
 
+// ── Tab init: open Chat tab by default ────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    const chatTab = document.querySelector('.tab[data-tab="chat"]');
+    const chatTab  = document.querySelector('.tab[data-tab="chat"]');
     const chatPane = document.getElementById('tab-chat');
-    if (chatTab) chatTab.classList.add('active');
+    if (chatTab)  chatTab.classList.add('active');
     if (chatPane) chatPane.classList.add('active');
   }, 50);
 });
 
-const chatContainer  = document.getElementById('chat-container');
-const chatInput      = document.getElementById('chat-input');
-const btnSend        = document.getElementById('btn-send');
-const btnClearChat   = document.getElementById('btn-clear-chat');
-const chatStatus     = document.getElementById('chat-status');
-const chatStatusText = document.getElementById('chat-status-text');
-const welcomeMsg     = document.getElementById('welcome-msg');
-const modelSelect    = document.getElementById('model-select');
+// ── DOM refs ───────────────────────────────────────────────
+const chatContainer   = document.getElementById('chat-container');
+const chatInput       = document.getElementById('chat-input');
+const btnSend         = document.getElementById('btn-send');
+const btnClearChat    = document.getElementById('btn-clear-chat');
+const btnNewChat      = document.getElementById('btn-new-chat');
+const btnSessionsToggle = document.getElementById('btn-sessions-toggle');
+const sessionsPanel   = document.getElementById('sessions-panel');
+const sessionsList    = document.getElementById('sessions-list');
+const currentChatName = document.getElementById('current-chat-name');
+const chatStatus      = document.getElementById('chat-status');
+const chatStatusText  = document.getElementById('chat-status-text');
+const welcomeMsg      = document.getElementById('welcome-msg');
+const modelSelect     = document.getElementById('model-select');
 
-// Auto-attach screenshot for every query so it's a "live" assistant
-let messageHistory = [];
+// ── Session Management ─────────────────────────────────────
+const SESSION_STORAGE_KEY = 'aegisChatSessions';
+const ACTIVE_SESSION_KEY  = 'aegisActiveChatId';
 
-(async () => {
-  const data = await chrome.storage.local.get('chatHistory');
-  if (data.chatHistory && data.chatHistory.length) {
-    messageHistory = data.chatHistory;
-    if (welcomeMsg) welcomeMsg.style.display = 'none';
-    messageHistory.forEach(m => renderMessage(m.role, m.content, m.image));
-  }
-})();
-
-function saveHistory() {
-  if (messageHistory.length > 40) messageHistory = messageHistory.slice(-40);
-  chrome.storage.local.set({ chatHistory: messageHistory });
+async function getSessions() {
+  const data = await chrome.storage.local.get(SESSION_STORAGE_KEY);
+  return data[SESSION_STORAGE_KEY] || [];
 }
 
-function renderMessage(role, text, imageUrl) {
-  if (welcomeMsg) welcomeMsg.style.display = 'none';
-  const wrap = document.createElement('div');
-  wrap.className = `message ${role === 'user' ? 'user' : 'assistant'}`;
-  if (imageUrl) {
-    const img = document.createElement('img');
-    img.src = imageUrl;
-    img.className = 'message-img';
-    wrap.appendChild(img);
+async function saveSessions(sessions) {
+  await chrome.storage.local.set({ [SESSION_STORAGE_KEY]: sessions });
+}
+
+async function getActiveSessionId() {
+  const data = await chrome.storage.local.get(ACTIVE_SESSION_KEY);
+  return data[ACTIVE_SESSION_KEY] || null;
+}
+
+async function setActiveSessionId(id) {
+  await chrome.storage.local.set({ [ACTIVE_SESSION_KEY]: id });
+}
+
+function generateId() {
+  return 'chat-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+}
+
+function generateName(messages) {
+  const firstUser = messages.find(m => m.role === 'user');
+  if (!firstUser) return 'New Chat';
+  const text = firstUser.content.replace(/[📸🔒]/g, '').trim();
+  return text.length > 30 ? text.slice(0, 30) + '…' : text;
+}
+
+async function createNewSession() {
+  const sessions = await getSessions();
+  const newSession = {
+    id: generateId(),
+    name: 'New Chat',
+    created: Date.now(),
+    messages: []
+  };
+  sessions.unshift(newSession);
+  await saveSessions(sessions);
+  await setActiveSessionId(newSession.id);
+  return newSession;
+}
+
+async function getActiveSession() {
+  const sessions = await getSessions();
+  const activeId = await getActiveSessionId();
+  if (activeId) {
+    const found = sessions.find(s => s.id === activeId);
+    if (found) return found;
   }
-  const body = document.createElement('div');
-  body.className = 'message-content';
-  body.textContent = text;
-  wrap.appendChild(body);
-  chatContainer.appendChild(wrap);
+  // No active session — create one
+  return await createNewSession();
+}
+
+async function saveMessageToSession(sessionId, message) {
+  const sessions = await getSessions();
+  const idx = sessions.findIndex(s => s.id === sessionId);
+  if (idx === -1) return;
+  sessions[idx].messages.push(message);
+  // Auto-name from first user message
+  if (sessions[idx].name === 'New Chat' && message.role === 'user') {
+    sessions[idx].name = generateName(sessions[idx].messages);
+  }
+  await saveSessions(sessions);
+}
+
+async function deleteSession(sessionId) {
+  let sessions = await getSessions();
+  sessions = sessions.filter(s => s.id !== sessionId);
+  await saveSessions(sessions);
+  const activeId = await getActiveSessionId();
+  if (activeId === sessionId) {
+    if (sessions.length > 0) {
+      await setActiveSessionId(sessions[0].id);
+    } else {
+      await createNewSession();
+    }
+  }
+}
+
+async function renderSessionsList() {
+  const sessions = await getSessions();
+  const activeId = await getActiveSessionId();
+  sessionsList.innerHTML = '';
+  sessions.forEach(session => {
+    const item = document.createElement('div');
+    item.className = 'session-item' + (session.id === activeId ? ' active' : '');
+    item.innerHTML = `
+      <div class="session-info">
+        <div class="session-name">${escapeHtml(session.name)}</div>
+        <div class="session-meta">${session.messages.length} msgs · ${formatDate(session.created)}</div>
+      </div>
+      <button class="session-delete" data-id="${session.id}" title="Delete">🗑</button>
+    `;
+    item.querySelector('.session-info').addEventListener('click', () => switchSession(session.id));
+    item.querySelector('.session-delete').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await deleteSession(session.id);
+      await loadActiveSession();
+      await renderSessionsList();
+    });
+    sessionsList.appendChild(item);
+  });
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function formatDate(ts) {
+  const d = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+async function switchSession(sessionId) {
+  await setActiveSessionId(sessionId);
+  await loadActiveSession();
+  await renderSessionsList();
+  sessionsPanel.classList.remove('open');
+}
+
+let activeSessionId = null;
+
+async function loadActiveSession() {
+  const session = await getActiveSession();
+  activeSessionId = session.id;
+  currentChatName.textContent = session.name;
+  // Clear and re-render messages
+  chatContainer.innerHTML = '';
+  if (session.messages.length === 0) {
+    if (welcomeMsg) {
+      welcomeMsg.style.display = '';
+      chatContainer.appendChild(welcomeMsg);
+    }
+  } else {
+    session.messages.forEach(m => renderMessage(m.role, m.content, m.image, false));
+  }
   chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
+// ── UI State ───────────────────────────────────────────────
 function setStatus(text, show) {
   if (!chatStatusText || !chatStatus) return;
   chatStatusText.textContent = text;
   chatStatus.hidden = !show;
 }
 
+function renderMessage(role, text, imageUrl, animate = true) {
+  if (welcomeMsg) welcomeMsg.style.display = 'none';
+  const wrap = document.createElement('div');
+  wrap.className = `message ${role === 'user' ? 'user' : 'assistant'}`;
+  if (animate) wrap.style.animation = 'fadeIn 0.2s ease';
+
+  if (imageUrl) {
+    const imgWrap = document.createElement('div');
+    imgWrap.className = 'message-img-wrap';
+    const img = document.createElement('img');
+    img.src = imageUrl;
+    img.className = 'message-img';
+    img.title = 'Sanitized screenshot — faces and PII already hidden';
+    const lbl = document.createElement('div');
+    lbl.className = 'message-img-label';
+    lbl.textContent = '🔒 Sanitized (what SARA saw)';
+    imgWrap.appendChild(img);
+    imgWrap.appendChild(lbl);
+    wrap.appendChild(imgWrap);
+  }
+
+  const body = document.createElement('div');
+  body.className = 'message-content';
+  body.textContent = text;
+  wrap.appendChild(body);
+  chatContainer.appendChild(wrap);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+  return wrap;
+}
+
+// ── Quick Commands (no VLM needed) ────────────────────────
+const FILL_PATTERNS     = /\bfill\s*(the\s*)?(form|fields?|page|all|it)\b|\bauto.?fill\b/i;
+const SCAN_PATTERNS     = /\b(privacy\s*scan|scan\s*page|check\s*(privacy|risks?)|run\s*scan)\b/i;
+const PROFILE_PATTERNS  = /\b(my\s*profile|what('s|\s*is)\s*my\s*(name|info|data)|show\s*(my\s*)?profile)\b/i;
+
+async function runFillCommand() {
+  setStatus('Filling form with your profile…', true);
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'FILL_MATCHING_FIELDS' });
+    if (res?.error) return `❌ Could not fill: ${res.error}`;
+    const n = res?.filled || 0;
+    return `✅ Filled ${n} field${n === 1 ? '' : 's'} using your saved profile. Passwords and sensitive fields were kept private.`;
+  } catch (e) {
+    return `❌ Fill failed: ${e.message}`;
+  }
+}
+
+async function runScanCommand() {
+  setStatus('Running privacy scan…', true);
+  try {
+    await chrome.runtime.sendMessage({ type: 'SCAN_AND_OVERLAY' });
+    const img = await chrome.runtime.sendMessage({ type: 'GET_LAST_SANITIZED_IMAGE' });
+    return { text: '🔒 Privacy scan complete. The sanitized view shows what any AI is allowed to see.', image: img };
+  } catch (e) {
+    return { text: `❌ Scan failed: ${e.message}` };
+  }
+}
+
+async function runProfileCommand() {
+  const data = await chrome.storage.local.get('userProfile');
+  const profile = data.userProfile || {};
+  const fields = Object.entries(profile).filter(([,v]) => v);
+  if (!fields.length) return '❌ No profile saved yet. Go to the Profile tab to add your details.';
+  const lines = fields.map(([k, v]) => `• ${k}: ${String(v).slice(0, 40)}`).join('\n');
+  return `👤 Your saved profile (${fields.length} fields):\n${lines}`;
+}
+
+// ── Send Handler ───────────────────────────────────────────
 chatInput.addEventListener('input', () => {
   chatInput.style.height = 'auto';
   chatInput.style.height = chatInput.scrollHeight + 'px';
   btnSend.classList.toggle('active', chatInput.value.trim().length > 0);
 });
+
 chatInput.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
-});
-
-btnClearChat.addEventListener('click', () => {
-  messageHistory = [];
-  saveHistory();
-  chatContainer.innerHTML = '';
-  if (welcomeMsg) {
-    welcomeMsg.style.display = '';
-    chatContainer.appendChild(welcomeMsg);
-  }
-});
-
-document.querySelectorAll('.example-chip').forEach(chip => {
-  chip.addEventListener('click', () => {
-    chatInput.value = chip.dataset.msg || '';
-    chatInput.dispatchEvent(new Event('input'));
-    handleSend();
-  });
 });
 
 btnSend.addEventListener('click', handleSend);
@@ -98,43 +270,126 @@ async function handleSend() {
   chatInput.style.height = 'auto';
   btnSend.classList.remove('active');
 
-  // ALWAYS attach live sanitized screen
-  const userMsg = { role: 'user', content: text };
-  renderMessage('user', text + ' 📸 (Live Screen)');
-  messageHistory.push(userMsg);
-  saveHistory();
+  // Render user message
+  renderMessage('user', text + ' 📸');
 
-  setStatus('SARA is capturing & thinking…', true);
+  // Save to session
+  const userMsg = { role: 'user', content: text, created: Date.now() };
+  await saveMessageToSession(activeSessionId, userMsg);
+  currentChatName.textContent = (await getActiveSession()).name;
+
+  // ── Quick commands (instant, no VLM required) ──────────
+  if (FILL_PATTERNS.test(text)) {
+    setStatus('Filling form…', true);
+    const reply = await runFillCommand();
+    setStatus('', false);
+    renderMessage('assistant', reply);
+    await saveMessageToSession(activeSessionId, { role: 'assistant', content: reply });
+    return;
+  }
+
+  if (SCAN_PATTERNS.test(text)) {
+    const result = await runScanCommand();
+    setStatus('', false);
+    const replyText = typeof result === 'string' ? result : result.text;
+    const replyImg  = typeof result === 'object' ? result.image : null;
+    renderMessage('assistant', replyText, replyImg);
+    await saveMessageToSession(activeSessionId, { role: 'assistant', content: replyText, image: replyImg });
+    return;
+  }
+
+  if (PROFILE_PATTERNS.test(text)) {
+    const reply = await runProfileCommand();
+    setStatus('', false);
+    renderMessage('assistant', reply);
+    await saveMessageToSession(activeSessionId, { role: 'assistant', content: reply });
+    return;
+  }
+
+  // ── Full VLM path (screen capture + AI) ───────────────
+  const sessions = await getSessions();
+  const session = sessions.find(s => s.id === activeSessionId);
+  const history = session ? session.messages.map(m => ({ role: m.role, content: m.content, image: m.image })) : [];
+
+  setStatus('Capturing screen & thinking…', true);
 
   try {
     const res = await chrome.runtime.sendMessage({
       type: 'CHAT_REQUEST',
-      history: messageHistory,
+      history,
       model: modelSelect ? modelSelect.value : 'SARA-Distillation-0.5B',
       attachScreenshot: true
     });
 
     if (res.error) throw new Error(res.error);
 
-    if (res.sanitizedImage) {
-      messageHistory[messageHistory.length - 1].image = res.sanitizedImage;
+    const sanitizedImg = res.sanitizedImage || null;
+    if (sanitizedImg) {
+      // Update the user message we already saved with the sanitized image
+      const sessions2 = await getSessions();
+      const s2 = sessions2.find(s => s.id === activeSessionId);
+      if (s2 && s2.messages.length > 0) {
+        s2.messages[s2.messages.length - 1].image = sanitizedImg;
+        await saveSessions(sessions2);
+      }
     }
 
     const reply = res.reply || '✅ Done.';
-    messageHistory.push({ role: 'assistant', content: reply });
-    saveHistory();
     renderMessage('assistant', reply);
+    await saveMessageToSession(activeSessionId, { role: 'assistant', content: reply });
 
     if (res.actionExecuted) {
-      const note = `[✅ Action executed on page: ${res.actionExecuted}]`;
-      messageHistory.push({ role: 'assistant', content: note });
-      saveHistory();
+      const note = `[✅ Action executed: ${res.actionExecuted}]`;
       renderMessage('assistant', note);
+      await saveMessageToSession(activeSessionId, { role: 'assistant', content: note });
     }
 
   } catch (err) {
-    renderMessage('assistant', `⚠️ Error: ${err.message}`);
+    const errMsg = `⚠️ ${err.message}`;
+    renderMessage('assistant', errMsg);
+    await saveMessageToSession(activeSessionId, { role: 'assistant', content: errMsg });
   } finally {
     setStatus('', false);
   }
 }
+
+// ── Session panel toggle ───────────────────────────────────
+btnSessionsToggle.addEventListener('click', async () => {
+  const isOpen = sessionsPanel.classList.toggle('open');
+  if (isOpen) await renderSessionsList();
+});
+
+// ── New Chat ───────────────────────────────────────────────
+btnNewChat.addEventListener('click', async () => {
+  await createNewSession();
+  await loadActiveSession();
+  await renderSessionsList();
+  sessionsPanel.classList.remove('open');
+});
+
+// ── Clear current chat ─────────────────────────────────────
+btnClearChat.addEventListener('click', async () => {
+  const sessions = await getSessions();
+  const idx = sessions.findIndex(s => s.id === activeSessionId);
+  if (idx !== -1) {
+    sessions[idx].messages = [];
+    sessions[idx].name = 'New Chat';
+    await saveSessions(sessions);
+  }
+  await loadActiveSession();
+});
+
+// ── Example chips ──────────────────────────────────────────
+document.querySelectorAll('.example-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    chatInput.value = chip.dataset.msg || '';
+    chatInput.dispatchEvent(new Event('input'));
+    handleSend();
+  });
+});
+
+// ── Boot ───────────────────────────────────────────────────
+(async () => {
+  await loadActiveSession();
+  await renderSessionsList();
+})();

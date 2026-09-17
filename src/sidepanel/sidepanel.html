@@ -441,6 +441,19 @@ body.dark-mode #chat-input { color: #f1f5f9; }
   </div>
 
   <div class="tab-content active" id="tab-chat">
+
+    <!-- Sessions bar -->
+    <div class="chat-sessions-bar">
+      <button class="icon-btn sessions-btn" id="btn-sessions-toggle" title="All chats">☰</button>
+      <span id="current-chat-name" class="current-chat-name">New Chat</span>
+      <button class="btn-new-chat" id="btn-new-chat" title="New chat">+ New</button>
+    </div>
+
+    <!-- Sessions dropdown panel -->
+    <div class="sessions-panel" id="sessions-panel">
+      <div class="sessions-list" id="sessions-list"></div>
+    </div>
+
     <div class="chat-container" id="chat-container">
       <div class="welcome-msg" id="welcome-msg">
         <div class="welcome-icon">🛡️</div>
