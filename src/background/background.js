@@ -707,7 +707,7 @@ async function probeRealGateway() {
 async function resolveVlmEndpoint(stored) {
   const preferred = preferGatewayEndpoint(stored);
   const gateway = await probeRealGateway();
-  const resolved = gateway || preferred;
+  const resolved = gateway || (preferred === DEFAULT_GATEWAY_VLM ? DEFAULT_OLLAMA_VLM : preferred);
   if (resolved !== stored) {
     chrome.storage.local.set({ vlmEndpoint: resolved }).catch(() => {});
   }
