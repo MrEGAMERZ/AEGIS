@@ -417,6 +417,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "EXECUTE_WRITE_CODE") {
+    (async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) throw new Error("No active tab");
+        const res = await executeWriteCodeInTab(tab.id, msg.code, msg.selector);
+        sendResponse(res);
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === "PROFILE_PREFILL") {
     handleProfilePrefill()
       .then(sendResponse)
@@ -1774,10 +1788,28 @@ function sanitizeAction(action, context = {}) {
 
   switch (action.action) {
     case "click": {
-      if (typeof action.x !== "number" || typeof action.y !== "number") return null;
-      if (!Number.isFinite(action.x) || !Number.isFinite(action.y)) return null;
-      if (action.x < 0 || action.y < 0 || action.x > 65535 || action.y > 65535) return null;
-      return { action: "click", x: Math.round(action.x), y: Math.round(action.y) };
+      if (typeof action.selector === "string" && action.selector.trim()) {
+        return { action: "click", selector: action.selector.trim() };
+      }
+      if (typeof action.text === "string" && action.text.trim()) {
+        return { action: "click", text: action.text.trim() };
+      }
+      if (typeof action.x === "number" && typeof action.y === "number") {
+        if (!Number.isFinite(action.x) || !Number.isFinite(action.y)) return null;
+        if (action.x < 0 || action.y < 0 || action.x > 65535 || action.y > 65535) return null;
+        return { action: "click", x: Math.round(action.x), y: Math.round(action.y) };
+      }
+      return null;
+    }
+
+    case "write_code": {
+      const code = typeof action.code === "string" ? action.code : (typeof action.value === "string" ? action.value : "");
+      if (!code) return null;
+      return {
+        action: "write_code",
+        code,
+        selector: typeof action.selector === "string" ? action.selector.trim() : ""
+      };
     }
 
     case "type": {
@@ -1787,52 +1819,34 @@ function sanitizeAction(action, context = {}) {
       if (!SELECTOR_SAFE_RE.test(selector)) return null;
       if (action.value.length > ACTION_LIMITS.value) return null;
 
-      // Fail CLOSED: a "type" value is trusted ONLY when it is traceable to
-      // real user data. Two provenance routes:
-      //   1. PROFILE — the claimed profileKey resolves in the CURRENT
-      //      normalized profile AND the value exactly matches that key's value
-      //      (existing anti-hallucination rule, case/whitespace-insensitive).
-      //   2. VAULT (RAG-lite) — the value exactly appears as a substring in
-      //      the user's OWN stored document text (aegisDocVault cache). Same
-      //      bar as the profile: never invented, always traceable.
-      // No verified provenance → rejected, exactly like any malformed action.
-      const userProfile = context.userProfile;
-      const profileOk = userProfile && typeof userProfile === "object" && !Array.isArray(userProfile);
+      // When strictProfile is requested (form autofill only):
+      if (context.strictProfile) {
+        const userProfile = context.userProfile;
+        const profileOk = userProfile && typeof userProfile === "object" && !Array.isArray(userProfile);
+        const profileKey = profileOk ? resolveProfileKey(userProfile, action.profileKey) : null;
+        const expectedValue = profileKey ? String(userProfile[profileKey] ?? "").trim() : "";
+        const profileMatch =
+          !!profileKey && !!expectedValue &&
+          expectedValue.toLowerCase() === action.value.trim().toLowerCase();
+        const vaultMatch = vaultAllowsValue(action.value);
+        const profileTextMatch = profileContainsValue(action.value, userProfile);
+        if (!profileMatch && !vaultMatch && !profileTextMatch) return null;
 
-      const profileKey = profileOk ? resolveProfileKey(userProfile, action.profileKey) : null;
-      const expectedValue = profileKey ? String(userProfile[profileKey] ?? "").trim() : "";
-      const profileMatch =
-        !!profileKey && !!expectedValue &&
-        expectedValue.toLowerCase() === action.value.trim().toLowerCase();
-
-      const vaultMatch = vaultAllowsValue(action.value);
-      const profileTextMatch = profileContainsValue(action.value, userProfile);
-      if (!profileMatch && !vaultMatch && !profileTextMatch) return null;
-
-      const fields = context.fields;
-      if (Array.isArray(fields)) {
-        const field = fields.find((f) => f && f.selector === selector);
-        if (field?.label) {
-          if (profileMatch && !keysCorrelate(profileKey, field.label)) return null;
-          // A vault-sourced fill may still carry a profileKey claim; if that
-          // claim resolves to a real key, it must correlate with the field's
-          // label too (catches: doc value + real key attached to wrong field).
-          const claimed = profileOk ? resolveProfileKey(userProfile, action.profileKey) : null;
-          if (!profileMatch && claimed && !keysCorrelate(claimed, field.label)) return null;
-          // Real structured value attached to the wrong field stays rejected
-          // even when it also appears in notes.
-          if (!profileMatch && conflictingStructuredKey(action.value, field.label, userProfile)) {
-            return null;
-          }
-        }
+        return {
+          action: "type",
+          selector,
+          value: action.value,
+          profileKey: profileKey || null,
+          source: profileMatch ? "profile" : vaultMatch ? "vault" : "profile_text",
+        };
       }
 
+      // General interactive typing for agents:
       return {
         action: "type",
         selector,
         value: action.value,
-        profileKey: profileKey || null,
-        source: profileMatch ? "profile" : vaultMatch ? "vault" : "profile_text",
+        profileKey: action.profileKey || null
       };
     }
 
@@ -1886,14 +1900,8 @@ function sanitizeAction(action, context = {}) {
       return { action: "wait", ms: typeof action.ms === "number" ? action.ms : 1000 };
       
     case "select":
-      // Treat select exactly like type (which expects a profile-matched value), but just forward the action name.
-      // Easiest is to fall through or call sanitizeAction with 'type' and map it back.
-      // But actually, 'select' often isn't personal data, so maybe we just allow it?
-      // Wait, the prompt says: "`select`: needs `selector` and `value` — treat like type (may need profile/vault check if value is sensitive)"
-      // So I will just duplicate the `type` logic or call `sanitizeAction({ ...action, action: 'type' })` recursively.
-      const sanitizedType = sanitizeAction({ ...action, action: "type" }, context);
-      if (!sanitizedType) return null;
-      return { ...sanitizedType, action: "select" };
+      if (typeof action.selector !== "string") return null;
+      return { action: "select", selector: action.selector.trim(), value: String(action.value ?? "") };
 
     default:
       return null;
@@ -2201,6 +2209,116 @@ function classifyError(err) {
   return "UNKNOWN";
 }
 
+async function executeWriteCodeInTab(tabId, code, selector) {
+  if (typeof code !== "string" || !code.trim()) {
+    return { error: "No code provided" };
+  }
+
+  // 1. Try MAIN world via chrome.scripting.executeScript (direct access to window.CodeMirror, window.ace, window.monaco)
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      args: [code, selector || ""],
+      func: (codeToInsert, targetSelector) => {
+        // 1. CodeMirror 5 (Programiz, JSFiddle, many online compilers)
+        let cmEl = targetSelector ? document.querySelector(targetSelector)?.closest(".CodeMirror") : null;
+        if (!cmEl) {
+          const cms = Array.from(document.querySelectorAll(".CodeMirror")).filter(el => el.offsetParent !== null || el.offsetWidth > 0);
+          cmEl = cms[0] || document.querySelector(".CodeMirror");
+        }
+        if (cmEl && cmEl.CodeMirror) {
+          cmEl.CodeMirror.setValue(codeToInsert);
+          cmEl.CodeMirror.focus();
+          return { ok: true, editor: "CodeMirror", length: codeToInsert.length };
+        }
+
+        // Also check if any element has .CodeMirror attached
+        const anyCm = Array.from(document.querySelectorAll("*")).find(el => el.CodeMirror);
+        if (anyCm && anyCm.CodeMirror) {
+          anyCm.CodeMirror.setValue(codeToInsert);
+          anyCm.CodeMirror.focus();
+          return { ok: true, editor: "CodeMirrorGlobal", length: codeToInsert.length };
+        }
+
+        // 2. Monaco Editor (LeetCode, VS Code web)
+        if (window.monaco?.editor) {
+          const models = window.monaco.editor.getModels();
+          if (models && models.length > 0) {
+            models[0].setValue(codeToInsert);
+            return { ok: true, editor: "Monaco", length: codeToInsert.length };
+          }
+        }
+
+        // 3. Ace Editor
+        const aceEl = targetSelector ? document.querySelector(targetSelector) : document.querySelector(".ace_editor");
+        if (aceEl && aceEl.env?.editor) {
+          aceEl.env.editor.setValue(codeToInsert, 1);
+          return { ok: true, editor: "Ace", length: codeToInsert.length };
+        }
+        if (typeof window.ace !== "undefined" && window.ace.edit) {
+          try {
+            const ed = window.ace.edit(aceEl || "editor");
+            if (ed) {
+              ed.setValue(codeToInsert, 1);
+              return { ok: true, editor: "AceGlobal", length: codeToInsert.length };
+            }
+          } catch(e) {}
+        }
+
+        // 4. CodeMirror 6 (.cm-content)
+        const cm6 = targetSelector ? document.querySelector(targetSelector) : document.querySelector(".cm-content");
+        if (cm6) {
+          cm6.focus();
+          document.execCommand("selectAll", false, null);
+          document.execCommand("insertText", false, codeToInsert);
+          return { ok: true, editor: "CodeMirror6", length: codeToInsert.length };
+        }
+
+        // 5. Standard textarea / contenteditable / input
+        const target = targetSelector
+          ? document.querySelector(targetSelector)
+          : document.querySelector("textarea, [contenteditable='true'], .editor, #editor");
+        if (target) {
+          target.focus();
+          if (target.isContentEditable) {
+            target.innerText = codeToInsert;
+            target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: codeToInsert }));
+            return { ok: true, editor: "contentEditable", length: codeToInsert.length };
+          }
+          if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") {
+            const nativeSetter = Object.getOwnPropertyDescriptor(
+              target.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+              "value"
+            )?.set;
+            if (nativeSetter) nativeSetter.call(target, codeToInsert);
+            else target.value = codeToInsert;
+            target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: codeToInsert }));
+            target.dispatchEvent(new Event("change", { bubbles: true }));
+            return { ok: true, editor: "textarea", length: codeToInsert.length };
+          }
+        }
+
+        return { error: "No code editor found on page" };
+      }
+    });
+
+    if (results?.[0]?.result?.ok) {
+      return results[0].result;
+    }
+  } catch (err) {
+    console.warn("MAIN world executeWriteCode failed:", err);
+  }
+
+  // 2. Fallback: message content script
+  try {
+    const fallback = await sendTabMessage({ id: tabId }, { type: "EXECUTE_WRITE_CODE", code, selector });
+    if (fallback?.ok) return fallback;
+  } catch {}
+
+  return { error: "Could not insert code into page editor" };
+}
+
 // ── Action Executor ────────────────────────────────────────────────
 
 async function handleExecuteAction(action, tabId) {
@@ -2221,7 +2339,7 @@ async function handleExecuteAction(action, tabId) {
   }
 
   // Validate action shape before executing
-  const VALID_ACTIONS = ["click", "type", "scroll", "navigate", "done", "fill_many", "key_press", "hover", "extract_text", "clear", "focus", "wait", "select"];
+  const VALID_ACTIONS = ["click", "type", "scroll", "navigate", "done", "fill_many", "key_press", "hover", "extract_text", "clear", "focus", "wait", "select", "write_code"];
   if (!VALID_ACTIONS.includes(safe.action)) {
     return { error: `Unknown action: ${safe.action}. Valid: ${VALID_ACTIONS.join(", ")}` };
   }
@@ -2235,7 +2353,17 @@ async function handleExecuteAction(action, tabId) {
   let execResult;
   switch (safe.action) {
     case "click":
-      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_CLICK", x: safe.x, y: safe.y });
+      execResult = await sendTabMessage(targetTab, {
+        type: "EXECUTE_CLICK",
+        x: safe.x,
+        y: safe.y,
+        selector: safe.selector,
+        text: safe.text
+      });
+      break;
+
+    case "write_code":
+      execResult = await executeWriteCodeInTab(targetTabId, safe.code, safe.selector);
       break;
 
     case "type":
@@ -2478,30 +2606,46 @@ function parseActionFromReply(reply) {
   return null;
 }
 
+function stripActionBlock(text) {
+  if (!text) return "";
+  return text
+    .replace(/```(?:json)?\s*\{[\s\S]*?"action"\s*:[\s\S]*?\}\s*```/g, "")
+    .replace(/\{[\s\S]*?"action"\s*:\s*"(?:click|type|write_code|scroll|navigate|done|fill_many|key_press|hover|extract_text|clear|focus|select|wait)"[\s\S]*?\}/g, "")
+    .trim();
+}
+
 async function handleChatRequest(msg) {
   const { history, model, attachScreenshot } = msg;
 
-  const SYSTEM_PROMPT = `You are AEGIS — a private, secure AI agent for ISRO government employees.
+  const SYSTEM_PROMPT = `You are AEGIS — a private, secure AI agent for government employees and developers.
 You see a SANITIZED screenshot (faces and personal data already hidden on-device before reaching you).
-You can perform browser actions or answer questions.
+You can perform browser actions, write code into on-screen code editors, or answer questions.
 
-FOR BROWSER TASKS — respond with ONE JSON action block:
+FOR BROWSER ACTIONS & TASKS — respond with ONE JSON action block:
+- Write code into online editor (Programiz, LeetCode, CodeMirror, Ace, IDE, textarea):
 \`\`\`json
-{"action":"click","x":320,"y":450}
+{"action":"write_code","code":"/* full code here */"}
 \`\`\`
-or: {"action":"type","selector":"#id","value":"text"}
-or: {"action":"key_press","key":"Enter"}
-or: {"action":"scroll","direction":"down"}
-or: {"action":"navigate","url":"https://..."}
-or: {"action":"select","selector":"#dropdown","value":"Option"}
-or: {"action":"extract_text","selector":"#result"}
-or: {"action":"clear","selector":"#field"}
-or: {"action":"fill_many","fields":[{"selector":"#name","value":"John"},{"selector":"#email","value":"j@k.com"}]}
-or: {"action":"done","summary":"Task complete."}
+- Click button/element (e.g. Run button, Submit, Tab):
+\`\`\`json
+{"action":"click","text":"Run"} or {"action":"click","selector":"button.run"} or {"action":"click","x":320,"y":450}
+\`\`\`
+- Type text into field: {"action":"type","selector":"#field","value":"text"}
+- Press key: {"action":"key_press","key":"Enter"}
+- Scroll: {"action":"scroll","direction":"down"}
+- Navigate: {"action":"navigate","url":"https://..."}
+- Fill form: {"action":"fill_many","fields":[{"selector":"#name","value":"John"}]}
+- Done: {"action":"done","summary":"Task complete."}
 
-FOR QUESTIONS/ANALYSIS — reply in plain text, no JSON.
+FOR CODING REQUESTS:
+When asked to write or implement code (e.g. "Write insertion sort code in C"), generate the code!
+If there is a code editor or compiler on screen (such as Programiz, CodeMirror, Ace), output the "write_code" action so the code is directly placed into the editor!
+Example:
+\`\`\`json
+{"action":"write_code","code":"#include <stdio.h>\\n\\nvoid insertionSort(int arr[], int n) {\\n    int i, key, j;\\n    for (i = 1; i < n; i++) {\\n        key = arr[i];\\n        j = i - 1;\\n        while (j >= 0 && arr[j] > key) {\\n            arr[j + 1] = arr[j];\\n            j = j - 1;\\n        }\\n        arr[j + 1] = key;\\n    }\\n}\\n\\nint main() {\\n    int arr[] = {12, 11, 13, 5, 6};\\n    int n = sizeof(arr) / sizeof(arr[0]);\\n    insertionSort(arr, n);\\n    for (int i = 0; i < n; i++) printf(\\"%d \\", arr[i]);\\n    printf(\\"\\\\n\\");\\n    return 0;\\n}"}
+\`\`\`
 
-IMPORTANT: Click coordinates (x,y) must match what you see in the screenshot image.`;
+FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
 
   const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
 
@@ -2539,9 +2683,28 @@ IMPORTANT: Click coordinates (x,y) must match what you see in the screenshot ima
   let rawReply = await callVlm(messages, model);
   let parsedAction = parseActionFromReply(rawReply);
 
+  // Check if reply contains a markdown code block:
+  const codeBlockMatch = rawReply.match(/```(?:[a-zA-Z0-9_+-]+)?\s*\n([\s\S]*?)\n```/);
+  const userWantsCode = /\b(code|program|script|function|algorithm|sort|write|implement|c\b|python\b|cpp\b|java\b|js\b|html\b|sql\b)/i.test(latest?.content || "");
+
+  // If no action object was returned, but code was generated for a coding request:
+  if (!parsedAction && codeBlockMatch && userWantsCode) {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    let actionExecuted = null;
+    if (activeTab?.id) {
+      const codeToInsert = codeBlockMatch[1];
+      const res = await executeWriteCodeInTab(activeTab.id, codeToInsert);
+      if (res?.ok) {
+        actionExecuted = `inserted code into ${res.editor || 'editor'}`;
+      }
+    }
+    const cleanReply = stripActionBlock(rawReply) || rawReply;
+    return { reply: cleanReply, actionExecuted, sanitizedImage: firstSanitizedImage };
+  }
+
   // Plain text reply — simple Q&A, no agent loop needed
   if (!parsedAction) {
-    const cleanReply = rawReply.replace(/```(?:json)?[\s\S]*?```/g, '').trim() || 'Done.';
+    const cleanReply = stripActionBlock(rawReply) || rawReply;
     return { reply: cleanReply, actionExecuted: null, sanitizedImage: firstSanitizedImage };
   }
 
@@ -2560,10 +2723,15 @@ IMPORTANT: Click coordinates (x,y) must match what you see in the screenshot ima
 
     // Build step label
     let stepLabel = `[${step + 1}] ${action.action}`;
-    if (action.selector) stepLabel += ` → ${action.selector}`;
-    if (action.value) stepLabel += ` = "${String(action.value).slice(0, 40)}"`;
-    if (action.key) stepLabel += ` [${action.key}]`;
-    if (action.x !== undefined) stepLabel += ` at (${action.x}, ${action.y})`;
+    if (action.action === 'write_code') {
+      stepLabel += ` (${String(action.code || '').length} chars)`;
+    } else {
+      if (action.selector) stepLabel += ` → ${action.selector}`;
+      if (action.value) stepLabel += ` = "${String(action.value).slice(0, 40)}"`;
+      if (action.key) stepLabel += ` [${action.key}]`;
+      if (action.text) stepLabel += ` "${action.text}"`;
+      if (action.x !== undefined) stepLabel += ` at (${action.x}, ${action.y})`;
+    }
     stepLog.push(stepLabel);
 
     // Execute
@@ -2605,7 +2773,7 @@ IMPORTANT: Click coordinates (x,y) must match what you see in the screenshot ima
     parsedAction = parseActionFromReply(rawReply);
 
     if (!parsedAction) {
-      const finalText = rawReply.replace(/```(?:json)?[\s\S]*?```/g, '').trim();
+      const finalText = stripActionBlock(rawReply);
       if (finalText) stepLog.push(`Result: ${finalText}`);
       break;
     }

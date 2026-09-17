@@ -275,25 +275,122 @@
     };
   }
 
-  function executeClick(x, y) {
+  function executeClick(x, y, selector, text) {
     const dpr = window.devicePixelRatio || 1;
-    let generic = null;
-    for (const point of clickPoints(x, y)) {
-      const hit = document.elementFromPoint(point.x, point.y);
-      if (!hit) continue;
-      const tag = hit.tagName?.toLowerCase();
-      // A hit on html/body means the coordinate frame was probably wrong;
-      // keep it only as a last resort and let the other frame win.
-      if (tag === "html" || tag === "body") {
-        generic = generic || { el: hit, point };
-        continue;
+
+    // 1. Selector-based click
+    if (selector) {
+      const el = document.querySelector(selector);
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        const rect = el.getBoundingClientRect();
+        return dispatchClick(el, { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, frame: "css" }, dpr);
       }
-      // Climb to the real control when the model aims at a button's inner
-      // text node or padding rather than the control itself.
-      return dispatchClick(hit.closest(CLICK_TARGET_SEL) || hit, point, dpr);
     }
-    if (generic) return dispatchClick(generic.el, generic.point, dpr);
-    return { error: `No element at (${x}, ${y}) in image or CSS pixel space (dpr=${dpr})` };
+
+    // 2. Text-based click (e.g. "Run", "Submit", "Run ▶")
+    if (text) {
+      const wanted = text.trim().toLowerCase();
+      const candidates = Array.from(document.querySelectorAll("button, a, input[type='button'], input[type='submit'], [role='button'], .btn, span"));
+      const match = candidates.find(el => (el.innerText || el.value || el.textContent || "").trim().toLowerCase().includes(wanted));
+      if (match) {
+        const btn = match.closest("button, a, [role='button']") || match;
+        btn.scrollIntoView({ block: "center", behavior: "smooth" });
+        const rect = btn.getBoundingClientRect();
+        return dispatchClick(btn, { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, frame: "css" }, dpr);
+      }
+    }
+
+    // 3. Coordinate-based click
+    if (typeof x === "number" && typeof y === "number") {
+      let generic = null;
+      for (const point of clickPoints(x, y)) {
+        const hit = document.elementFromPoint(point.x, point.y);
+        if (!hit) continue;
+        const tag = hit.tagName?.toLowerCase();
+        if (tag === "html" || tag === "body") {
+          generic = generic || { el: hit, point };
+          continue;
+        }
+        return dispatchClick(hit.closest(CLICK_TARGET_SEL) || hit, point, dpr);
+      }
+      if (generic) return dispatchClick(generic.el, generic.point, dpr);
+      return { error: `No element at (${x}, ${y}) in image or CSS pixel space (dpr=${dpr})` };
+    }
+
+    return { error: "No target for click (need x/y, selector, or text)" };
+  }
+
+  function executeWriteCode(code, selector) {
+    if (typeof code !== "string") return { error: "No code provided" };
+
+    // 1. Try CodeMirror 5 (e.g. Programiz, JSFiddle, many online compilers)
+    const cmEl = selector ? document.querySelector(selector)?.closest('.CodeMirror') : document.querySelector('.CodeMirror');
+    if (cmEl && cmEl.CodeMirror) {
+      cmEl.CodeMirror.setValue(code);
+      cmEl.CodeMirror.focus();
+      return { ok: true, method: "CodeMirror5", length: code.length };
+    }
+
+    // 2. Try CodeMirror 6 (.cm-content)
+    const cm6 = selector ? document.querySelector(selector) : document.querySelector('.cm-content');
+    if (cm6) {
+      cm6.focus();
+      document.execCommand('selectAll', false, null);
+      document.execCommand('insertText', false, code);
+      return { ok: true, method: "CodeMirror6", length: code.length };
+    }
+
+    // 3. Try Ace Editor
+    const aceEl = selector ? document.querySelector(selector) : document.querySelector('.ace_editor');
+    if (aceEl?.env?.editor) {
+      aceEl.env.editor.setValue(code, 1);
+      return { ok: true, method: "AceEditor", length: code.length };
+    }
+    if (typeof window.ace !== "undefined" && window.ace.edit) {
+      try {
+        const ed = window.ace.edit(aceEl || "editor");
+        if (ed) {
+          ed.setValue(code, 1);
+          return { ok: true, method: "AceGlobal", length: code.length };
+        }
+      } catch (e) {}
+    }
+
+    // 4. Try Monaco Editor
+    if (window.monaco?.editor) {
+      try {
+        const models = window.monaco.editor.getModels();
+        if (models && models.length > 0) {
+          models[0].setValue(code);
+          return { ok: true, method: "Monaco", length: code.length };
+        }
+      } catch (e) {}
+    }
+
+    // 5. Try textarea or input or contenteditable
+    const target = selector ? document.querySelector(selector) : document.querySelector('textarea, [contenteditable="true"], .editor, #editor');
+    if (target) {
+      target.focus();
+      if (target.isContentEditable) {
+        target.innerText = code;
+        target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: code }));
+        return { ok: true, method: "contentEditable", length: code.length };
+      }
+      const nativeSetter = Object.getOwnPropertyDescriptor(
+        target.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      if (nativeSetter) nativeSetter.call(target, code);
+      else target.value = code;
+      target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: code }));
+      target.dispatchEvent(new Event("change", { bubbles: true }));
+      return { ok: true, method: "textarea", length: code.length };
+    }
+
+    // Fallback: document.execCommand
+    document.execCommand('insertText', false, code);
+    return { ok: true, method: "execCommand", length: code.length };
   }
 
   function executeType(selector, value) {
@@ -774,7 +871,12 @@
     }
 
     if (msg.type === "EXECUTE_CLICK") {
-      sendResponse(executeClick(msg.x, msg.y));
+      sendResponse(executeClick(msg.x, msg.y, msg.selector, msg.text));
+      return false;
+    }
+
+    if (msg.type === "EXECUTE_WRITE_CODE") {
+      sendResponse(executeWriteCode(msg.code, msg.selector));
       return false;
     }
 

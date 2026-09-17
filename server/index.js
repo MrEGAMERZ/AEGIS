@@ -30,7 +30,7 @@ function log(level, msg, extra) {
 // ── Action extraction ────────────────────────────────────────────────
 // VLMs frequently wrap JSON in prose or markdown fences. Extract the first
 // valid action object so the extension can JSON.parse the content directly.
-const VALID_ACTIONS = ["click", "type", "scroll", "navigate", "done", "fill_many", "key_press", "hover", "extract_text", "clear", "focus", "wait", "select"];
+const VALID_ACTIONS = ["click", "type", "scroll", "navigate", "done", "fill_many", "key_press", "hover", "extract_text", "clear", "focus", "wait", "select", "write_code"];
 
 function normalizeAction(obj) {
   if (!obj || typeof obj !== "object") return null;
@@ -39,8 +39,21 @@ function normalizeAction(obj) {
 
   switch (action) {
     case "click":
-      if (typeof obj.x !== "number" || typeof obj.y !== "number") return null;
-      return { action, x: obj.x, y: obj.y };
+      if (typeof obj.selector === "string" && obj.selector) {
+        return { action, selector: obj.selector };
+      }
+      if (typeof obj.text === "string" && obj.text) {
+        return { action, text: obj.text };
+      }
+      if (typeof obj.x === "number" && typeof obj.y === "number") {
+        return { action, x: obj.x, y: obj.y };
+      }
+      return null;
+    case "write_code": {
+      const code = typeof obj.code === "string" ? obj.code : (typeof obj.value === "string" ? obj.value : "");
+      if (!code) return null;
+      return { action, code, selector: typeof obj.selector === "string" ? obj.selector : "" };
+    }
     case "type":
     case "select": {
       if (typeof obj.selector !== "string" || typeof obj.value !== "string") return null;

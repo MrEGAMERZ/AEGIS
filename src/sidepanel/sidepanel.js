@@ -245,6 +245,77 @@ function setStatus(text, show) {
   chatStatus.hidden = !show;
 }
 
+function formatMarkdownContent(container, rawText) {
+  if (!rawText) return;
+  // Match code blocks ```lang\ncode```
+  const parts = rawText.split(/(```[a-zA-Z0-9_+-]*\n[\s\S]*?```)/g);
+  for (const part of parts) {
+    if (!part) continue;
+    const match = part.match(/^```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```$/);
+    if (match) {
+      const lang = (match[1] || "code").toUpperCase();
+      const code = match[2];
+
+      const blockWrap = document.createElement("div");
+      blockWrap.className = "code-block-wrapper";
+
+      const header = document.createElement("div");
+      header.className = "code-block-header";
+      header.innerHTML = `
+        <span class="code-lang">${escapeHtml(lang)}</span>
+        <div class="code-block-actions">
+          <button type="button" class="code-btn code-insert-btn" title="Insert into on-screen editor">Insert into Editor</button>
+          <button type="button" class="code-btn code-copy-btn" title="Copy code">Copy</button>
+        </div>
+      `;
+
+      const insertBtn = header.querySelector(".code-insert-btn");
+      insertBtn.addEventListener("click", async () => {
+        try {
+          insertBtn.textContent = "Inserting…";
+          const res = await chrome.runtime.sendMessage({ type: "EXECUTE_WRITE_CODE", code });
+          if (res?.ok || res?.length) {
+            insertBtn.textContent = "✓ Inserted!";
+            setTimeout(() => { insertBtn.textContent = "Insert into Editor"; }, 2000);
+          } else {
+            insertBtn.textContent = "Failed";
+            setTimeout(() => { insertBtn.textContent = "Insert into Editor"; }, 2000);
+          }
+        } catch {
+          insertBtn.textContent = "Error";
+          setTimeout(() => { insertBtn.textContent = "Insert into Editor"; }, 2000);
+        }
+      });
+
+      const copyBtn = header.querySelector(".code-copy-btn");
+      copyBtn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(code);
+          copyBtn.textContent = "✓ Copied!";
+          setTimeout(() => { copyBtn.textContent = "Copy"; }, 2000);
+        } catch {
+          copyBtn.textContent = "Failed";
+          setTimeout(() => { copyBtn.textContent = "Copy"; }, 2000);
+        }
+      });
+
+      const pre = document.createElement("pre");
+      const codeEl = document.createElement("code");
+      codeEl.textContent = code;
+      pre.appendChild(codeEl);
+
+      blockWrap.appendChild(header);
+      blockWrap.appendChild(pre);
+      container.appendChild(blockWrap);
+    } else {
+      const textDiv = document.createElement("div");
+      textDiv.className = "message-text-segment";
+      textDiv.textContent = part;
+      container.appendChild(textDiv);
+    }
+  }
+}
+
 function renderMessage(role, text, imageUrl, animate = true) {
   if (welcomeMsg) welcomeMsg.style.display = 'none';
   const wrap = document.createElement('div');
@@ -268,7 +339,7 @@ function renderMessage(role, text, imageUrl, animate = true) {
 
   const body = document.createElement('div');
   body.className = 'message-content';
-  body.textContent = text;
+  formatMarkdownContent(body, text);
   wrap.appendChild(body);
   chatContainer.appendChild(wrap);
   chatContainer.scrollTop = chatContainer.scrollHeight;
