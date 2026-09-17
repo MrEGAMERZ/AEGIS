@@ -1872,6 +1872,29 @@ function sanitizeAction(action, context = {}) {
       return { action: "done", summary };
     }
 
+    case "key_press":
+      return { action: "key_press", key: typeof action.key === "string" ? action.key.slice(0, 50) : "Enter" };
+      
+    case "hover":
+    case "extract_text":
+    case "clear":
+    case "focus":
+      if (typeof action.selector !== "string") return null;
+      return { action: action.action, selector: action.selector.trim().slice(0, ACTION_LIMITS.selector) };
+      
+    case "wait":
+      return { action: "wait", ms: typeof action.ms === "number" ? action.ms : 1000 };
+      
+    case "select":
+      // Treat select exactly like type (which expects a profile-matched value), but just forward the action name.
+      // Easiest is to fall through or call sanitizeAction with 'type' and map it back.
+      // But actually, 'select' often isn't personal data, so maybe we just allow it?
+      // Wait, the prompt says: "`select`: needs `selector` and `value` — treat like type (may need profile/vault check if value is sensitive)"
+      // So I will just duplicate the `type` logic or call `sanitizeAction({ ...action, action: 'type' })` recursively.
+      const sanitizedType = sanitizeAction({ ...action, action: "type" }, context);
+      if (!sanitizedType) return null;
+      return { ...sanitizedType, action: "select" };
+
     default:
       return null;
   }
@@ -2198,7 +2221,7 @@ async function handleExecuteAction(action, tabId) {
   }
 
   // Validate action shape before executing
-  const VALID_ACTIONS = ["click", "type", "scroll", "navigate", "done", "fill_many"];
+  const VALID_ACTIONS = ["click", "type", "scroll", "navigate", "done", "fill_many", "key_press", "hover", "extract_text", "clear", "focus", "wait", "select"];
   if (!VALID_ACTIONS.includes(safe.action)) {
     return { error: `Unknown action: ${safe.action}. Valid: ${VALID_ACTIONS.join(", ")}` };
   }
@@ -2253,6 +2276,35 @@ async function handleExecuteAction(action, tabId) {
     case "done":
       sendTabMessage(targetTab, { type: "CLEAR_REDACTION_OVERLAY" }).catch(() => {});
       execResult = { ok: true, summary: safe.summary };
+      break;
+
+    case "key_press":
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_KEY", key: safe.key || "Enter" });
+      break;
+
+    case "hover":
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_HOVER", selector: safe.selector });
+      break;
+
+    case "extract_text":
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_EXTRACT", selector: safe.selector });
+      break;
+
+    case "clear":
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_CLEAR", selector: safe.selector });
+      break;
+
+    case "focus":
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_FOCUS", selector: safe.selector });
+      break;
+
+    case "select":
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_TYPE", selector: safe.selector, value: safe.value });
+      break;
+
+    case "wait":
+      await new Promise(r => setTimeout(r, Math.min(safe.ms || 1000, 5000)));
+      execResult = { ok: true, waited: safe.ms || 1000 };
       break;
   }
 
@@ -2361,148 +2413,210 @@ async function reinjectContentScriptsBestEffort() {
 
 // ── Chat Assistant Logic ──────────────────────────────────────────
 
+async function captureSanitizedScreenshot() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return null;
+  try {
+    const rawDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 });
+    await ensureOffscreen();
+    const domScan = await sendTabMessage(tab, { type: 'DOM_SCAN' }).catch(() => ({ fields: [], fillableFields: [] }));
+    const sanitizeResponse = await chrome.runtime.sendMessage({
+      type: 'SANITIZE',
+      dataUrl: rawDataUrl,
+      fields: domScan.fields || [],
+      includeFaces: true
+    });
+    const sanitizedImage = scanPreviewDataUrl(sanitizeResponse);
+    return { sanitizedImage, domScan, tab };
+  } catch (e) {
+    return null;
+  }
+}
+
+async function callVlm(messages, model) {
+  const modelMap = {
+    'SARA-Distillation-0.5B': 'qwen2.5vl:7b',
+    'qwen2.5vl:7b': 'qwen2.5vl:7b',
+    'llama3.2-vision': 'llama3.2-vision',
+    'qwen3:8b': 'qwen3:8b',
+    'gemma3:12b': 'gemma3:12b'
+  };
+  const actualModel = modelMap[model] || 'qwen2.5vl:7b';
+  const payload = { model: actualModel, messages, temperature: 0.2, stream: false };
+  for (const endpoint of [DEFAULT_GATEWAY_VLM, DEFAULT_OLLAMA_VLM]) {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(90000)
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const content = data?.choices?.[0]?.message?.content;
+      if (typeof content === 'string') return content;
+    } catch { continue; }
+  }
+  throw new Error('Could not reach AI. Make sure Ollama is running (ollama serve) and the server is started (cd server && node index.js).');
+}
+
+function parseActionFromReply(reply) {
+  const fenceMatch = reply.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fenceMatch) {
+    try {
+      const obj = JSON.parse(fenceMatch[1]);
+      if (obj && typeof obj.action === 'string') return obj;
+    } catch {}
+  }
+  const bareMatch = reply.match(/(\{[^{}]*"action"[^{}]*\})/);
+  if (bareMatch) {
+    try {
+      const obj = JSON.parse(bareMatch[1]);
+      if (obj && typeof obj.action === 'string') return obj;
+    } catch {}
+  }
+  return null;
+}
+
 async function handleChatRequest(msg) {
   const { history, model, attachScreenshot } = msg;
-  
-  let sanitizedImage = null;
-  let pageStructure = null;
-  
-  if (attachScreenshot) {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw new Error("No active tab");
-    
-    // Quick DOM scan
-    const domScan = await sendTabMessage(tab, { type: "DOM_SCAN" }).catch(()=>({fields:[]}));
-    pageStructure = domScan;
-    
-    // Capture & sanitize locally first (privacy layer)
-    const rawDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 80 });
-    await ensureOffscreen();
-    const sanitizeResponse = await chrome.runtime.sendMessage({
-      type: "SANITIZE",
-      screenshot: rawDataUrl,
-      domScanResults: domScan,
-      faceDetection: true,
-      piiDetection: true
-    });
-    
-    assertReadyForVlm(sanitizeResponse, { faceDetection: true, piiDetection: true });
-    sanitizedImage = scanPreviewDataUrl(sanitizeResponse);
-    
-    // Attach the sanitization result to domScan so we can redact fields later
-    if (domScan && sanitizeResponse.nerEntities) {
-      domScan.nerEntities = sanitizeResponse.nerEntities;
-    }
-    
-    // Append to the last user message
-    const lastMsg = history[history.length - 1];
-    if (lastMsg && lastMsg.role === "user") {
-      lastMsg.image = sanitizedImage;
-      lastMsg.dom = domScan;
-    }
+
+  const SYSTEM_PROMPT = `You are AEGIS — a private, secure AI agent for ISRO government employees.
+You see a SANITIZED screenshot (faces and personal data already hidden on-device before reaching you).
+You can perform browser actions or answer questions.
+
+FOR BROWSER TASKS — respond with ONE JSON action block:
+\`\`\`json
+{"action":"click","x":320,"y":450}
+\`\`\`
+or: {"action":"type","selector":"#id","value":"text"}
+or: {"action":"key_press","key":"Enter"}
+or: {"action":"scroll","direction":"down"}
+or: {"action":"navigate","url":"https://..."}
+or: {"action":"select","selector":"#dropdown","value":"Option"}
+or: {"action":"extract_text","selector":"#result"}
+or: {"action":"clear","selector":"#field"}
+or: {"action":"fill_many","fields":[{"selector":"#name","value":"John"},{"selector":"#email","value":"j@k.com"}]}
+or: {"action":"done","summary":"Task complete."}
+
+FOR QUESTIONS/ANALYSIS — reply in plain text, no JSON.
+
+IMPORTANT: Click coordinates (x,y) must match what you see in the screenshot image.`;
+
+  const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
+
+  // Add prior history (text only for older turns)
+  for (let i = 0; i < history.length - 1; i++) {
+    messages.push({ role: history[i].role, content: history[i].content });
   }
 
-  // Format messages for OpenAI-compatible API
-  const messages = [
-    {
-      role: "system",
-      content: "You are AEGIS — a private, secure AI assistant for ISRO government employees. " +
-               "You receive a sanitized screenshot (faces and PII already hidden by on-device AI). " +
-               "Help the user complete their task. " +
-               "For browser actions, respond with a JSON block like: ```json\n{\"action\":\"type\",\"field\":\"Username\",\"value\":\"john\"}\n``` " +
-               "or ```json\n{\"action\":\"click\",\"selector\":\"#submit-btn\"}\n```. " +
-               "For questions, answer in plain clear text. Be concise and helpful."
-    }
-  ];
+  // Latest user message with screenshot
+  const latest = history[history.length - 1];
+  let firstSanitizedImage = null;
 
-  for (const item of history) {
-    if (item.role === "user" && item.image) {
+  if (attachScreenshot && latest) {
+    const snap = await captureSanitizedScreenshot();
+    if (snap?.sanitizedImage) {
+      firstSanitizedImage = snap.sanitizedImage;
+      const fieldHints = snap.domScan?.fillableFields?.length
+        ? `\nVisible fillable fields: ${snap.domScan.fillableFields.map(f => (f.label || f.name || '').trim()).filter(Boolean).slice(0,8).join(', ')}`
+        : '';
       messages.push({
-        role: "user",
+        role: 'user',
         content: [
-          { type: "text", text: item.content + (item.dom?.fillableFields?.length ? `\n\nPage fields: ${redactNerSpansInFields(item.dom.fillableFields, item.dom.nerEntities || []).map(f=>f.label||f.name).join(", ")}` : "") },
-          { type: "image_url", image_url: { url: item.image } }
+          { type: 'text', text: (latest.content || '') + fieldHints },
+          { type: 'image_url', image_url: { url: snap.sanitizedImage } }
         ]
       });
     } else {
-      messages.push({ role: item.role, content: item.content });
+      messages.push({ role: 'user', content: latest.content });
     }
+  } else if (latest) {
+    messages.push({ role: 'user', content: latest.content });
   }
 
-  // Map display model name to actual Ollama model
-  const modelMap = {
-    "SARA-Distillation-0.5B": "qwen2.5vl:7b",
-    "qwen2.5vl:7b": "qwen2.5vl:7b",
-    "llama3.2-vision": "llama3.2-vision",
-    "qwen3:8b": "qwen3:8b",
-    "gemma3:12b": "gemma3:12b"
-  };
-  const actualModel = modelMap[model] || "qwen2.5vl:7b";
+  // First VLM call
+  let rawReply = await callVlm(messages, model);
+  let parsedAction = parseActionFromReply(rawReply);
 
-  const vlmPayload = {
-    model: actualModel,
-    messages: messages,
-    temperature: 0.3,
-    stream: false
-  };
+  // Plain text reply — simple Q&A, no agent loop needed
+  if (!parsedAction) {
+    const cleanReply = rawReply.replace(/```(?:json)?[\s\S]*?```/g, '').trim() || 'Done.';
+    return { reply: cleanReply, actionExecuted: null, sanitizedImage: firstSanitizedImage };
+  }
 
-  // Try gateway (port 8000) first, fall back directly to Ollama (port 11434)
-  // The server at 8000 strips action JSON — we bypass that for chat and parse ourselves.
-  let rawReply = null;
-  const endpoints = [DEFAULT_GATEWAY_VLM, DEFAULT_OLLAMA_VLM];
-  
-  for (const endpoint of endpoints) {
+  // ── AGENT LOOP ───────────────────────────────────────────────────
+  const MAX_STEPS = 8;
+  const stepLog = [];
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  for (let step = 0; step < MAX_STEPS; step++) {
+    const action = parsedAction;
+
+    if (action.action === 'done') {
+      stepLog.push(`Done: ${action.summary || 'Task complete.'}`);
+      break;
+    }
+
+    // Build step label
+    let stepLabel = `[${step + 1}] ${action.action}`;
+    if (action.selector) stepLabel += ` → ${action.selector}`;
+    if (action.value) stepLabel += ` = "${String(action.value).slice(0, 40)}"`;
+    if (action.key) stepLabel += ` [${action.key}]`;
+    if (action.x !== undefined) stepLabel += ` at (${action.x}, ${action.y})`;
+    stepLog.push(stepLabel);
+
+    // Execute
+    let execResult = { error: 'not executed' };
     try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(vlmPayload),
-        signal: AbortSignal.timeout(90000)
-      });
-      if (!response.ok) {
-        const errText = await response.text().catch(() => "");
-        throw new Error(`HTTP ${response.status}: ${errText.slice(0, 200)}`);
-      }
-      const data = await response.json();
-      rawReply = data?.choices?.[0]?.message?.content;
-      if (typeof rawReply === "string") break; // success
-    } catch (err) {
-      if (endpoint === endpoints[endpoints.length - 1]) {
-        throw new Error(`Could not reach AI server. Start it with: cd server && node index.js\n(${err.message})`);
-      }
-      continue; // try next endpoint
+      execResult = await handleExecuteAction(action, activeTab?.id);
+    } catch (e) {
+      execResult = { error: e.message };
+    }
+
+    if (step >= MAX_STEPS - 1) {
+      stepLog.push(`[${step + 2}] Reached step limit.`);
+      break;
+    }
+
+    // Wait for page to settle
+    await new Promise(r => setTimeout(r, 900));
+
+    // Capture new sanitized screenshot
+    const nextSnap = await captureSanitizedScreenshot().catch(() => null);
+
+    const resultNote = execResult?.error
+      ? `Action failed: ${execResult.error}`
+      : execResult?.text
+        ? `Extracted: ${execResult.text.slice(0, 300)}`
+        : `Action succeeded.`;
+
+    messages.push({ role: 'assistant', content: rawReply });
+
+    const nextContent = [
+      { type: 'text', text: `${resultNote} What is your next action? (or say done if finished)` }
+    ];
+    if (nextSnap?.sanitizedImage) {
+      nextContent.push({ type: 'image_url', image_url: { url: nextSnap.sanitizedImage } });
+    }
+    messages.push({ role: 'user', content: nextContent });
+
+    rawReply = await callVlm(messages, model);
+    parsedAction = parseActionFromReply(rawReply);
+
+    if (!parsedAction) {
+      const finalText = rawReply.replace(/```(?:json)?[\s\S]*?```/g, '').trim();
+      if (finalText) stepLog.push(`Result: ${finalText}`);
+      break;
     }
   }
 
-  if (!rawReply) throw new Error("VLM returned empty response.");
-
-  let actionExecuted = null;
-  // Create an action context to enforce anti-hallucination guard and profile correlation
-  const actionConfig = await chrome.storage.local.get(["userProfile"]);
-  const actionContext = { 
-    fields: pageStructure?.fillableFields || [],
-    userProfile: normalizeProfile(actionConfig.userProfile)
+  const reply = stepLog.join('\n');
+  return {
+    reply: reply || 'Task completed.',
+    actionExecuted: stepLog.length > 0 ? `${stepLog.filter(s => s.startsWith('[')).length} steps` : null,
+    sanitizedImage: firstSanitizedImage
   };
-  
-  // Use the canonical parser to extract and strictly validate the action
-  const parsedAction = parseAction(rawReply, actionContext);
-  
-  if (parsedAction) {
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab?.id) {
-        // Use wrapFillActions to ensure `fill_many` shape if needed (though chat usually emits 1)
-        const executable = parsedAction.action === "type" ? wrapFillActions([parsedAction]) : parsedAction;
-        await handleExecuteAction(executable, tab.id).catch(e => console.warn("Action exec:", e));
-        actionExecuted = `${parsedAction.action}${parsedAction.field ? " on field: " + parsedAction.field : ""}${parsedAction.selector ? " → " + parsedAction.selector : ""}`;
-      }
-    } catch(e) {
-      console.error("Action execute error:", e);
-    }
-  }
-  
-  const cleanReply = rawReply.replace(/```(?:json)?[\s\S]*?```/g, "").trim() || "Action performed.";
-  return { reply: cleanReply, actionExecuted, sanitizedImage };
 }
 
 

@@ -32,21 +32,37 @@ const SESSION_STORAGE_KEY = 'aegisChatSessions';
 const ACTIVE_SESSION_KEY  = 'aegisActiveChatId';
 
 async function getSessions() {
-  const data = await chrome.storage.local.get(SESSION_STORAGE_KEY);
-  return data[SESSION_STORAGE_KEY] || [];
+  try {
+    const data = await chrome.storage.local.get(SESSION_STORAGE_KEY);
+    return data[SESSION_STORAGE_KEY] || [];
+  } catch {
+    return [];
+  }
 }
 
 async function saveSessions(sessions) {
-  await chrome.storage.local.set({ [SESSION_STORAGE_KEY]: sessions });
+  try {
+    await chrome.storage.local.set({ [SESSION_STORAGE_KEY]: sessions });
+  } catch {
+    /* storage unavailable (non-extension preview) */
+  }
 }
 
 async function getActiveSessionId() {
-  const data = await chrome.storage.local.get(ACTIVE_SESSION_KEY);
-  return data[ACTIVE_SESSION_KEY] || null;
+  try {
+    const data = await chrome.storage.local.get(ACTIVE_SESSION_KEY);
+    return data[ACTIVE_SESSION_KEY] || null;
+  } catch {
+    return null;
+  }
 }
 
 async function setActiveSessionId(id) {
-  await chrome.storage.local.set({ [ACTIVE_SESSION_KEY]: id });
+  try {
+    await chrome.storage.local.set({ [ACTIVE_SESSION_KEY]: id });
+  } catch {
+    /* storage unavailable (non-extension preview) */
+  }
 }
 
 function generateId() {
@@ -55,16 +71,44 @@ function generateId() {
 
 function generateName(messages) {
   const firstUser = messages.find(m => m.role === 'user');
-  if (!firstUser) return 'New Chat';
+  if (!firstUser) return 'New chat';
   const text = firstUser.content.replace(/[📸🔒]/g, '').trim();
   return text.length > 30 ? text.slice(0, 30) + '…' : text;
 }
 
+async function pruneEmptySessions() {
+  const sessions = await getSessions();
+  const activeId = await getActiveSessionId();
+  const kept = [];
+  let keptEmpty = false;
+  for (const session of sessions) {
+    if (session.messages.length > 0) {
+      kept.push(session);
+      continue;
+    }
+    if (!keptEmpty) {
+      kept.push(session);
+      keptEmpty = true;
+    }
+  }
+  if (kept.length !== sessions.length) {
+    await saveSessions(kept);
+  }
+  if (activeId && !kept.some((s) => s.id === activeId)) {
+    await setActiveSessionId(kept[0] ? kept[0].id : null);
+  }
+}
+
 async function createNewSession() {
   const sessions = await getSessions();
+  const empty = sessions.find((s) => s.messages.length === 0);
+  if (empty) {
+    await setActiveSessionId(empty.id);
+    return empty;
+  }
   const newSession = {
     id: generateId(),
-    name: 'New Chat',
+    name: 'New chat',
     created: Date.now(),
     messages: []
   };
@@ -91,7 +135,7 @@ async function saveMessageToSession(sessionId, message) {
   if (idx === -1) return;
   sessions[idx].messages.push(message);
   // Auto-name from first user message
-  if (sessions[idx].name === 'New Chat' && message.role === 'user') {
+  if ((sessions[idx].name === 'New Chat' || sessions[idx].name === 'New chat') && message.role === 'user') {
     sessions[idx].name = generateName(sessions[idx].messages);
   }
   await saveSessions(sessions);
@@ -111,29 +155,49 @@ async function deleteSession(sessionId) {
   }
 }
 
+function closeSessionsPanel() {
+  if (!sessionsPanel) return;
+  sessionsPanel.hidden = true;
+  if (btnSessionsToggle) btnSessionsToggle.setAttribute('aria-expanded', 'false');
+}
+
+function isSessionsPanelOpen() {
+  return sessionsPanel && !sessionsPanel.hidden;
+}
+
 async function renderSessionsList() {
   const sessions = await getSessions();
   const activeId = await getActiveSessionId();
+  const visible = sessions.filter((s) => s.messages.length > 0);
   sessionsList.innerHTML = '';
-  sessions.forEach(session => {
-    const item = document.createElement('div');
-    item.className = 'session-item' + (session.id === activeId ? ' active' : '');
-    item.innerHTML = `
+  if (!visible.length) {
+    const empty = document.createElement('div');
+    empty.className = 'sessions-empty';
+    empty.textContent = 'No earlier chats';
+    sessionsList.appendChild(empty);
+  } else {
+    visible.forEach((session) => {
+      const item = document.createElement('div');
+      item.className = 'session-item' + (session.id === activeId ? ' active' : '');
+      item.innerHTML = `
       <div class="session-info">
         <div class="session-name">${escapeHtml(session.name)}</div>
-        <div class="session-meta">${session.messages.length} msgs · ${formatDate(session.created)}</div>
+        <div class="session-meta">${session.messages.length} · ${formatDate(session.created)}</div>
       </div>
-      <button class="session-delete" data-id="${session.id}" title="Delete">🗑</button>
+      <button type="button" class="session-delete" data-id="${session.id}" aria-label="Delete chat" title="Delete">×</button>
     `;
-    item.querySelector('.session-info').addEventListener('click', () => switchSession(session.id));
-    item.querySelector('.session-delete').addEventListener('click', async (e) => {
-      e.stopPropagation();
-      await deleteSession(session.id);
-      await loadActiveSession();
-      await renderSessionsList();
+      item.querySelector('.session-delete').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await deleteSession(session.id);
+        await loadActiveSession();
+        await renderSessionsList();
+      });
+      item.addEventListener('click', () => switchSession(session.id));
+      sessionsList.appendChild(item);
     });
-    sessionsList.appendChild(item);
-  });
+  }
+  const active = sessions.find((s) => s.id === activeId);
+  if (btnClearChat) btnClearChat.hidden = !(active && active.messages.length > 0);
 }
 
 function escapeHtml(str) {
@@ -152,8 +216,7 @@ function formatDate(ts) {
 async function switchSession(sessionId) {
   await setActiveSessionId(sessionId);
   await loadActiveSession();
-  await renderSessionsList();
-  sessionsPanel.classList.remove('open');
+  closeSessionsPanel();
 }
 
 let activeSessionId = null;
@@ -354,17 +417,35 @@ async function handleSend() {
 }
 
 // ── Session panel toggle ───────────────────────────────────
-btnSessionsToggle.addEventListener('click', async () => {
-  const isOpen = sessionsPanel.classList.toggle('open');
-  if (isOpen) await renderSessionsList();
+btnSessionsToggle.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (isSessionsPanelOpen()) {
+    closeSessionsPanel();
+    return;
+  }
+  sessionsPanel.hidden = false;
+  btnSessionsToggle.setAttribute('aria-expanded', 'true');
+  renderSessionsList();
+});
+
+document.addEventListener('click', (e) => {
+  if (!isSessionsPanelOpen()) return;
+  const toolbar = document.querySelector('.chat-toolbar');
+  if (toolbar && toolbar.contains(e.target)) return;
+  if (sessionsPanel.contains(e.target)) return;
+  closeSessionsPanel();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeSessionsPanel();
 });
 
 // ── New Chat ───────────────────────────────────────────────
-btnNewChat.addEventListener('click', async () => {
+btnNewChat.addEventListener('click', async (e) => {
+  e.stopPropagation();
   await createNewSession();
   await loadActiveSession();
-  await renderSessionsList();
-  sessionsPanel.classList.remove('open');
+  closeSessionsPanel();
 });
 
 // ── Clear current chat ─────────────────────────────────────
@@ -373,10 +454,11 @@ btnClearChat.addEventListener('click', async () => {
   const idx = sessions.findIndex(s => s.id === activeSessionId);
   if (idx !== -1) {
     sessions[idx].messages = [];
-    sessions[idx].name = 'New Chat';
+    sessions[idx].name = 'New chat';
     await saveSessions(sessions);
   }
   await loadActiveSession();
+  await renderSessionsList();
 });
 
 // ── Example chips ──────────────────────────────────────────
@@ -390,6 +472,6 @@ document.querySelectorAll('.example-chip').forEach(chip => {
 
 // ── Boot ───────────────────────────────────────────────────
 (async () => {
+  await pruneEmptySessions();
   await loadActiveSession();
-  await renderSessionsList();
 })();

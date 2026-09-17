@@ -347,9 +347,74 @@ body {
   overflow: hidden;
 }
 .tab-content { overflow-y: auto; flex: 1; }
-#tab-chat { display: none; flex-direction: column; padding: 0; overflow: hidden; }
+#tab-chat { display: none; flex-direction: column; padding: 0; overflow: hidden; position: relative; }
 #tab-chat.active { display: flex; }
 .tab-content.active { display: block; }
+
+/* ── Chat toolbar + history ──────────────────────────────── */
+.chat-toolbar {
+  flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; background: #fff; border-bottom: 1px solid #e2e8f0;
+}
+body.dark-mode .chat-toolbar { background: #0f172a; border-color: #1e293b; }
+.chat-history-btn {
+  flex: 1; min-width: 0; height: 32px; padding: 0 10px; gap: 6px;
+  display: flex; align-items: center;
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+  cursor: pointer; color: #0f172a; font: inherit; text-align: left;
+}
+.chat-history-btn:hover { background: #f1f5f9; }
+.chat-history-btn[aria-expanded="true"] { border-color: #2563eb; background: #eff6ff; }
+body.dark-mode .chat-history-btn { background: #1e293b; border-color: #334155; color: #f1f5f9; }
+body.dark-mode .chat-history-btn:hover,
+body.dark-mode .chat-history-btn[aria-expanded="true"] { background: #334155; border-color: #3b82f6; }
+.current-chat-name {
+  flex: 1; min-width: 0; font-size: 13px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-caret { flex-shrink: 0; color: #64748b; }
+.chat-icon-btn {
+  width: 32px; height: 32px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+  color: #334155; cursor: pointer;
+}
+.chat-icon-btn:hover { background: #f1f5f9; }
+body.dark-mode .chat-icon-btn { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+body.dark-mode .chat-icon-btn:hover { background: #334155; }
+.sessions-panel[hidden] { display: none !important; }
+.sessions-panel {
+  display: flex; flex-direction: column; flex-shrink: 0;
+  max-height: 42vh; background: #fff; border-bottom: 1px solid #e2e8f0;
+}
+body.dark-mode .sessions-panel { background: #0f172a; border-color: #1e293b; }
+.sessions-list { overflow-y: auto; padding: 6px; }
+.sessions-empty { padding: 14px 10px; text-align: center; font-size: 12px; color: #94a3b8; }
+.session-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent;
+}
+.session-item:hover { background: #f8fafc; }
+.session-item.active { background: #eff6ff; border-color: #bfdbfe; }
+body.dark-mode .session-item:hover { background: #1e293b; }
+body.dark-mode .session-item.active { background: rgba(30,58,138,0.25); border-color: rgba(59,130,246,0.35); }
+.session-info { flex: 1; min-width: 0; }
+.session-name { font-size: 12px; font-weight: 600; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.dark-mode .session-name { color: #e2e8f0; }
+.session-meta { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+.session-delete {
+  flex-shrink: 0; width: 24px; height: 24px; border: none; background: none;
+  border-radius: 6px; cursor: pointer; color: #94a3b8; font-size: 16px; line-height: 1;
+}
+.session-delete:hover { color: #dc2626; background: #fef2f2; }
+.chat-clear-row {
+  flex-shrink: 0; margin: 0 6px 6px; padding: 8px;
+  background: none; border: 1px solid #e2e8f0; border-radius: 8px;
+  font-size: 12px; font-weight: 600; color: #64748b; cursor: pointer;
+}
+.chat-clear-row:hover { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
+body.dark-mode .chat-clear-row { border-color: #334155; color: #94a3b8; }
+body.dark-mode .chat-clear-row:hover { background: #450a0a; border-color: #7f1d1d; color: #fecaca; }
 
 /* ── Chat UI ─────────────────────────────────────────────── */
 .chat-container {
@@ -408,7 +473,7 @@ body.dark-mode #chat-input { color: #f1f5f9; }
 .send-btn { color: #2563eb; opacity: 0.4; }
 .send-btn.active { opacity: 1; }
 .chat-footer { display: flex; align-items: center; margin-top: 6px; gap: 6px; }
-.privacy-note-chat { flex: 1; font-size: 10px; color: #94a3b8; text-align: center; }
+.privacy-note-chat, .privacy-indicator { flex: 1; font-size: 10px; color: #94a3b8; }
 .screenshot-hint { font-size: 10px; color: #2563eb; font-weight: 600; }
 .screenshot-hint.hidden { display: none; }
 .model-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
@@ -419,6 +484,7 @@ body.dark-mode #chat-input { color: #f1f5f9; }
 #tab-fill .status { margin: 0 0 10px !important; }
 #tab-fill .preview-wrap { margin: 0 0 16px !important; }
   </style>
+  <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
 
@@ -442,23 +508,23 @@ body.dark-mode #chat-input { color: #f1f5f9; }
 
   <div class="tab-content active" id="tab-chat">
 
-    <!-- Sessions bar -->
-    <div class="chat-sessions-bar">
-      <button class="sessions-btn" id="btn-sessions-toggle" title="All chats">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect y="1" width="14" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect y="6.25" width="14" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect y="11.5" width="14" height="1.5" rx="0.75" fill="currentColor"/>
+    <div class="chat-toolbar">
+      <button type="button" class="chat-history-btn" id="btn-sessions-toggle" aria-expanded="false" aria-controls="sessions-panel" title="Chat history">
+        <span id="current-chat-name" class="current-chat-name">New chat</span>
+        <svg class="chat-caret" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        Chats
       </button>
-      <span id="current-chat-name" class="current-chat-name">New Chat</span>
-      <button class="btn-new-chat" id="btn-new-chat">New chat</button>
+      <button type="button" class="chat-icon-btn" id="btn-new-chat" aria-label="New chat" title="New chat">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+      </button>
     </div>
 
-    <!-- Sessions dropdown — overlays the chat container -->
-    <div class="sessions-panel" id="sessions-panel">
+    <div class="sessions-panel" id="sessions-panel" hidden>
       <div class="sessions-list" id="sessions-list"></div>
+      <button type="button" class="chat-clear-row" id="btn-clear-chat" hidden>Clear this chat</button>
     </div>
 
     <div class="chat-container" id="chat-container">
@@ -496,12 +562,11 @@ body.dark-mode #chat-input { color: #f1f5f9; }
       </div>
       <div class="chat-footer">
         <div class="privacy-indicator">
-          <svg width="10" height="12" viewBox="0 0 10 12" fill="none">
+          <svg width="10" height="12" viewBox="0 0 10 12" fill="none" aria-hidden="true">
             <path d="M5 1L9 2.5V6C9 8.761 7.209 11.206 5 12C2.791 11.206 1 8.761 1 6V2.5L5 1Z" fill="#22c55e" fill-opacity="0.2" stroke="#22c55e" stroke-width="1"/>
           </svg>
           Screen sanitized before sending
         </div>
-        <button class="clear-btn" id="btn-clear-chat" title="Clear chat">Clear</button>
       </div>
       <div class="model-row">
         <label>Model</label>

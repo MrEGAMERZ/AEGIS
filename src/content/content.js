@@ -346,6 +346,57 @@
     return { ok: true, scrolled: direction };
   }
 
+  function executeKey(key) {
+    const el = document.activeElement || document.body;
+    const init = { key, code: key, bubbles: true, cancelable: true };
+    el.dispatchEvent(new KeyboardEvent('keydown', init));
+    el.dispatchEvent(new KeyboardEvent('keypress', init));
+    el.dispatchEvent(new KeyboardEvent('keyup', init));
+    if (key === 'Enter' && (el.tagName === 'INPUT' || el.tagName === 'BUTTON')) {
+      const form = el.closest('form');
+      if (form) form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    }
+    return { ok: true, key };
+  }
+
+  function executeHover(selector) {
+    const el = document.querySelector(selector);
+    if (!el) return { error: 'No element: ' + selector };
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    ['mouseenter','mouseover','mousemove'].forEach(t =>
+      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }))
+    );
+    return { ok: true, selector };
+  }
+
+  function executeExtract(selector) {
+    const root = selector ? document.querySelector(selector) : document.body;
+    if (selector && !root) return { error: 'No element: ' + selector };
+    const text = (root.innerText || root.textContent || '').replace(/\s+/g, ' ').trim();
+    return { text: text.slice(0, 4000) };
+  }
+
+  function executeClear(selector) {
+    const el = document.querySelector(selector);
+    if (!el) return { error: 'No element: ' + selector };
+    el.focus();
+    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    if (setter) setter.call(el, '');
+    else el.value = '';
+    el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return { ok: true, cleared: selector };
+  }
+
+  function executeFocus(selector) {
+    const el = document.querySelector(selector);
+    if (!el) return { error: 'No element: ' + selector };
+    el.scrollIntoView({ block: 'center' });
+    el.focus();
+    return { ok: true, selector };
+  }
+
   // ── Redaction Overlay ────────────────────────────────────────────
   // Injects a fixed-position overlay root into the page DOM.
   // Boxes are re-anchored from live element getBoundingClientRect() on
@@ -734,6 +785,26 @@
 
     if (msg.type === "EXECUTE_SCROLL") {
       sendResponse(executeScroll(msg.direction));
+      return false;
+    }
+    if (msg.type === 'EXECUTE_KEY') {
+      sendResponse(executeKey(msg.key || 'Enter'));
+      return false;
+    }
+    if (msg.type === 'EXECUTE_HOVER') {
+      sendResponse(executeHover(msg.selector));
+      return false;
+    }
+    if (msg.type === 'EXECUTE_EXTRACT') {
+      sendResponse(executeExtract(msg.selector));
+      return false;
+    }
+    if (msg.type === 'EXECUTE_CLEAR') {
+      sendResponse(executeClear(msg.selector));
+      return false;
+    }
+    if (msg.type === 'EXECUTE_FOCUS') {
+      sendResponse(executeFocus(msg.selector));
       return false;
     }
   });

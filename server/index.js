@@ -30,7 +30,7 @@ function log(level, msg, extra) {
 // ── Action extraction ────────────────────────────────────────────────
 // VLMs frequently wrap JSON in prose or markdown fences. Extract the first
 // valid action object so the extension can JSON.parse the content directly.
-const VALID_ACTIONS = ["click", "type", "scroll", "navigate", "done"];
+const VALID_ACTIONS = ["click", "type", "scroll", "navigate", "done", "fill_many", "key_press", "hover", "extract_text", "clear", "focus", "wait", "select"];
 
 function normalizeAction(obj) {
   if (!obj || typeof obj !== "object") return null;
@@ -41,7 +41,8 @@ function normalizeAction(obj) {
     case "click":
       if (typeof obj.x !== "number" || typeof obj.y !== "number") return null;
       return { action, x: obj.x, y: obj.y };
-    case "type": {
+    case "type":
+    case "select": {
       if (typeof obj.selector !== "string" || typeof obj.value !== "string") return null;
       const typed = { action, selector: obj.selector, value: obj.value };
       // Keep profileKey so the extension can prove the value came from
@@ -59,6 +60,16 @@ function normalizeAction(obj) {
       return { action, url: obj.url };
     case "done":
       return { action, summary: typeof obj.summary === "string" ? obj.summary : "Task complete" };
+    case "key_press":
+      return { action, key: typeof obj.key === "string" ? obj.key : "Enter" };
+    case "hover":
+    case "extract_text":
+    case "clear":
+    case "focus":
+      if (typeof obj.selector !== "string") return null;
+      return { action, selector: obj.selector };
+    case "wait":
+      return { action, ms: typeof obj.ms === "number" ? obj.ms : 1000 };
     default:
       return null;
   }
