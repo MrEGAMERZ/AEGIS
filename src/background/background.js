@@ -2380,13 +2380,21 @@ async function handleChatRequest(msg) {
     await ensureOffscreen();
     const sanitizeResponse = await chrome.runtime.sendMessage({
       type: "SANITIZE",
-      dataUrl: rawDataUrl,
-      fields: domScan.fields || [],
-      includeFaces: true
+      screenshot: rawDataUrl,
+      domScanResults: domScan,
+      faceDetection: true,
+      piiDetection: true
     });
+    
+    assertReadyForVlm(sanitizeResponse, { faceDetection: true, piiDetection: true });
     sanitizedImage = scanPreviewDataUrl(sanitizeResponse);
     
-    // Attach sanitized image to the last user message in history
+    // Attach the sanitization result to domScan so we can redact fields later
+    if (domScan && sanitizeResponse.nerEntities) {
+      domScan.nerEntities = sanitizeResponse.nerEntities;
+    }
+    
+    // Append to the last user message
     const lastMsg = history[history.length - 1];
     if (lastMsg && lastMsg.role === "user") {
       lastMsg.image = sanitizedImage;
@@ -2412,7 +2420,7 @@ async function handleChatRequest(msg) {
       messages.push({
         role: "user",
         content: [
-          { type: "text", text: item.content + (item.dom?.fillableFields?.length ? `\n\nPage fields: ${item.dom.fillableFields.map(f=>f.label||f.name).join(", ")}` : "") },
+          { type: "text", text: item.content + (item.dom?.fillableFields?.length ? `\n\nPage fields: ${redactNerSpansInFields(item.dom.fillableFields, item.dom.nerEntities || []).map(f=>f.label||f.name).join(", ")}` : "") },
           { type: "image_url", image_url: { url: item.image } }
         ]
       });
@@ -2469,23 +2477,27 @@ async function handleChatRequest(msg) {
   if (!rawReply) throw new Error("VLM returned empty response.");
 
   let actionExecuted = null;
-  // Parse JSON action from reply (inside ```json...``` or bare JSON object)
-  const fenceMatch = rawReply.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
-  const bareMatch = rawReply.match(/(\{"action"\s*:[\s\S]*?\})/);
-  const jsonMatch = fenceMatch || bareMatch;
+  // Create an action context to enforce anti-hallucination guard and profile correlation
+  const actionConfig = await chrome.storage.local.get(["userProfile"]);
+  const actionContext = { 
+    fields: pageStructure?.fillableFields || [],
+    userProfile: normalizeProfile(actionConfig.userProfile)
+  };
   
-  if (jsonMatch) {
+  // Use the canonical parser to extract and strictly validate the action
+  const parsedAction = parseAction(rawReply, actionContext);
+  
+  if (parsedAction) {
     try {
-      const actionObj = JSON.parse(jsonMatch[1]);
-      if (actionObj.action) {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab?.id) {
-          await handleExecuteAction(actionObj, tab.id).catch(e => console.warn("Action exec:", e));
-          actionExecuted = `${actionObj.action}${actionObj.field ? " on field: " + actionObj.field : ""}${actionObj.selector ? " → " + actionObj.selector : ""}`;
-        }
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id) {
+        // Use wrapFillActions to ensure `fill_many` shape if needed (though chat usually emits 1)
+        const executable = parsedAction.action === "type" ? wrapFillActions([parsedAction]) : parsedAction;
+        await handleExecuteAction(executable, tab.id).catch(e => console.warn("Action exec:", e));
+        actionExecuted = `${parsedAction.action}${parsedAction.field ? " on field: " + parsedAction.field : ""}${parsedAction.selector ? " → " + parsedAction.selector : ""}`;
       }
     } catch(e) {
-      console.error("Action parse/execute error:", e);
+      console.error("Action execute error:", e);
     }
   }
   
