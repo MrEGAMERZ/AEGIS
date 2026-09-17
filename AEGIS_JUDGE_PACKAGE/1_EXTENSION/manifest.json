@@ -12,8 +12,13 @@
     "storage",
     "scripting",
     "offscreen",
-    "contextMenus"
+    "contextMenus",
+    "sidePanel"
   ],
+
+  "side_panel": {
+    "default_path": "src/sidepanel/sidepanel.html"
+  },
 
   "host_permissions": ["<all_urls>"],
 
@@ -35,7 +40,6 @@
   ],
 
   "action": {
-    "default_popup": "src/popup/popup.html",
     "default_title": "AEGIS",
     "default_icon": {
       "16": "src/icons/icon16.png",

@@ -14,7 +14,7 @@ const source = fs.readFileSync(SRC_PATH, "utf8");
 const storage = {};
 const sandbox = {
   chrome: {
-    runtime: {
+    action: { onClicked: { addListener: () => {} } }, sidePanel: { setPanelBehavior: async () => {} }, runtime: {
       getURL: () => "chrome-extension://fake-id/",
       onMessage: { addListener: () => {} },
       onInstalled: { addListener: () => {} },
@@ -102,8 +102,8 @@ async function main() {
   };
   const storedGateway = await resolveVlmEndpoint("http://localhost:8000/v1/chat/completions");
   check(
-    "resolve keeps stored :8000 when probe fails",
-    storedGateway === DEFAULT_GATEWAY_VLM,
+    "resolve downgrades :8000 to :11434 when probe fails",
+    storedGateway === DEFAULT_OLLAMA_VLM,
     storedGateway
   );
 

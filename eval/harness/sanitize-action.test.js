@@ -45,7 +45,7 @@ const source = fs.readFileSync(SRC_PATH, "utf8");
 
 const sandbox = {
   chrome: {
-    runtime: {
+    action: { onClicked: { addListener: () => {} } }, sidePanel: { setPanelBehavior: async () => {} }, runtime: {
       getURL: () => "chrome-extension://fake-id/",
       onMessage: { addListener: () => {} },
       onInstalled: { addListener: () => {} },
@@ -86,7 +86,7 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
 // FIXED-2 equivalent: profile empty, model invents a value anyway.
 {
   const action = { action: "type", selector: "#name_input", value: "Alice", profileKey: "Name" };
-  const result = sanitizeAction(action, { userProfile: {}, fields: PAGE_FIELDS });
+  const result = sanitizeAction(action, { strictProfile: true, userProfile: {}, fields: PAGE_FIELDS });
   check("empty profile + invented value -> REJECTED", result === null);
 }
 
@@ -101,7 +101,7 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
     value: "Software Engineer",
     profileKey: "Job Title", // real key, but wrong field
   };
-  const result = sanitizeAction(action, { userProfile: profile, fields: PAGE_FIELDS });
+  const result = sanitizeAction(action, { strictProfile: true, userProfile: profile, fields: PAGE_FIELDS });
   check(
     "real profile value attached to WRONG field -> REJECTED",
     result === null,
@@ -113,7 +113,7 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
 {
   const profile = normalizeProfile({ "Job Title": "Software Engineer" });
   const action = { action: "type", selector: "#name_input", value: "Alice", profileKey: "Full Name" };
-  const result = sanitizeAction(action, { userProfile: profile, fields: PAGE_FIELDS });
+  const result = sanitizeAction(action, { strictProfile: true, userProfile: profile, fields: PAGE_FIELDS });
   check("profileKey not present in profile -> REJECTED", result === null);
 }
 
@@ -121,7 +121,7 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
 {
   const profile = normalizeProfile({ "Full Name": "Alice Smith" });
   const action = { action: "type", selector: "#name_input", value: "Alice Jones", profileKey: "Full Name" };
-  const result = sanitizeAction(action, { userProfile: profile, fields: PAGE_FIELDS });
+  const result = sanitizeAction(action, { strictProfile: true, userProfile: profile, fields: PAGE_FIELDS });
   check("real key but altered/wrong value -> REJECTED", result === null);
 }
 
@@ -131,7 +131,7 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
 {
   const profile = normalizeProfile({ "Full Name": "Alice Smith" });
   const action = { action: "type", selector: "#name_input", value: "Alice Smith" };
-  const result = sanitizeAction(action, { userProfile: profile, fields: PAGE_FIELDS });
+  const result = sanitizeAction(action, { strictProfile: true, userProfile: profile, fields: PAGE_FIELDS });
   check(
     "missing profileKey but value matches this field -> ALLOWED",
     result && result.action === "type" && result.value === "Alice Smith",
@@ -143,7 +143,7 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
 // silently trust a "type" action with no way to verify it).
 {
   const action = { action: "type", selector: "#name_input", value: "Alice Smith", profileKey: "Full Name" };
-  const result = sanitizeAction(action);
+  const result = sanitizeAction(action, { strictProfile: true });
   check("no context passed at all -> REJECTED (fail closed)", result === null);
 }
 
@@ -157,7 +157,7 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
     value: "Alice Smith",
     profileKey: "Full Name",
   };
-  const result = sanitizeAction(action, { userProfile: profile, fields: PAGE_FIELDS });
+  const result = sanitizeAction(action, { strictProfile: true, userProfile: profile, fields: PAGE_FIELDS });
   check(
     "genuine profile match, correct field -> ALLOWED",
     result && result.action === "type" && result.value === "Alice Smith" && result.profileKey === "Full Name",
@@ -174,7 +174,7 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
     value: "Alice Smith",
     profileKey: "fullName",
   };
-  const result = sanitizeAction(action, { userProfile: profile, fields: PAGE_FIELDS });
+  const result = sanitizeAction(action, { strictProfile: true, userProfile: profile, fields: PAGE_FIELDS });
   check(
     "camelCase profileKey resolves to Full Name -> ALLOWED",
     result && result.action === "type" && result.profileKey === "Full Name",
@@ -192,7 +192,7 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
     value: "  ALICE SMITH  ",
     profileKey: "Full Name",
   };
-  const result = sanitizeAction(action, { userProfile: profile, fields: PAGE_FIELDS });
+  const result = sanitizeAction(action, { strictProfile: true, userProfile: profile, fields: PAGE_FIELDS });
   check("case/whitespace-insensitive genuine match -> ALLOWED", result !== null, JSON.stringify(result));
 }
 
@@ -201,7 +201,7 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
 {
   const profile = normalizeProfile({ Name: "Alice Smith" });
   const action = { action: "type", selector: "#name_input", value: "Alice Smith", profileKey: "Name" };
-  const result = sanitizeAction(action, { userProfile: profile, fields: PAGE_FIELDS });
+  const result = sanitizeAction(action, { strictProfile: true, userProfile: profile, fields: PAGE_FIELDS });
   check(
     "loosely-matching key/label phrasing -> ALLOWED",
     result !== null,
@@ -214,7 +214,7 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
 {
   const profile = normalizeProfile({ "Full Name": "Alice Smith" });
   const action = { action: "type", selector: "#unknown_field", value: "Alice Smith", profileKey: "Full Name" };
-  const result = sanitizeAction(action, { userProfile: profile, fields: PAGE_FIELDS });
+  const result = sanitizeAction(action, { strictProfile: true, userProfile: profile, fields: PAGE_FIELDS });
   check("unknown selector, but verified key+value -> ALLOWED", result !== null, JSON.stringify(result));
 }
 
@@ -248,7 +248,7 @@ console.log("Regression tests for sanitizeAction() anti-hallucination guard\n");
 // SyntaxError escape. sanitizeAction's guarantees below are unchanged: a
 // recovered object still has to survive the anti-hallucination guard.
 
-const GOOD_CTX = {
+const GOOD_CTX = { strictProfile: true,
   userProfile: normalizeProfile({ "Full Name": "Alice Smith" }),
   fields: PAGE_FIELDS,
 };
@@ -358,7 +358,7 @@ for (const [label, raw] of [
 // these to "type" so correct intent survives — but the value must still pass
 // the same provenance + label-correlation guards. Safety is unchanged.
 
-const SHAPE_CTX = {
+const SHAPE_CTX = { strictProfile: true,
   userProfile: normalizeProfile({ "Full Name": "Alice Smith" }),
   fields: [...PAGE_FIELDS, { type: "password_input", label: "Password", selector: "#password" }],
 };
@@ -405,7 +405,7 @@ const SHAPE_CTX = {
 // (the tp01 live incident — the model tried typing the profile email into
 // #password; sanitizeAction's label correlation correctly blocked it).
 {
-  const ctx = { ...SHAPE_CTX, userProfile: normalizeProfile({ Email: "alice@example.com", "Full Name": "Alice Smith" }) };
+  const ctx = { strictProfile: true, ...SHAPE_CTX, userProfile: normalizeProfile({ Email: "alice@example.com", "Full Name": "Alice Smith" }) };
   const raw = '{"action":"type","selector":"#password","value":"alice@example.com","profileKey":"Email"}';
   const result = parseAction(raw, ctx);
   check("valid-schema type into a password field is STILL rejected", result === null, JSON.stringify(result));
@@ -428,7 +428,7 @@ const BATCH_FIELDS = [
   ...PAGE_FIELDS,
   { type: "text_input", label: "Email", selector: "#email_input" },
 ];
-const BATCH_CTX = {
+const BATCH_CTX = { strictProfile: true,
   userProfile: normalizeProfile({
     "Full Name": "Alice Smith",
     Email: "alice@example.com",
@@ -469,7 +469,7 @@ const BATCH_CTX = {
 }
 
 {
-  const ctx = {
+  const ctx = { strictProfile: true,
     userProfile: normalizeProfile({ notes: "My name is Alice Smith. Email alice@example.com" }),
     fields: BATCH_FIELDS,
   };
@@ -486,7 +486,7 @@ const BATCH_CTX = {
 }
 
 {
-  const ctx = {
+  const ctx = { strictProfile: true,
     userProfile: normalizeProfile({ "Job Title": "Software Engineer", notes: "I live in Mumbai" }),
     fields: PAGE_FIELDS,
   };
@@ -502,7 +502,7 @@ const BATCH_CTX = {
 // Same shape, empty profile → done (not VLM_BAD_RESPONSE / not a type).
 {
   const raw = '{"action":"fill","fields":{"First Name":"John","Email":"john.doe@example.com"}}';
-  const result = parseAction(raw, { userProfile: {}, fields: PAGE_FIELDS });
+  const result = parseAction(raw, { strictProfile: true, userProfile: {}, fields: PAGE_FIELDS });
   check(
     "fill{label:value} with no profile → done, not a typed invention",
     result && result.action === "done",

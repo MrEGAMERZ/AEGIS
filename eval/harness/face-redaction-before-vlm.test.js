@@ -39,7 +39,7 @@ const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8"));
 
 const sandbox = {
   chrome: {
-    runtime: {
+    action: { onClicked: { addListener: () => {} } }, sidePanel: { setPanelBehavior: async () => {} }, runtime: {
       getURL: () => "chrome-extension://fake-id/",
       onMessage: { addListener: () => {} },
       onInstalled: { addListener: () => {} },

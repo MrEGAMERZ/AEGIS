@@ -28,7 +28,7 @@ const localSets = [];
 const sandbox = {
   URL,
   chrome: {
-    runtime: {
+    action: { onClicked: { addListener: () => {} } }, sidePanel: { setPanelBehavior: async () => {} }, runtime: {
       getURL: () => "chrome-extension://fake-id/",
       onMessage: { addListener: () => {} },
       onInstalled: { addListener: () => {} },

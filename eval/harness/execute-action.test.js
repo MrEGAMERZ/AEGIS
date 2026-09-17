@@ -166,7 +166,7 @@ function loadContentScript(hooks = {}) {
       }
     },
     chrome: {
-      runtime: {
+      action: { onClicked: { addListener: () => {} } }, sidePanel: { setPanelBehavior: async () => {} }, runtime: {
         onMessage: {
           addListener: (fn) => {
             messageListener = fn;

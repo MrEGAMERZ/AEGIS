@@ -55,12 +55,14 @@ function loadBackground(overrides = {}) {
     URL,
     Map,
     chrome: {
-      runtime: {
+      action: { onClicked: { addListener: () => {} } }, sidePanel: { setPanelBehavior: async () => {} }, runtime: {
         getURL: () => "chrome-extension://fake-id/",
         onMessage: { addListener: () => {} },
         onInstalled: { addListener: () => {} },
       },
       storage: { local: { set: async () => {} } },
+      action: { onClicked: { addListener: () => {} } },
+      sidePanel: { setPanelBehavior: async () => {} },
       tabs: {
         sendMessage: async (tabId, message) => {
           sendCalls.push({ tabId, message });

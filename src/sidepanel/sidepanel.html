@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <title>AEGIS</title>
   <style>
+/* ─── All popup.html styles (verbatim) ───────────────────── */
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
     body {
@@ -335,9 +337,166 @@
     body.dark-mode .risk-factor { background: #0f172a; border-color: #334155; color: #94a3b8; }
     body.dark-mode .risk-grade-badge.loading { background: #334155 !important; }
     body.dark-mode .risk-safe-msg { color: #4ade80; }
+  
+
+/* ─── Sidepanel layout overrides ─────────────────────────── */
+body {
+  width: 100% !important;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.tab-content { overflow-y: auto; flex: 1; }
+#tab-chat { display: none; flex-direction: column; padding: 0; overflow: hidden; position: relative; }
+#tab-chat.active { display: flex; }
+.tab-content.active { display: block; }
+
+/* ── Chat toolbar + history ──────────────────────────────── */
+.chat-toolbar {
+  flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; background: #fff; border-bottom: 1px solid #e2e8f0;
+}
+body.dark-mode .chat-toolbar { background: #0f172a; border-color: #1e293b; }
+.chat-history-btn {
+  flex: 1; min-width: 0; height: 32px; padding: 0 10px; gap: 6px;
+  display: flex; align-items: center;
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+  cursor: pointer; color: #0f172a; font: inherit; text-align: left;
+}
+.chat-history-btn:hover { background: #f1f5f9; }
+.chat-history-btn[aria-expanded="true"] { border-color: #2563eb; background: #eff6ff; }
+body.dark-mode .chat-history-btn { background: #1e293b; border-color: #334155; color: #f1f5f9; }
+body.dark-mode .chat-history-btn:hover,
+body.dark-mode .chat-history-btn[aria-expanded="true"] { background: #334155; border-color: #3b82f6; }
+.current-chat-name {
+  flex: 1; min-width: 0; font-size: 13px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-caret { flex-shrink: 0; color: #64748b; }
+.chat-icon-btn {
+  width: 32px; height: 32px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+  color: #334155; cursor: pointer;
+}
+.chat-icon-btn:hover { background: #f1f5f9; }
+body.dark-mode .chat-icon-btn { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+body.dark-mode .chat-icon-btn:hover { background: #334155; }
+.sessions-panel[hidden] { display: none !important; }
+.sessions-panel {
+  display: flex; flex-direction: column; flex-shrink: 0;
+  max-height: 42vh; background: #fff; border-bottom: 1px solid #e2e8f0;
+}
+body.dark-mode .sessions-panel { background: #0f172a; border-color: #1e293b; }
+.sessions-list { overflow-y: auto; padding: 6px; }
+.sessions-empty { padding: 14px 10px; text-align: center; font-size: 12px; color: #94a3b8; }
+.session-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent;
+}
+.session-item:hover { background: #f8fafc; }
+.session-item.active { background: #eff6ff; border-color: #bfdbfe; }
+body.dark-mode .session-item:hover { background: #1e293b; }
+body.dark-mode .session-item.active { background: rgba(30,58,138,0.25); border-color: rgba(59,130,246,0.35); }
+.session-info { flex: 1; min-width: 0; }
+.session-name { font-size: 12px; font-weight: 600; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.dark-mode .session-name { color: #e2e8f0; }
+.session-meta { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+.session-delete {
+  flex-shrink: 0; width: 24px; height: 24px; border: none; background: none;
+  border-radius: 6px; cursor: pointer; color: #94a3b8; font-size: 16px; line-height: 1;
+}
+.session-delete:hover { color: #dc2626; background: #fef2f2; }
+.chat-clear-row {
+  flex-shrink: 0; margin: 0 6px 6px; padding: 8px;
+  background: none; border: 1px solid #e2e8f0; border-radius: 8px;
+  font-size: 12px; font-weight: 600; color: #64748b; cursor: pointer;
+}
+.chat-clear-row:hover { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
+body.dark-mode .chat-clear-row { border-color: #334155; color: #94a3b8; }
+body.dark-mode .chat-clear-row:hover { background: #450a0a; border-color: #7f1d1d; color: #fecaca; }
+
+/* ── Chat UI ─────────────────────────────────────────────── */
+.chat-container {
+  flex: 1; overflow-y: auto; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.welcome-msg { text-align: center; padding: 24px 16px; }
+.welcome-icon { font-size: 40px; margin-bottom: 12px; }
+.welcome-title { font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
+body.dark-mode .welcome-title { color: #f1f5f9; }
+.welcome-body { font-size: 12px; line-height: 1.6; color: #64748b; margin-bottom: 14px; }
+.welcome-examples { display: flex; flex-direction: column; gap: 7px; text-align: left; }
+.example-chip {
+  padding: 9px 12px; background: #f8fafc; border: 1px solid #e2e8f0;
+  border-radius: 8px; font-size: 12px; cursor: pointer; color: #334155;
+  transition: 0.15s;
+}
+body.dark-mode .example-chip { background: #1e293b; border-color: #334155; color: #94a3b8; }
+.example-chip:hover { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+.message { display: flex; flex-direction: column; max-width: 90%; animation: fadeIn 0.2s ease; }
+.message.user {
+  align-self: flex-end; background: #eff6ff; border: 1px solid #bfdbfe;
+  border-radius: 12px 12px 0 12px; padding: 10px 12px;
+}
+.message.assistant {
+  align-self: flex-start; background: #f8fafc; border: 1px solid #e2e8f0;
+  border-radius: 12px 12px 12px 0; padding: 10px 12px; width: 100%;
+}
+body.dark-mode .message.user { background: #1e3a8a; border-color: #3b82f6; color: #dbeafe; }
+body.dark-mode .message.assistant { background: #1e293b; border-color: #334155; }
+.message-content { font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.message-img { max-width: 100%; border-radius: 6px; margin-bottom: 8px; border: 1px solid #e2e8f0; }
+
+.chat-status { flex-shrink: 0; padding: 4px 14px; font-size: 11px; color: #64748b; display: flex; align-items: center; gap: 6px; }
+.chat-status[hidden] { display: none !important; }
+@keyframes spin { 100% { transform: rotate(360deg); } }
+.spinner { display: inline-block; animation: spin 1s linear infinite; }
+
+.chat-input-area {
+  flex-shrink: 0; border-top: 1px solid #e2e8f0;
+  padding: 10px 12px 14px; background: #fff;
+}
+body.dark-mode .chat-input-area { border-color: #1e293b; background: #0f172a; }
+.chat-input-row {
+  display: flex; align-items: flex-end; gap: 6px;
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 6px;
+}
+body.dark-mode .chat-input-row { background: #1e293b; border-color: #334155; }
+.chat-input-row:focus-within { border-color: #2563eb; }
+#chat-input {
+  flex: 1; background: transparent; border: none; outline: none;
+  resize: none; color: #0f172a; font-size: 13px;
+  max-height: 100px; overflow-y: auto; padding: 4px; font-family: inherit;
+}
+body.dark-mode #chat-input { color: #f1f5f9; }
+
+.mic-btn { color: #64748b; background: transparent; border: none; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; transition: color 0.2s; }
+.mic-btn:hover { color: #2563eb; }
+.mic-btn.active { color: #ef4444; animation: pulse-dot 1.5s infinite; }
+body.dark-mode .mic-btn { color: #94a3b8; }
+body.dark-mode .mic-btn:hover { color: #60a5fa; }
+body.dark-mode .mic-btn.active { color: #f87171; }
+
+.send-btn { color: #2563eb; opacity: 0.4; }
+.send-btn.active { opacity: 1; }
+.chat-footer { display: flex; align-items: center; margin-top: 6px; gap: 6px; }
+.privacy-note-chat, .privacy-indicator { flex: 1; font-size: 10px; color: #94a3b8; }
+.screenshot-hint { font-size: 10px; color: #2563eb; font-weight: 600; }
+.screenshot-hint.hidden { display: none; }
+.model-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.model-row label { font-size: 11px; color: #64748b; margin: 0; font-weight: 500; flex-shrink: 0; }
+.model-row select { margin: 0; padding: 4px 6px; font-size: 11px; flex: 1; }
+
+/* Fix status + preview position within fill tab */
+#tab-fill .status { margin: 0 0 10px !important; }
+#tab-fill .preview-wrap { margin: 0 0 16px !important; }
   </style>
+  <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
+
   <div class="header">
     <div class="header-left">
       <h1>AEGIS</h1>
@@ -345,18 +504,100 @@
     </div>
     <div class="header-actions">
       <span class="model-status loading" id="model-status">Loading models</span>
-      <button class="icon-btn theme-btn" id="theme-toggle-btn" type="button" title="Theme: System — click for Light" aria-label="Theme: System">Auto</button>
+      <button class="icon-btn theme-btn" id="theme-toggle-btn" type="button" title="Theme">Auto</button>
     </div>
   </div>
 
   <div class="tab-bar">
-    <button class="tab active" data-tab="fill">Fill</button>
+    <button class="tab active" data-tab="chat">Chat</button>
+    <button class="tab" data-tab="fill">Fill</button>
     <button class="tab" data-tab="profile">Profile</button>
     <button class="tab" data-tab="settings">Settings</button>
   </div>
 
-  <!-- Fill -->
-  <div class="tab-content active" id="tab-fill">
+  <div class="tab-content active" id="tab-chat">
+
+    <div class="chat-toolbar">
+      <button type="button" class="chat-history-btn" id="btn-sessions-toggle" aria-expanded="false" aria-controls="sessions-panel" title="Chat history">
+        <span id="current-chat-name" class="current-chat-name">New chat</span>
+        <svg class="chat-caret" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <button type="button" class="chat-icon-btn" id="btn-new-chat" aria-label="New chat" title="New chat">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="sessions-panel" id="sessions-panel" hidden>
+      <div class="sessions-list" id="sessions-list"></div>
+      <button type="button" class="chat-clear-row" id="btn-clear-chat" hidden>Clear this chat</button>
+    </div>
+
+    <div class="chat-container" id="chat-container">
+      <div class="welcome-msg" id="welcome-msg">
+        <div class="welcome-logo">
+          <svg width="36" height="42" viewBox="0 0 36 42" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18 2L34 8V20C34 29.941 27.041 38.941 18 41C8.959 38.941 2 29.941 2 20V8L18 2Z" fill="#2563eb" fill-opacity="0.12" stroke="#2563eb" stroke-width="2"/>
+            <path d="M12 20.5L16 24.5L24 16.5" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="welcome-title">AEGIS Assistant</div>
+        <div class="welcome-body">Privacy-first AI assistant. Everything stays on your device — no raw data ever leaves your machine.</div>
+        <div class="welcome-examples">
+          <div class="example-chip" data-msg="Summarise what is on this page">Summarize this page</div>
+          <div class="example-chip" data-msg="Fill this form using my saved profile">Fill this form</div>
+          <div class="example-chip" data-msg="What are the privacy risks on this page?">Check privacy risks</div>
+          <div class="example-chip" data-msg="Write a Python script to parse a CSV file">Write code for me</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-status" id="chat-status" hidden>
+      <div class="chat-status-dot"></div>
+      <span id="chat-status-text">Capturing and thinking…</span>
+    </div>
+
+    <div class="chat-input-area">
+      <div class="chat-input-row">
+        <textarea id="chat-input" placeholder="Message AEGIS…" rows="1"></textarea>
+        
+        <button class="mic-btn" id="btn-mic" type="button" title="Voice Input">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+          </svg>
+        </button>
+        <button class="send-btn" id="btn-send">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M13 7L1 1L4.5 7L1 13L13 7Z" fill="currentColor"/>
+          </svg>
+        </button>
+      </div>
+      <div class="chat-footer">
+        <div class="privacy-indicator">
+          <svg width="10" height="12" viewBox="0 0 10 12" fill="none" aria-hidden="true">
+            <path d="M5 1L9 2.5V6C9 8.761 7.209 11.206 5 12C2.791 11.206 1 8.761 1 6V2.5L5 1Z" fill="#22c55e" fill-opacity="0.2" stroke="#22c55e" stroke-width="1"/>
+          </svg>
+          Screen sanitized before sending
+        </div>
+      </div>
+      <div class="model-row">
+        <label>Model</label>
+        <select id="model-select">
+          <option value="SARA-Distillation-0.5B">SARA-0.5B · Local</option>
+          <option value="qwen2.5vl:7b">Qwen2.5-VL 7B</option>
+          <option value="llama3.2-vision">Llama 3.2 Vision</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-content" id="tab-fill">
 
     <!-- ❤️ Privacy Risk Score Card — always shown at top -->
     <div class="risk-card" id="risk-card">
@@ -428,7 +669,18 @@
       </div>
       <p class="hint" id="fill-form-hint" style="margin-top:8px;">Speak or drop a PDF on the <strong>Profile</strong> tab first. Fill uses the selected profile. Missing fields stay blank.</p>
     </div>
+
+  <!-- Status & Preview moved to Fill Tab -->
+  <div class="status" id="status"></div>
+
+  <div class="card preview-wrap" id="preview-wrap">
+    <div class="card-title">What the agent would see</div>
+    <p class="preview-empty" id="preview-empty">Run <strong>Privacy Scan</strong> on Fill (or Scan faces in Settings). This frame shows faces, passwords, and PII already hidden — the only screenshot any AI agent is allowed to receive.</p>
+    <img id="sanitize-preview" alt="Redacted screenshot: faces and personal fields hidden before any model">
+    <p class="preview-legend" id="preview-legend" hidden></p>
+    <p class="preview-caption" id="preview-caption">Solid black boxes on this device. Faces, photos, passwords, and filled personal fields never go on the network.</p>
   </div>
+  </div> <!-- Close tab-fill -->
 
   <!-- Profile -->
   <div class="tab-content" id="tab-profile">
@@ -604,16 +856,9 @@
     </div>
   </div>
 
-  <div class="status" id="status"></div>
+  
 
-  <div class="card preview-wrap" id="preview-wrap">
-    <div class="card-title">What the agent would see</div>
-    <p class="preview-empty" id="preview-empty">Run <strong>Privacy Scan</strong> on Fill (or Scan faces in Settings). This frame shows faces, passwords, and PII already hidden — the only screenshot any AI agent is allowed to receive.</p>
-    <img id="sanitize-preview" alt="Redacted screenshot: faces and personal fields hidden before any model">
-    <p class="preview-legend" id="preview-legend" hidden></p>
-    <p class="preview-caption" id="preview-caption">Solid black boxes on this device. Faces, photos, passwords, and filled personal fields never go on the network.</p>
-  </div>
-
-  <script src="popup.js" type="module"></script>
+  <script src="../popup/popup.js" type="module"></script>
+  <script src="sidepanel.js" type="module"></script>
 </body>
 </html>
