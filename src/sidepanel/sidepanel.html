@@ -549,7 +549,18 @@ body.dark-mode #chat-input { color: #f1f5f9; }
       </div>
       <p class="hint" id="fill-form-hint" style="margin-top:8px;">Speak or drop a PDF on the <strong>Profile</strong> tab first. Fill uses the selected profile. Missing fields stay blank.</p>
     </div>
+
+  <!-- Status & Preview moved to Fill Tab -->
+  <div class="status" id="status"></div>
+
+  <div class="card preview-wrap" id="preview-wrap">
+    <div class="card-title">What the agent would see</div>
+    <p class="preview-empty" id="preview-empty">Run <strong>Privacy Scan</strong> on Fill (or Scan faces in Settings). This frame shows faces, passwords, and PII already hidden — the only screenshot any AI agent is allowed to receive.</p>
+    <img id="sanitize-preview" alt="Redacted screenshot: faces and personal fields hidden before any model">
+    <p class="preview-legend" id="preview-legend" hidden></p>
+    <p class="preview-caption" id="preview-caption">Solid black boxes on this device. Faces, photos, passwords, and filled personal fields never go on the network.</p>
   </div>
+  </div> <!-- Close tab-fill -->
 
   <!-- Profile -->
   <div class="tab-content" id="tab-profile">
@@ -711,15 +722,7 @@ body.dark-mode #chat-input { color: #f1f5f9; }
     </div>
   </div>
 
-  <div class="status" id="status"></div>
-
-  <div class="card preview-wrap" id="preview-wrap">
-    <div class="card-title">What the agent would see</div>
-    <p class="preview-empty" id="preview-empty">Run <strong>Privacy Scan</strong> on Fill (or Scan faces in Settings). This frame shows faces, passwords, and PII already hidden — the only screenshot any AI agent is allowed to receive.</p>
-    <img id="sanitize-preview" alt="Redacted screenshot: faces and personal fields hidden before any model">
-    <p class="preview-legend" id="preview-legend" hidden></p>
-    <p class="preview-caption" id="preview-caption">Solid black boxes on this device. Faces, photos, passwords, and filled personal fields never go on the network.</p>
-  </div>
+  
 
   <script src="../popup/popup.js" type="module"></script>
   <script src="sidepanel.js" type="module"></script>
