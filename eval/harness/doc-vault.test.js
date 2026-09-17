@@ -145,7 +145,7 @@ const sandbox = {
   AbortSignal,
   setTimeout,
   chrome: {
-    runtime: {
+    action: { onClicked: { addListener: () => {} } }, sidePanel: { setPanelBehavior: async () => {} }, runtime: {
       getURL: () => "chrome-extension://fake-id/",
       onMessage: { addListener: () => {} },
       onInstalled: { addListener: () => {} },
@@ -157,6 +157,8 @@ const sandbox = {
     },
     tabs: tabsStub,
     storage: { local: store, session: sessionStore },
+    action: { onClicked: { addListener: () => {} } },
+    sidePanel: { setPanelBehavior: async () => {} },
   },
   fetch: fetchStub,
   console,
@@ -565,7 +567,7 @@ async function main() {
 
     const docSourced = sanitizeAction(
       { action: "type", selector: "#uni_input", value: "IIT Bombay" },
-      { userProfile: {}, fields: PAGE_FIELDS }
+      { userProfile: {}, fields: PAGE_FIELDS, strictProfile: true }
     );
     check(
       "vault-traceable value, no profileKey → ALLOWED",
@@ -575,26 +577,26 @@ async function main() {
 
     const invented = sanitizeAction(
       { action: "type", selector: "#uni_input", value: "Stanford University" },
-      { userProfile: {}, fields: PAGE_FIELDS }
+      { userProfile: {}, fields: PAGE_FIELDS, strictProfile: true }
     );
     check("invented value (not in vault/profile) → REJECTED (fail closed)", invented === null, JSON.stringify(invented));
 
     const caseShift = sanitizeAction(
       { action: "type", selector: "#uni_input", value: "  iit bombay  " },
-      { userProfile: {}, fields: PAGE_FIELDS }
+      { userProfile: {}, fields: PAGE_FIELDS, strictProfile: true }
     );
     check("case/whitespace-insensitive vault match → ALLOWED", caseShift && caseShift.value === "  iit bombay  ", JSON.stringify(caseShift));
 
     const wrongField = sanitizeAction(
       { action: "type", selector: "#name_input", value: "IIT Bombay", profileKey: "Job Title" },
-      { userProfile: normalizeProfile({ "Job Title": "Engineer" }), fields: PAGE_FIELDS }
+      { userProfile: normalizeProfile({ "Job Title": "Engineer" }), fields: PAGE_FIELDS, strictProfile: true }
     );
     check("vault value + claimed key on wrong field → REJECTED", wrongField === null, JSON.stringify(wrongField));
 
     const profilePath = normalizeProfile({ "Full Name": "Ananya Krishnan" });
     const viaProfile = sanitizeAction(
       { action: "type", selector: "#name_input", value: "Ananya Krishnan", profileKey: "Full Name" },
-      { userProfile: profilePath, fields: PAGE_FIELDS }
+      { userProfile: profilePath, fields: PAGE_FIELDS, strictProfile: true }
     );
     check(
       "profile-exact match still ALLOWED with vault populated",
@@ -604,7 +606,7 @@ async function main() {
 
     const singleChar = sanitizeAction(
       { action: "type", selector: "#uni_input", value: "a" },
-      { userProfile: {}, fields: PAGE_FIELDS }
+      { userProfile: {}, fields: PAGE_FIELDS, strictProfile: true }
     );
     check("degenerate 1-char value → REJECTED (length floor)", singleChar === null, JSON.stringify(singleChar));
   }
@@ -613,7 +615,7 @@ async function main() {
     V.setVaultTextCache([]);
     const cold = sanitizeAction(
       { action: "type", selector: "#uni_input", value: "IIT Bombay" },
-      { userProfile: {}, fields: PAGE_FIELDS }
+      { userProfile: {}, fields: PAGE_FIELDS, strictProfile: true }
     );
     check("vault cache empty → doc value REJECTED (fail closed)", cold === null, JSON.stringify(cold));
   }
@@ -622,13 +624,13 @@ async function main() {
     V.setVaultTextCache([RESUME_TEXT]);
     const ok = parseAction(
       'Sure! ```json\n{"action":"type","selector":"#uni_input","value":"IIT Bombay"}\n```',
-      { userProfile: {}, fields: PAGE_FIELDS }
+      { userProfile: {}, fields: PAGE_FIELDS, strictProfile: true }
     );
     check("parseAction recovers vault-sourced type from prose", ok && ok.action === "type" && ok.value === "IIT Bombay", JSON.stringify(ok));
 
     const bad = parseAction(
       'Sure! ```json\n{"action":"type","selector":"#uni_input","value":"Stanford University"}\n```',
-      { userProfile: {}, fields: PAGE_FIELDS }
+      { userProfile: {}, fields: PAGE_FIELDS, strictProfile: true }
     );
     check("parseAction still rejects invented value (fail closed)", bad === null, JSON.stringify(bad));
 
@@ -673,13 +675,13 @@ async function main() {
     V.setVaultTextCache([RESUME_TEXT]); // simulate future drift re-populating
     const rejected = sanitizeAction(
       { action: "type", selector: "#uni_input", value: "IIT Bombay" },
-      { userProfile: {}, fields: PAGE_FIELDS }
+      { userProfile: {}, fields: PAGE_FIELDS, strictProfile: true }
     );
     check("D9: remote path rejects a vault-only 'type' value (profile-only fallback)", rejected === null, JSON.stringify(rejected));
 
     const profileMatch = sanitizeAction(
       { action: "type", selector: "#name_input", value: "Ananya Krishnan", profileKey: "Full Name" },
-      { userProfile: normalizeProfile({ "Full Name": "Ananya Krishnan" }), fields: PAGE_FIELDS }
+      { userProfile: normalizeProfile({ "Full Name": "Ananya Krishnan" }), fields: PAGE_FIELDS, strictProfile: true }
     );
     check("D9: remote path still ALLOWS profile-exact values", profileMatch && profileMatch.source === "profile", JSON.stringify(profileMatch));
   }
@@ -707,7 +709,7 @@ async function main() {
 
     const accepted = sanitizeAction(
       { action: "type", selector: "#uni_input", value: "IIT Bombay" },
-      { userProfile: {}, fields: PAGE_FIELDS }
+      { userProfile: {}, fields: PAGE_FIELDS, strictProfile: true }
     );
     check("D9: local path still ALLOWS a vault-traceable 'type' value", accepted && accepted.source === "vault", JSON.stringify(accepted));
   }

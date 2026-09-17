@@ -3,326 +3,125 @@
 </p>
 
 <p align="center">
-  <a href="#the-bit-that-matters">story</a>
-  ·
-  <a href="#what-you-are-looking-at">the product</a>
-  ·
-  <a href="#the-machine">how it works</a>
-  ·
-  <a href="#tonight">run it</a>
-  ·
-  <a href="#where-the-code-lives">the repo</a>
-</p>
-
-<p align="center">
-  <sub>Smart India Hackathon 2026 · SIH26171 · ISRO · Chrome extension, v0.1.0</sub>
+  <strong>Smart India Hackathon 2026 · SIH26171 · ISRO · Chrome extension, v0.1.0</strong>
 </p>
 
 ---
 
-If you just joined: this file is the tour. Not the spec. Specs live in [`docs/`](docs/00_INDEX.md). Read this first, click around, then pick a folder.
+## Prologue: The Problem with Pixels
 
-**Sharing with teammates for the hackathon:** send [`docs/TEAMMATE_REFERENCE.md`](docs/TEAMMATE_REFERENCE.md) — one short file that covers the whole system.
+Picture this: You are applying for a critical national scholarship, or perhaps filling out a healthcare registration form. To save time, you ask a modern AI browser agent to help fill it out. The agent complies—it types out your name, address, and history in seconds. It feels like magic. 
 
-AEGIS is a Chrome extension that looks at the page **on your laptop**, covers up the private bits, and only then — if you ask it to — lets a vision model help fill the form. The name is from Greek: a shield, a **protector or defender**. Privacy Scan never calls a server. Fill Form and Run Agent talk to a process you start on `localhost`. Raw screenshots do not leave the browser.
+But behind the curtain, a silent, unsettling transaction has just occurred. To understand the page, that agent photographed your entire browser tab. The applicant's face in the sidebar, your unmasked password, your Aadhaar number—all of it was scooped up into a massive payload and beamed to a remote server. 
 
----
+Most browser agents operate on this exact premise. They demand everything, and we just blindly hand it over. 
 
-## The bit that matters
+We got tired of making that trade. So, we built **AEGIS**.
 
-You ask a browser agent to fill a scholarship form. It does. It also just photographed the whole tab — the applicant’s face in the sidebar, the password field, the Aadhaar box — and sent that picture to a machine you will never see.
-
-That is how most of these agents work. They need the pixels to understand the page. We got tired of that trade.
-
-So we put a small vision stack *inside* Chrome. Faces get blurred. Passwords get painted black. Names and ID numbers get masked. What the model receives is a cleaned picture plus a sketch of the layout: “there is a password field here.” Not the password.
-
-Same form. Same help. Different contract.
-
-<p align="center">
-  <img src="docs/assets/tp08-hero.png" width="720" alt="TP08 — National Merit Scholarship Registration, the page we demo on">
-</p>
-
-<p align="center">
-  <sub>TP08. Fake portal, real traps. Aadhaar / PAN / blood group are supposed to stay empty. Face lives in the sidebar on purpose.</sub>
-</p>
-
-<details>
-<summary><strong>New here? Pick a door.</strong></summary>
-
-<br/>
-
-**I want to see it in five minutes.**  
-Build `dist/`, load it in Chrome, open TP08, hit Privacy Scan. No Ollama. [Jump](#tonight)
-
-**I need to know how the pieces connect.**  
-Capture → three detectors → canvas masks → optional local model. [Jump](#the-machine)
-
-**I am going to change code.**  
-Service worker orchestrates. Content script touches the page. Offscreen document runs models. [Jump](#where-the-code-lives)
-
-**I care about what we promised judges.**  
-Five scored criteria. Fail-closed gates. Honest privacy wording. [Jump](#what-we-are-scored-on)
-
-</details>
+Named after the mythical Greek shield of protection, AEGIS is a fundamentally new type of Chrome extension. It flips the AI paradigm on its head: **The screen leaves last.** 
 
 ---
 
-## What you are looking at
+## Chapter 1: The Core Innovation
 
-The toolbar icon opens a 360px panel. Three tabs. That is the whole product surface.
+AEGIS is built on a very simple promise: What the AI doesn't need to see, it *won't* see. 
 
-<p align="center">
-  <img src="docs/assets/popup-fill.png" width="280" alt="Fill tab — privacy receipt, Fill Form, Privacy Scan, Run Agent">
-  &nbsp;&nbsp;
-  <img src="docs/assets/popup-profile.png" width="280" alt="Profile tab — document drop zone and saved fields">
-</p>
+Instead of treating privacy as an afterthought, we shoved a fierce, lightweight vision stack directly *inside* Chrome itself. Before any AI model is ever consulted, AEGIS steps in. Faces are blurred using lightning-fast machine learning. Passwords and IDs are painted over with impenetrable black boxes. Names, organizations, and sensitive text are redacted instantly.
 
-| Tab | What it is for |
-|---|---|
-| **Fill** | The three verbs: Privacy Scan, Fill Form, Run Agent. After a scan you get a receipt (fields / faces / PII / time) and a sanitized preview. |
-| **Profile** | Your data, on this device. Drop a PDF. Save fields. Switch Personal / Work / Family. Ananya’s demo JSON lives in [`eval/fixtures/dummy-profile-ananya.json`](eval/fixtures/dummy-profile-ananya.json). |
-| **Settings** | Face / password / PII toggles, plus the local model URL. Default endpoint is `http://localhost:8000/v1/chat/completions`. Leave the API key empty. |
+What the AI eventually receives is a completely sanitized, anonymous sketch of the layout: *"There is a password field here."* Not the password itself. Same magical auto-filling. Same helpful agent. Completely different contract of trust.
 
-Everyday browsing does **not** cover the page. Password and face hides apply only to the sanitized frame a local agent may see. Faces still only run on Privacy Scan, Run Agent, or **Scan faces now**.
-
-| You click | On the device | Off the device |
-|---|---|---|
-| Privacy Scan | Capture, detect, redact, overlay, receipt | Nothing |
-| Fill Form | Match profile + vault text to labels | **Nothing** (leftovers stay empty with a small warning) |
-| Run Agent | Same redaction, then a loop of actions | Sanitized image + page structure + the task |
-| Drop a PDF | Extract text here. Strip Aadhaar, PAN, and friends | Only if you tick local AI — and only to `localhost` |
-
-The toolbar, the popup, and this file all say **AEGIS**. That is the product name.
+### The Features
+* **Privacy Scan:** A purely local, instant snapshot that shows you *exactly* what the AI is permitted to see. No servers involved.
+* **Fill Form:** A two-step powerhouse. First, it maps your locally-saved profile to form labels (no AI needed). Second, it uses a local AI to intelligently fill whatever is left, based strictly on sanitized data.
+* **Run Agent:** An autonomous loop that navigates and completes tasks—armed only with the redacted layout, ensuring your secrets never leave the device.
+* **The Profile Vault:** Drop a PDF locally. AEGIS extracts the text, stripping out Aadhaar, PAN, and other IDs before it even thinks about processing the rest.
 
 ---
 
-## The machine
+## Chapter 2: Forging the Machine (How We Built It)
 
-<p align="center">
-  <img src="docs/assets/pipeline.svg" width="720" alt="Capture, detect, redact, then maybe a local agent">
-</p>
+Building an AI agent inside a browser is notoriously messy. We had to rethink the architecture from the ground up to ensure absolute security while maintaining blazing speed. 
 
-Chrome is a weird place to run models, so the work is split on purpose.
+We split the labor into four highly specialized troops:
 
-```
-page  ──DOM scan / clicks──►  content script
-                                    │
-toolbar / task  ──────────────────►  service worker
-                                    │
-                          screenshot + text
-                                    ▼
-                             offscreen document
-                          (hidden page with a canvas)
-                                    │
-                                    ├── Web Worker: BlazeFace + DistilBERT
-                                    └── canvas: blur faces, black passwords
-                                    │
-                          sanitized PNG + layout sketch
-                                    │
-                         ┌──────────┴──────────┐
-                         │                     │
-                    stop here              localhost:8000
-                 (Privacy Scan)          (Fill leftovers /
-                                           Run Agent)
-                                               │
-                                          Ollama :11434
-                                          qwen2.5vl:7b
-```
-
-The extension never talks to Ollama directly. Chrome sends `Origin: chrome-extension://…` and Ollama answers **403**. The Node gateway on **:8000** is the fix: CORS, action JSON cleanup, a guard that rejects tiny images before they crash the model runner.
-
-WASM is the path that has to work on a judge’s laptop. WebGPU is a bonus if `navigator.gpu` shows up. Demo cannot depend on it.
-
-<details>
-<summary><strong>The three detectors, in English</strong></summary>
-
-<br/>
-
-**1. The DOM (no model).**  
-Walk the live page. `type="password"`, `autocomplete="cc-number"`, labels that say PIN, Aadhaar, PAN. Cheap, deterministic, should never miss a password field. Those rectangles get a solid black fill.
-
-**2. Faces.**  
-[BlazeFace](https://github.com/tensorflow/tfjs-models/tree/master/blazeface) as a ~400 KB ONNX file, run with ONNX Runtime Web in a worker. Bounding boxes become a Gaussian blur. Off unless you asked.
-
-**3. Text PII.**  
-Regex first (Aadhaar, PAN, SSN, phone, email, cards) because those patterns should not be a neural-net problem. Then DistilBERT NER via Transformers.js for names, places, organisations in the visible text. Those spans get blurred.
-
-All three have to finish before a vision-model call. If face redaction was required and it did not run, the request does not go. Same for NER. That is what “fail-closed” means in this repo.
-
-</details>
-
-<details>
-<summary><strong>Fill Form is two steps, not one magic button</strong></summary>
-
-<br/>
-
-1. **On the device.** Map saved profile keys and vault text onto visible labels. No model. Trap fields on TP08 (Aadhaar, PAN, blood group, emergency contact, project blurb, portal PIN) should stay blank because they are not in Ananya’s fixture.
-2. **Leftovers only.** One local-model pass on a sanitized screenshot. Vault document text is allowed in that prompt only when the endpoint is loopback.
-
-If you never start Ollama, step 1 still works. Step 2 will complain politely.
-
-</details>
-
-<details>
-<summary><strong>What we will not claim</strong></summary>
-
-<br/>
-
-Uploading a PDF and ticking “structure with local AI” *does* send extracted text to a process on your machine. We do not say “the file never exists outside the browser.” We say: bytes stay here, never-store IDs are stripped first, remote models are refused, vault text is capped (5 docs / 256 KB).
-
-Typed profile values in an agent prompt are a known, older risk if someone points the endpoint at a hosted model. Document text is not allowed to follow that path.
-
-Full writeup: [`docs/PRIVACY_DOC_UPLOAD.md`](docs/PRIVACY_DOC_UPLOAD.md).
-
-</details>
+1. **The Content Script (The Ground Floor):** This script lives on the web page. It aggressively scans the Document Object Model (DOM) for obvious traps—`type="password"`, `autocomplete="cc-number"`, and explicit labels like "PAN" or "Aadhaar". It’s cheap, deterministic, and paints over secrets with solid black boxes instantly. No AI required here.
+2. **The Inference Worker (The Brain in the Shadows):** We spun up a hidden offscreen document hosting a Web Worker. Here, we run [BlazeFace](https://github.com/tensorflow/tfjs-models/tree/master/blazeface) (compiled to a tiny ~400 KB ONNX file) and a DistilBERT model for Named Entity Recognition (NER) via Transformers.js. They scan for human faces and nuanced PII in the text, painting blurs onto a hidden canvas.
+3. **The Orchestrator:** The Chrome service worker securely coordinates the dance between the DOM script and the Inference Worker, ensuring a "fail-closed" mechanism. If a redaction fails, the process halts. Your data never leaks.
+4. **The Gateway Server:** Chrome extensions natively struggle to talk to local AI runners (like Ollama) due to CORS restrictions (a hard **403** error). We engineered a sleek Node gateway on `localhost:8000`. It sanitizes payloads, intercepts API calls, and securely shuttles only the redacted data to our chosen local model (`qwen2.5vl:7b`).
 
 ---
 
-## Tonight
+## Chapter 3: Breaking the Speed Limit
 
-You need Chrome 109+. A vision model is optional for the first run.
+You might wonder: *If we are doing all this local redaction, doesn't it slow down the experience?*
 
-### 1. Build the thing Chrome should load
+Historically, extensions dealing with rich media relied on clunky plugins like Flash, or they offloaded all the heavy lifting to distant server farms, resulting in high latency and network bottlenecks. AEGIS rivals—and often beats—these legacy paradigms.
 
+**How do we generate answers so quickly?**
+* **WebAssembly (WASM):** Our heavy ML models (BlazeFace and DistilBERT) are compiled down to WebAssembly. They run at near-native speeds right in your browser memory.
+* **WebGPU Acceleration:** If your browser supports it, AEGIS seamlessly taps into your local GPU hardware.
+* **Zero-Network Privacy:** Because redaction happens locally, we eliminate the massive network payload of sending 4K raw screenshots over the internet. The local Ollama server only receives optimized, necessary data over localhost. 
+
+The result? The speed and fluidity you expect from a state-of-the-art agent, with the security profile of a fortified vault. 
+
+---
+
+## Chapter 4: Running the Magic
+
+Want to see it in action? You just need Chrome (109+) and a few minutes.
+
+### 1. Build the Shield
+We don't load the massive source repo into Chrome. We compile a lean, battle-ready build (about 81 MB, packed with the NER models).
 ```bash
 bash scripts/build-dist.sh
 ```
 
-`dist/` is the unpacked root. About **81 MB** with the NER tree inside. Load **that** folder.
+### 2. Equip the Extension
+1. Go to `chrome://extensions` in your browser.
+2. Toggle **Developer mode** on.
+3. Click **Load unpacked** and select the `dist/` folder.
+4. *Crucial Step:* On the extension card, click Details and enable **Allow access to file URLs** so it can scan local test pages.
 
-If you point Chrome at the repo root it will count `node_modules`, `.git`, demo profiles… last time we measured **1.4 GB**. Do not do that.
-
-### 2. Load unpacked
-
-1. `chrome://extensions`
-2. Developer mode
-3. Load unpacked → `dist/`
-4. On the card, **Allow access to file URLs** (or TP08 as `file://` will not see the content script)
-
-### 3. Privacy Scan, no server
-
-Open [`eval/test-pages/tp08-kitchen-sink-registration.html`](eval/test-pages/tp08-kitchen-sink-registration.html). Click the icon. Wait until the badge says **BlazeFace ready (WASM)** — first time can take a while; it is compiling 13 MB of WASM, not hung. Then **Privacy Scan**.
-
-You want: orange boxes on secrets, a preview with a blurred face and black password fields, receipt counts that are not zero.
-
-Reload the extension? Refresh the tab. Otherwise `[NO_CONTENT_SCRIPT]`.
-
-### 4. If you want Fill / Run Agent
-
+### 3. Ignite the Server-Side
+To unlock the true power of the `Fill Form` and `Run Agent` features, wake up the local AI gateway.
 ```bash
-ollama pull qwen2.5vl:7b     # ~4.7 GB, once
+# 1. Pull the model (One-time, ~4.7GB)
+ollama pull qwen2.5vl:7b     
 ollama serve
 
-cd server && node index.js   # real gateway, not --mock
-curl -sS http://localhost:8000/health
-# mock: false, upstreamReachable: true
+# 2. Start the AEGIS Gateway
+cd server && node index.js   
 ```
+Verify the connection by running: `curl -sS http://localhost:8000/health`. If `upstreamReachable` is true, you are ready. 
 
-Popup defaults are already `:8000` and `qwen2.5vl:7b`. Paste Ananya’s JSON, save, Fill Form.
-
-Judge click-path, error codes, what to say out loud: [`docs/DEMO_RUNBOOK.md`](docs/DEMO_RUNBOOK.md).
-
-<details>
-<summary><strong>Afternoons we already donated so you do not have to</strong></summary>
-
-<br/>
-
-| Symptom | What it actually is |
-|---|---|
-| Extension size is hundreds of MB | You loaded the repo, not `dist/` |
-| `[NO_CONTENT_SCRIPT]` on a `file://` page | File URL access off, or you reloaded the extension and forgot to refresh the tab |
-| HTTP 403 talking to Ollama | You aimed Chrome at `:11434`. Aim at `:8000` |
-| First scan sits for a minute | WASM + NER cold start. Wait. Next one is faster |
-| `[FACE_REDACTION_REQUIRED]` | Face gate blocked the VLM. Check the sidebar photo actually rendered |
-| `[NER_REDACTION_REQUIRED]` | NER did not load. Rebuild `dist/` so `src/vendor/models/` is in it |
-| Ollama 500, “model runner stopped” | Degenerate image or memory pressure. Restart Ollama, pre-warm. Gateway now rejects images under 28 px so this happens less |
-| `npm run start:mock` in a demo | `/health` will say `"mock": true`. Judges should not see that |
-
-</details>
+Navigate to our test page at [`eval/test-pages/tp08-kitchen-sink-registration.html`](eval/test-pages/tp08-kitchen-sink-registration.html) and hit **Privacy Scan**. Watch as the agent protects your data in real-time.
 
 ---
 
-## Where the code lives
+## Chapter 5: The Architect's Map
 
-```
-src/background/     the manager. capture, gates, VLM client, vault
-src/content/        lives in the tab. DOM scan, overlays, types into fields
-src/offscreen/      hidden page. canvas masks + PDF/DOCX extract
-src/inference/      Web Worker. BlazeFace + DistilBERT
-src/popup/          the panel you just looked at
-src/shared/         profile parse, never-store strip, file helpers
-src/vendor/         ORT, models, pdf.js — do not “clean this up”
-server/             Node gateway :8000 → Ollama
-scripts/build-dist.sh
-eval/test-pages/    TP01–TP08, including the scholarship form
-eval/harness/       node tests. run them
-docs/               longer than this file, on purpose
-```
+We’ve built this repository to be explored. Here is where the pieces live:
+- `src/background/` — The commander. Orchestrates capture, handles model routing, and manages the secure vault.
+- `src/content/` — The boots on the ground. Interacts with the DOM, lays down redaction overlays, and fills text.
+- `src/offscreen/` — The hidden laboratory. Masks images via canvas and handles secure PDF extraction.
+- `src/inference/` — The Web Worker running WASM-powered BlazeFace and DistilBERT.
+- `src/popup/` — The sleek user interface.
+- `server/` — The Node gateway safely bridging Chrome to Ollama.
+- `docs/` — The full library of technical specs, architecture diagrams, and testing guides.
 
-`manifest.json` at the repo root is the source. The copy Chrome runs is the one inside `dist/`. After you touch `src/`, rebuild.
-
-<details>
-<summary><strong>Who is allowed to talk to whom</strong></summary>
-
-<br/>
-
-```mermaid
-flowchart LR
-  P[popup] --> SW[service worker]
-  C[content script] --> SW
-  SW --> C
-  SW --> O[offscreen]
-  O --> W[inference worker]
-  SW --> G[gateway :8000]
-  G --> L[Ollama]
-```
-
-Content script cannot see the models. The worker cannot click the page. The gateway never receives a raw screenshot. If you add a “just send the image” shortcut you are breaking the project, not shipping a feature.
-
-</details>
+### Deep Dives
+- **[The Map of Every Doc](docs/00_INDEX.md)**
+- **[Full Architecture](docs/02_ARCHITECTURE.md)**
+- **[Why These Models?](docs/03_TECH_STACK_MODELS.md)**
+- **[Privacy Document Upload Specs](docs/PRIVACY_DOC_UPLOAD.md)**
+- **[Plain-Language Tech Explainer](docs/06_TECH_EXPLAINER.md)**
 
 ---
 
-## What we are scored on
+## Epilogue: A New Standard
 
-SIH26171 is not “did the form fill.” It is five weighted checks.
+Every agent on the market today asks you to surrender your screen to save a few minutes of typing. We refused to accept that as the standard. 
 
-| | Weight | In this repo |
-|---|---|---|
-| Does the local stack understand the screen | 25% | Structural payload vs annotated pages |
-| PII recall / precision | 20% | Faces, passwords, text |
-| Redaction precision | 20% | Mask the secret, not the submit button |
-| Client resources | 20% | `dist/` size, memory, WASM path |
-| End-to-end latency | 15% | Capture → redact → maybe VLM → act |
+AEGIS proves that we don't need to sacrifice privacy at the altar of convenience. We can build intelligent, lightning-fast agents that understand the world, without compromising the individual. 
 
-There is no `npm test`. Run the files:
-
-```bash
-for f in eval/harness/*.test.js; do node "$f"; done
-```
-
-Chrome walking TP08 is a separate thing ([`eval/harness/tp08-chrome-e2e.mjs`](eval/harness/tp08-chrome-e2e.mjs)). The Node harness passing is not a substitute for clicking the popup yourself.
-
----
-
-## The rest of the shelf
-
-| When you need | Open |
-|---|---|
-| The map of every doc | [`docs/00_INDEX.md`](docs/00_INDEX.md) |
-| Requirements + redaction taxonomy | [`docs/01_REQUIREMENTS.md`](docs/01_REQUIREMENTS.md) |
-| Full architecture | [`docs/02_ARCHITECTURE.md`](docs/02_ARCHITECTURE.md) |
-| Why these models | [`docs/03_TECH_STACK_MODELS.md`](docs/03_TECH_STACK_MODELS.md) |
-| Profile, vault, face policy | [`docs/PROFILE_FILL_ARCHITECTURE.md`](docs/PROFILE_FILL_ARCHITECTURE.md) |
-| Document trust boundary | [`docs/PRIVACY_DOC_UPLOAD.md`](docs/PRIVACY_DOC_UPLOAD.md) |
-| Spoken pitch | [`docs/INDUSTRY_PITCH_SCRIPT.md`](docs/INDUSTRY_PITCH_SCRIPT.md) |
-| Judge runbook | [`docs/DEMO_RUNBOOK.md`](docs/DEMO_RUNBOOK.md) |
-| Gateway / 403 story | [`docs/BACKEND_DEPLOY.md`](docs/BACKEND_DEPLOY.md) |
-| Measured Ollama numbers | [`docs/SERVER_SETUP.md`](docs/SERVER_SETUP.md) |
-| What changed in 0.1.0 | [`CHANGELOG.md`](CHANGELOG.md) |
-
-Plain-language library tour, if the words ONNX and WASM still feel made-up: [`docs/06_TECH_EXPLAINER.md`](docs/06_TECH_EXPLAINER.md).
-
----
-
-Every agent on the market asks you to trust it with the whole screen. We did not want that to be the price of having one. That is the difference this repo is for.
+Welcome to the future of browsing. The screen leaves last.

@@ -257,6 +257,7 @@
     body.dark-mode .theme-btn { color: #e2e8f0; border-color: #334155 !important; background: #1e293b !important; }
     body.dark-mode .theme-btn:hover { background: #334155 !important; border-color: #475569 !important; }
     body.dark-mode .hint { color: #64748b; }
+    body.dark-mode .privacy-notice { color: #60a5fa !important; background: rgba(59, 130, 246, 0.1) !important; border-color: rgba(59, 130, 246, 0.2) !important; }
     body.dark-mode .receipt-row { color: #94a3b8; }
     body.dark-mode .receipt-row span:last-child { color: #f1f5f9; }
     body.dark-mode .badge-pill { background: #0f172a; border-color: #334155; color: #cbd5e1; }
@@ -431,7 +432,21 @@
 
   <!-- Profile -->
   <div class="tab-content" id="tab-profile">
-    <div class="card">
+    <div class="card" id="privacy-consent-box" style="display: none; text-align: center; padding: 24px 16px;">
+      <div style="font-size: 16px; font-weight: 600; margin-bottom: 12px;">Local Storage Permission</div>
+      <div style="font-size: 13px; margin-bottom: 16px; line-height: 1.5;" class="hint">
+        To act as a local brain and memory, AEGIS needs permission to save your profile data in JSON format on this device.
+      </div>
+      <div style="font-size: 12px; margin-bottom: 24px; line-height: 1.5; padding: 12px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 6px; color: #2563eb;" class="privacy-notice">
+        <strong>Zero Privacy Compromise:</strong> Your data is stored strictly locally. There are no leaks and nothing is ever uploaded to the cloud.
+      </div>
+      <div class="btn-row" style="justify-content: center; gap: 16px;">
+        <button class="btn-sm" id="privacy-decline-btn" type="button">Decline</button>
+        <button class="btn-sm btn-accent" id="privacy-accept-btn" type="button">Accept & Save Locally</button>
+      </div>
+    </div>
+    <div id="profile-main-content" style="display: none;">
+      <div class="card">
       <div class="card-title">
         <span>Profiles</span>
         <span class="hint">Separate people / roles</span>

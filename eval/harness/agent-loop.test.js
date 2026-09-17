@@ -15,12 +15,14 @@ const popupSrc = fs.readFileSync(POPUP_PATH, "utf8");
 
 const sandbox = {
   chrome: {
-    runtime: {
+    action: { onClicked: { addListener: () => {} } }, sidePanel: { setPanelBehavior: async () => {} }, runtime: {
       getURL: () => "chrome-extension://fake-id/",
       onMessage: { addListener: () => {} },
       onInstalled: { addListener: () => {} },
     },
     storage: { local: { set: async () => {}, get: async () => ({}) } },
+    action: { onClicked: { addListener: () => {} } },
+    sidePanel: { setPanelBehavior: async () => {} },
   },
   console,
 };

@@ -1,4 +1,5 @@
 // sidepanel.js — Chat tab with multi-session management + quick commands
+import { createSpeechSession, requestMicrophone } from "../shared/speech-listen.js";
 
 // ── Tab init: open Chat tab by default ────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -16,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
 const chatContainer   = document.getElementById('chat-container');
 const chatInput       = document.getElementById('chat-input');
 const btnSend         = document.getElementById('btn-send');
+const btnMic          = document.getElementById('btn-mic');
 const btnClearChat    = document.getElementById('btn-clear-chat');
 const btnNewChat      = document.getElementById('btn-new-chat');
 const btnSessionsToggle = document.getElementById('btn-sessions-toggle');
@@ -647,3 +649,58 @@ document.querySelectorAll('.tab[data-tab="fill"]').forEach(t => {
   loadRiskScore().catch(() => {});
 })();
 
+
+
+// ── Speech-To-Text (STT) ────────────────────────────────────
+let speechSession = null;
+let interimPrefix = "";
+
+if (btnMic) {
+  btnMic.addEventListener('click', async () => {
+    if (!speechSession) {
+      speechSession = createSpeechSession({
+        lang: "en-US",
+        onStart: () => {
+          interimPrefix = chatInput.value;
+          if (interimPrefix && !interimPrefix.endsWith(" ")) {
+            interimPrefix += " ";
+          }
+          btnMic.classList.add('active');
+          chatInput.placeholder = "Listening...";
+        },
+        onInterim: (text) => {
+          chatInput.value = interimPrefix + text;
+          chatInput.style.height = 'auto';
+          chatInput.style.height = chatInput.scrollHeight + 'px';
+        },
+        onFinal: (text) => {
+          chatInput.value = interimPrefix + text;
+          interimPrefix = chatInput.value + " ";
+          chatInput.dispatchEvent(new Event('input'));
+        },
+        onEnd: () => {
+          btnMic.classList.remove('active');
+          chatInput.placeholder = "Message AEGIS…";
+          chatInput.dispatchEvent(new Event('input'));
+        },
+        onError: (err) => {
+          console.error("Speech error:", err);
+          btnMic.classList.remove('active');
+          chatInput.placeholder = "Message AEGIS…";
+        }
+      });
+    }
+
+    if (speechSession.isRecording()) {
+      speechSession.stop();
+    } else {
+      try {
+        await requestMicrophone();
+        speechSession.start();
+      } catch (err) {
+        console.error("Microphone access denied:", err);
+        alert("Microphone access is required for Voice Input.");
+      }
+    }
+  });
+}

@@ -259,6 +259,7 @@
     body.dark-mode .theme-btn { color: #e2e8f0; border-color: #334155 !important; background: #1e293b !important; }
     body.dark-mode .theme-btn:hover { background: #334155 !important; border-color: #475569 !important; }
     body.dark-mode .hint { color: #64748b; }
+    body.dark-mode .privacy-notice { color: #60a5fa !important; background: rgba(59, 130, 246, 0.1) !important; border-color: rgba(59, 130, 246, 0.2) !important; }
     body.dark-mode .receipt-row { color: #94a3b8; }
     body.dark-mode .receipt-row span:last-child { color: #f1f5f9; }
     body.dark-mode .badge-pill { background: #0f172a; border-color: #334155; color: #cbd5e1; }
@@ -470,6 +471,14 @@ body.dark-mode .chat-input-row { background: #1e293b; border-color: #334155; }
   max-height: 100px; overflow-y: auto; padding: 4px; font-family: inherit;
 }
 body.dark-mode #chat-input { color: #f1f5f9; }
+
+.mic-btn { color: #64748b; background: transparent; border: none; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; transition: color 0.2s; }
+.mic-btn:hover { color: #2563eb; }
+.mic-btn.active { color: #ef4444; animation: pulse-dot 1.5s infinite; }
+body.dark-mode .mic-btn { color: #94a3b8; }
+body.dark-mode .mic-btn:hover { color: #60a5fa; }
+body.dark-mode .mic-btn.active { color: #f87171; }
+
 .send-btn { color: #2563eb; opacity: 0.4; }
 .send-btn.active { opacity: 1; }
 .chat-footer { display: flex; align-items: center; margin-top: 6px; gap: 6px; }
@@ -554,6 +563,15 @@ body.dark-mode #chat-input { color: #f1f5f9; }
     <div class="chat-input-area">
       <div class="chat-input-row">
         <textarea id="chat-input" placeholder="Message AEGIS…" rows="1"></textarea>
+        
+        <button class="mic-btn" id="btn-mic" type="button" title="Voice Input">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+          </svg>
+        </button>
         <button class="send-btn" id="btn-send">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M13 7L1 1L4.5 7L1 13L13 7Z" fill="currentColor"/>
@@ -666,7 +684,21 @@ body.dark-mode #chat-input { color: #f1f5f9; }
 
   <!-- Profile -->
   <div class="tab-content" id="tab-profile">
-    <div class="card">
+    <div class="card" id="privacy-consent-box" style="display: none; text-align: center; padding: 24px 16px;">
+      <div style="font-size: 16px; font-weight: 600; margin-bottom: 12px;">Local Storage Permission</div>
+      <div style="font-size: 13px; margin-bottom: 16px; line-height: 1.5;" class="hint">
+        To act as a local brain and memory, AEGIS needs permission to save your profile data in JSON format on this device.
+      </div>
+      <div style="font-size: 12px; margin-bottom: 24px; line-height: 1.5; padding: 12px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 6px; color: #2563eb;" class="privacy-notice">
+        <strong>Zero Privacy Compromise:</strong> Your data is stored strictly locally. There are no leaks and nothing is ever uploaded to the cloud.
+      </div>
+      <div class="btn-row" style="justify-content: center; gap: 16px;">
+        <button class="btn-sm" id="privacy-decline-btn" type="button">Decline</button>
+        <button class="btn-sm btn-accent" id="privacy-accept-btn" type="button">Accept & Save Locally</button>
+      </div>
+    </div>
+    <div id="profile-main-content" style="display: none;">
+      <div class="card">
       <div class="card-title">
         <span>Profiles</span>
         <span class="hint">Separate people / roles</span>
