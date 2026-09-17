@@ -470,8 +470,109 @@ document.querySelectorAll('.example-chip').forEach(chip => {
   });
 });
 
+// ── Privacy Risk Score ─────────────────────────────────────
+// Mirrors popup.js renderRiskScore — runs inside the sidepanel
+
+function renderRiskScore(report) {
+  const gradeEl   = document.getElementById('risk-grade-badge');
+  const scoreEl   = document.getElementById('risk-score-num');
+  const hostEl    = document.getElementById('risk-host');
+  const factorsEl = document.getElementById('risk-factors');
+  if (!gradeEl) return; // Fill tab not yet in DOM
+
+  if (!report) {
+    gradeEl.className = 'risk-grade-badge loading';
+    gradeEl.textContent = '\u00a0';
+    if (scoreEl)   { scoreEl.textContent = '--'; scoreEl.style.color = '#94a3b8'; }
+    if (hostEl)    hostEl.textContent = 'Scanning\u2026';
+    if (factorsEl) factorsEl.innerHTML = '';
+    return;
+  }
+
+  if (report.unscannable) {
+    gradeEl.className = 'risk-grade-badge';
+    gradeEl.style.background = '#94a3b8';
+    gradeEl.textContent = '?';
+    if (scoreEl)   { scoreEl.textContent = '--'; scoreEl.style.color = '#94a3b8'; }
+    if (hostEl)    hostEl.textContent = 'Navigate to a website to scan';
+    if (factorsEl) {
+      factorsEl.innerHTML = '';
+      const msg = document.createElement('div');
+      msg.className = 'risk-safe-msg';
+      msg.style.color = '#94a3b8';
+      msg.textContent = 'Open any website and re-scan';
+      factorsEl.appendChild(msg);
+    }
+    return;
+  }
+
+  const { grade, score, color, risks = [], host } = report;
+
+  // Swap badge node to replay pop animation
+  const nb = gradeEl.cloneNode(false);
+  nb.id = 'risk-grade-badge';
+  nb.className = 'risk-grade-badge';
+  nb.style.background = color;
+  nb.textContent = grade;
+  gradeEl.parentNode.replaceChild(nb, gradeEl);
+
+  if (scoreEl)   { scoreEl.textContent = String(score); scoreEl.style.color = color; }
+  if (hostEl)    hostEl.textContent = host || 'this page';
+  if (factorsEl) {
+    factorsEl.innerHTML = '';
+    if (risks.length === 0) {
+      const msg = document.createElement('div');
+      msg.className = 'risk-safe-msg';
+      msg.textContent = 'No threats detected on this page';
+      factorsEl.appendChild(msg);
+    } else {
+      risks.forEach(({ label, severity }) => {
+        const row = document.createElement('div');
+        row.className = 'risk-factor';
+        row.innerHTML = `<span class="rf-dot ${severity}"></span>${label}`;
+        factorsEl.appendChild(row);
+      });
+    }
+  }
+}
+
+async function loadRiskScore() {
+  try {
+    const report = await chrome.runtime.sendMessage({ type: 'GET_PAGE_RISK_SCORE' });
+    renderRiskScore(report);
+  } catch {
+    renderRiskScore(null);
+  }
+}
+
+// Wire refresh button
+document.getElementById('risk-refresh-btn')?.addEventListener('click', async function () {
+  this.classList.add('spinning');
+  const gradeEl = document.getElementById('risk-grade-badge');
+  const scoreEl = document.getElementById('risk-score-num');
+  const hostEl  = document.getElementById('risk-host');
+  const facEl   = document.getElementById('risk-factors');
+  if (gradeEl) { gradeEl.className = 'risk-grade-badge loading'; gradeEl.textContent = '\u00a0'; }
+  if (scoreEl) { scoreEl.textContent = '--'; scoreEl.style.color = '#94a3b8'; }
+  if (hostEl)  hostEl.textContent = 'Scanning\u2026';
+  if (facEl)   facEl.innerHTML = '';
+  await loadRiskScore();
+  setTimeout(() => this.classList.remove('spinning'), 700);
+});
+
+// Re-run score whenever user switches to the Fill tab
+document.querySelectorAll('.tab[data-tab="fill"]').forEach(t => {
+  t.addEventListener('click', () => {
+    // Slight delay so popup.js tab switch finishes first
+    setTimeout(loadRiskScore, 120);
+  });
+});
+
 // ── Boot ───────────────────────────────────────────────────
 (async () => {
   await pruneEmptySessions();
   await loadActiveSession();
+  // Load risk score in background (needed if Fill tab is already active)
+  loadRiskScore().catch(() => {});
 })();
+
