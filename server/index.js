@@ -355,12 +355,18 @@ async function handleChatCompletions(req, res) {
     }
     const data = CONFIG.mock ? mockCompletion(payload) : await callUpstream(payload);
     const raw = data.choices?.[0]?.message?.content ?? "";
-    const action = extractAction(raw);
-
-    // Return the standard OpenAI shape, but with content guaranteed to be a
-    // single clean action JSON so the extension's JSON.parse always succeeds.
-    if (action) {
-      data.choices[0].message.content = JSON.stringify(action);
+    
+    // Chat mode: preserve full text so the sidepanel can show it.
+    // Agent mode: strip to just the action JSON so the extension's JSON.parse succeeds.
+    const isChatMode = (url.searchParams?.get?.("mode") === "chat") ||
+                       (payload?.messages?.length > 2) ||
+                       (payload?.messages?.some?.(m => m.role === "system" && m.content?.includes("AEGIS")));
+    
+    if (!isChatMode) {
+      const action = extractAction(raw);
+      if (action) {
+        data.choices[0].message.content = JSON.stringify(action);
+      }
     }
 
     const latencyMs = Date.now() - started;

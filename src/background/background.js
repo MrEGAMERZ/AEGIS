@@ -2363,8 +2363,6 @@ async function reinjectContentScriptsBestEffort() {
 
 async function handleChatRequest(msg) {
   const { history, model, attachScreenshot } = msg;
-  const config = await chrome.storage.local.get(["vlmEndpoint"]);
-  const vlmEndpoint = await resolveVlmEndpoint(config.vlmEndpoint);
   
   let sanitizedImage = null;
   let pageStructure = null;
@@ -2377,7 +2375,7 @@ async function handleChatRequest(msg) {
     const domScan = await sendTabMessage(tab, { type: "DOM_SCAN" }).catch(()=>({fields:[]}));
     pageStructure = domScan;
     
-    // Capture & sanitize
+    // Capture & sanitize locally first (privacy layer)
     const rawDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 80 });
     await ensureOffscreen();
     const sanitizeResponse = await chrome.runtime.sendMessage({
@@ -2388,7 +2386,7 @@ async function handleChatRequest(msg) {
     });
     sanitizedImage = scanPreviewDataUrl(sanitizeResponse);
     
-    // Append to the last user message
+    // Attach sanitized image to the last user message in history
     const lastMsg = history[history.length - 1];
     if (lastMsg && lastMsg.role === "user") {
       lastMsg.image = sanitizedImage;
@@ -2396,16 +2394,16 @@ async function handleChatRequest(msg) {
     }
   }
 
-  // Format messages for OpenAI API
+  // Format messages for OpenAI-compatible API
   const messages = [
     {
       role: "system",
-      content: "You are AEGIS Assistant, a private on-device AI for government employees (like ISRO). " +
-               "Answer questions intelligently in plain text. " +
-               "If the user asks you to perform an action on the screen (like filling a form or clicking), " +
-               "you MUST return a JSON action object inside a markdown code block starting with ```json. " +
-               "Valid JSON actions are: {\"action\": \"type\", \"field\": \"Field Name\", \"value\": \"text\"} " +
-               "or {\"action\": \"click\", \"selector\": \"#id\"}."
+      content: "You are AEGIS — a private, secure AI assistant for ISRO government employees. " +
+               "You receive a sanitized screenshot (faces and PII already hidden by on-device AI). " +
+               "Help the user complete their task. " +
+               "For browser actions, respond with a JSON block like: ```json\n{\"action\":\"type\",\"field\":\"Username\",\"value\":\"john\"}\n``` " +
+               "or ```json\n{\"action\":\"click\",\"selector\":\"#submit-btn\"}\n```. " +
+               "For questions, answer in plain clear text. Be concise and helpful."
     }
   ];
 
@@ -2414,7 +2412,7 @@ async function handleChatRequest(msg) {
       messages.push({
         role: "user",
         content: [
-          { type: "text", text: item.content + (item.dom ? "\n\nDOM Structure:\n" + JSON.stringify(item.dom.fillableFields) : "") },
+          { type: "text", text: item.content + (item.dom?.fillableFields?.length ? `\n\nPage fields: ${item.dom.fillableFields.map(f=>f.label||f.name).join(", ")}` : "") },
           { type: "image_url", image_url: { url: item.image } }
         ]
       });
@@ -2423,32 +2421,76 @@ async function handleChatRequest(msg) {
     }
   }
 
+  // Map display model name to actual Ollama model
+  const modelMap = {
+    "SARA-Distillation-0.5B": "qwen2.5vl:7b",
+    "qwen2.5vl:7b": "qwen2.5vl:7b",
+    "llama3.2-vision": "llama3.2-vision",
+    "qwen3:8b": "qwen3:8b",
+    "gemma3:12b": "gemma3:12b"
+  };
+  const actualModel = modelMap[model] || "qwen2.5vl:7b";
+
   const vlmPayload = {
-    model: model || "SARA-Distillation-0.5B",
+    model: actualModel,
     messages: messages,
-    temperature: 0.1
+    temperature: 0.3,
+    stream: false
   };
 
-  const rawReply = await requestVlmContent(vlmEndpoint, { "Content-Type": "application/json" }, vlmPayload);
+  // Try gateway (port 8000) first, fall back directly to Ollama (port 11434)
+  // The server at 8000 strips action JSON — we bypass that for chat and parse ourselves.
+  let rawReply = null;
+  const endpoints = [DEFAULT_GATEWAY_VLM, DEFAULT_OLLAMA_VLM];
   
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(vlmPayload),
+        signal: AbortSignal.timeout(90000)
+      });
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        throw new Error(`HTTP ${response.status}: ${errText.slice(0, 200)}`);
+      }
+      const data = await response.json();
+      rawReply = data?.choices?.[0]?.message?.content;
+      if (typeof rawReply === "string") break; // success
+    } catch (err) {
+      if (endpoint === endpoints[endpoints.length - 1]) {
+        throw new Error(`Could not reach AI server. Start it with: cd server && node index.js\n(${err.message})`);
+      }
+      continue; // try next endpoint
+    }
+  }
+
+  if (!rawReply) throw new Error("VLM returned empty response.");
+
   let actionExecuted = null;
-  // Check if there is a JSON block in the reply
-  const jsonMatch = rawReply.match(/```json\s*(\{.*?\})\s*```/s) || rawReply.match(/(\{"action":.*?\})/s);
+  // Parse JSON action from reply (inside ```json...``` or bare JSON object)
+  const fenceMatch = rawReply.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+  const bareMatch = rawReply.match(/(\{"action"\s*:[\s\S]*?\})/);
+  const jsonMatch = fenceMatch || bareMatch;
   
   if (jsonMatch) {
     try {
       const actionObj = JSON.parse(jsonMatch[1]);
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab?.id) {
-        await handleExecuteAction(actionObj, tab.id);
-        actionExecuted = actionObj.action + (actionObj.field ? " " + actionObj.field : "");
+      if (actionObj.action) {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id) {
+          await handleExecuteAction(actionObj, tab.id).catch(e => console.warn("Action exec:", e));
+          actionExecuted = `${actionObj.action}${actionObj.field ? " on field: " + actionObj.field : ""}${actionObj.selector ? " → " + actionObj.selector : ""}`;
+        }
       }
     } catch(e) {
       console.error("Action parse/execute error:", e);
     }
   }
   
-  return { reply: rawReply.replace(/```json.*?```/gs, "").trim() || "Action performed.", actionExecuted, sanitizedImage };
+  const cleanReply = rawReply.replace(/```(?:json)?[\s\S]*?```/g, "").trim() || "Action performed.";
+  return { reply: cleanReply, actionExecuted, sanitizedImage };
 }
 
 
