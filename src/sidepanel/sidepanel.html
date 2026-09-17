@@ -444,45 +444,69 @@ body.dark-mode #chat-input { color: #f1f5f9; }
 
     <!-- Sessions bar -->
     <div class="chat-sessions-bar">
-      <button class="icon-btn sessions-btn" id="btn-sessions-toggle" title="All chats">☰</button>
+      <button class="sessions-btn" id="btn-sessions-toggle" title="All chats">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect y="1" width="14" height="1.5" rx="0.75" fill="currentColor"/>
+          <rect y="6.25" width="14" height="1.5" rx="0.75" fill="currentColor"/>
+          <rect y="11.5" width="14" height="1.5" rx="0.75" fill="currentColor"/>
+        </svg>
+        Chats
+      </button>
       <span id="current-chat-name" class="current-chat-name">New Chat</span>
-      <button class="btn-new-chat" id="btn-new-chat" title="New chat">+ New</button>
+      <button class="btn-new-chat" id="btn-new-chat">New chat</button>
     </div>
 
-    <!-- Sessions dropdown panel -->
+    <!-- Sessions dropdown — overlays the chat container -->
     <div class="sessions-panel" id="sessions-panel">
       <div class="sessions-list" id="sessions-list"></div>
     </div>
 
     <div class="chat-container" id="chat-container">
       <div class="welcome-msg" id="welcome-msg">
-        <div class="welcome-icon">🛡️</div>
+        <div class="welcome-logo">
+          <svg width="36" height="42" viewBox="0 0 36 42" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18 2L34 8V20C34 29.941 27.041 38.941 18 41C8.959 38.941 2 29.941 2 20V8L18 2Z" fill="#2563eb" fill-opacity="0.12" stroke="#2563eb" stroke-width="2"/>
+            <path d="M12 20.5L16 24.5L24 16.5" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
         <div class="welcome-title">AEGIS Assistant</div>
-        <div class="welcome-body">Your fully private, on-device AI. Ask anything — answer questions, write code, execute browser actions. Zero data leaves your machine.</div>
+        <div class="welcome-body">Privacy-first AI assistant. Everything stays on your device — no raw data ever leaves your machine.</div>
         <div class="welcome-examples">
-          <div class="example-chip" data-msg="Summarise what is on this page">📄 Summarize this page</div>
-          <div class="example-chip" data-msg="Fill this form using my saved profile">📝 Fill this form</div>
-          <div class="example-chip" data-msg="What are the privacy risks on this page?">🔒 Check privacy risks</div>
-          <div class="example-chip" data-msg="Write a Python script to parse a CSV file">🐍 Write code for me</div>
+          <div class="example-chip" data-msg="Summarise what is on this page">Summarize this page</div>
+          <div class="example-chip" data-msg="Fill this form using my saved profile">Fill this form</div>
+          <div class="example-chip" data-msg="What are the privacy risks on this page?">Check privacy risks</div>
+          <div class="example-chip" data-msg="Write a Python script to parse a CSV file">Write code for me</div>
         </div>
       </div>
     </div>
+
     <div class="chat-status" id="chat-status" hidden>
-      <span class="spinner">⟳</span>&nbsp;<span id="chat-status-text">SARA is thinking…</span>
+      <div class="chat-status-dot"></div>
+      <span id="chat-status-text">Capturing and thinking…</span>
     </div>
+
     <div class="chat-input-area">
       <div class="chat-input-row">
         <textarea id="chat-input" placeholder="Message AEGIS…" rows="1"></textarea>
-        <button class="icon-btn send-btn" id="btn-send">▶</button>
+        <button class="send-btn" id="btn-send">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M13 7L1 1L4.5 7L1 13L13 7Z" fill="currentColor"/>
+          </svg>
+        </button>
       </div>
       <div class="chat-footer">
-        <span class="privacy-note-chat">🔒 Screen is auto-sanitized before sending</span>
-        <button class="icon-btn small" id="btn-clear-chat" title="Clear chat" style="width:26px;height:26px;font-size:12px;">🗑️</button>
+        <div class="privacy-indicator">
+          <svg width="10" height="12" viewBox="0 0 10 12" fill="none">
+            <path d="M5 1L9 2.5V6C9 8.761 7.209 11.206 5 12C2.791 11.206 1 8.761 1 6V2.5L5 1Z" fill="#22c55e" fill-opacity="0.2" stroke="#22c55e" stroke-width="1"/>
+          </svg>
+          Screen sanitized before sending
+        </div>
+        <button class="clear-btn" id="btn-clear-chat" title="Clear chat">Clear</button>
       </div>
       <div class="model-row">
-        <label>Model:</label>
+        <label>Model</label>
         <select id="model-select">
-          <option value="SARA-Distillation-0.5B">SARA-0.5B (Local)</option>
+          <option value="SARA-Distillation-0.5B">SARA-0.5B · Local</option>
           <option value="qwen2.5vl:7b">Qwen2.5-VL 7B</option>
           <option value="llama3.2-vision">Llama 3.2 Vision</option>
         </select>
