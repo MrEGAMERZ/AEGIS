@@ -523,11 +523,11 @@ body.dark-mode .mic-btn.active { color: #f87171; }
     </div>
   </div>
 
-  <div class="tab-bar">
-    <button class="tab active" data-tab="chat">Chat</button>
-    <button class="tab" data-tab="fill">Fill</button>
-    <button class="tab" data-tab="profile">Profile</button>
-    <button class="tab" data-tab="settings">Settings</button>
+  <div class="tab-bar" role="tablist" aria-label="Main Navigation">
+    <button class="tab active" data-tab="chat" role="tab" aria-selected="true" aria-controls="tab-chat">Chat</button>
+    <button class="tab" data-tab="fill" role="tab" aria-selected="false" aria-controls="tab-fill">Fill</button>
+    <button class="tab" data-tab="profile" role="tab" aria-selected="false" aria-controls="tab-profile">Profile</button>
+    <button class="tab" data-tab="settings" role="tab" aria-selected="false" aria-controls="tab-settings">Settings</button>
   </div>
 
   <div class="tab-content active" id="tab-chat">
