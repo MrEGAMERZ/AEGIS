@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" width="720" alt="AEGIS — the screen leaves last">
+  <img src="src/icons/icon128.png" alt="AEGIS Logo" width="128" height="128">
 </p>
 
 <p align="center">
@@ -18,36 +18,36 @@ Most browser agents operate on this exact premise. They demand everything, and w
 
 We got tired of making that trade. So, we built **AEGIS**.
 
-Named after the mythical Greek shield of protection, AEGIS is a fundamentally new type of Chrome extension. It flips the AI paradigm on its head: **The screen leaves last.** 
+Named after the mythical Greek shield of protection, AEGIS is a fundamentally new type of Chrome extension. It flips the AI paradigm on its head: **The screen leaves last, and it leaves clean.** 
 
 ---
 
-## Chapter 1: The Core Innovation
+## Chapter 1: The Core Innovation & Novelty
 
-AEGIS is built on a very simple promise: What the AI doesn't need to see, it *won't* see. 
+Our primary innovation lies in our **"Redact-Before-Transmit" AI Pipeline**. Instead of trusting the cloud to protect your data, we shoved a fierce, lightweight machine learning stack *directly inside the browser*. 
 
-Instead of treating privacy as an afterthought, we shoved a fierce, lightweight vision stack directly *inside* Chrome itself. Before any AI model is ever consulted, AEGIS steps in. Faces are blurred using lightning-fast machine learning. Passwords and IDs are painted over with impenetrable black boxes. Names, organizations, and sensitive text are redacted instantly.
+### 1. Edge-Native ML Sanitization (WASM + ONNX)
+Before any reasoning AI is consulted, AEGIS steps in locally. We run **BlazeFace** (for face detection) and **DistilBERT** (for Named Entity Recognition) completely offline via WebAssembly (WASM). Faces are blurred, passwords and IDs are painted over with impenetrable black boxes, and sensitive text is redacted instantly. The LLM only receives a sanitized, anonymous sketch of the layout. **0 bytes of unredacted PII ever leave your device.**
 
-What the AI eventually receives is a completely sanitized, anonymous sketch of the layout: *"There is a password field here."* Not the password itself. Same magical auto-filling. Same helpful agent. Completely different contract of trust.
+### 2. Anti-Hallucination Execution Engine (Strict Provenance)
+LLMs hallucinate, and an AI inventing a fake Social Security Number is a critical failure. We engineered a cryptographically-inspired action validator. When the AI attempts to type data into a form, our execution engine cross-references the requested value against your explicitly approved local profile. If the AI invented the data, the engine forcefully blocks the action (**Fail-Closed Architecture**).
 
-### The Features
-* **Privacy Scan:** A purely local, instant snapshot that shows you *exactly* what the AI is permitted to see. No servers involved.
-* **Fill Form:** A two-step powerhouse. First, it maps your locally-saved profile to form labels (no AI needed). Second, it uses a local AI to intelligently fill whatever is left, based strictly on sanitized data.
-* **Run Agent:** An autonomous loop that navigates and completes tasks—armed only with the redacted layout, ensuring your secrets never leave the device.
-* **The Profile Vault:** Drop a PDF locally. AEGIS extracts the text, stripping out Aadhaar, PAN, and other IDs before it even thinks about processing the rest.
+### 3. The On-Device Memory Vault (Local Brain)
+How does the AI know what to type without leaking your context? We built a local Document Vault (RAG-lite). You can upload PDFs or text files; AEGIS parses them entirely on-device using PDF.js. Guarded by a strict **GDPR-style Privacy Consent Wall**, this data acts as a "local brain" that never touches the internet. 
+
+### 4. Self-Correcting Vision Loop
+AEGIS features a robust 15-step autonomous agent loop. It doesn't just blindly inject code or click buttons. It executes native DOM actions, waits, takes a *new* sanitized screenshot, and evaluates the outcome. If it writes code that produces a compiler syntax error, the AI sees the error on the screen, self-corrects, and loops until the task succeeds.
 
 ---
 
-## Chapter 2: Forging the Machine (How We Built It)
+## Chapter 2: Forging the Machine (Architecture)
 
-Building an AI agent inside a browser is notoriously messy. We had to rethink the architecture from the ground up to ensure absolute security while maintaining blazing speed. 
+Building an AI agent inside a browser is notoriously messy. We had to rethink the architecture to ensure absolute security while maintaining blazing speed:
 
-We split the labor into four highly specialized troops:
-
-1. **The Content Script (The Ground Floor):** This script lives on the web page. It aggressively scans the Document Object Model (DOM) for obvious traps—`type="password"`, `autocomplete="cc-number"`, and explicit labels like "PAN" or "Aadhaar". It’s cheap, deterministic, and paints over secrets with solid black boxes instantly. No AI required here.
-2. **The Inference Worker (The Brain in the Shadows):** We spun up a hidden offscreen document hosting a Web Worker. Here, we run [BlazeFace](https://github.com/tensorflow/tfjs-models/tree/master/blazeface) (compiled to a tiny ~400 KB ONNX file) and a DistilBERT model for Named Entity Recognition (NER) via Transformers.js. They scan for human faces and nuanced PII in the text, painting blurs onto a hidden canvas.
-3. **The Orchestrator:** The Chrome service worker securely coordinates the dance between the DOM script and the Inference Worker, ensuring a "fail-closed" mechanism. If a redaction fails, the process halts. Your data never leaks.
-4. **The Gateway Server:** Chrome extensions natively struggle to talk to local AI runners (like Ollama) due to CORS restrictions (a hard **403** error). We engineered a sleek Node gateway on `localhost:8000`. It sanitizes payloads, intercepts API calls, and securely shuttles only the redacted data to our chosen local model (`qwen2.5vl:7b`).
+1. **The Content Script (The Ground Floor):** Aggressively scans the DOM for obvious traps (`type="password"`, `autocomplete="cc-number"`, "Aadhaar"). It paints over secrets with solid black boxes deterministically.
+2. **The Inference Worker (The Edge AI):** A hidden offscreen document hosting a Web Worker. Here we run BlazeFace and DistilBERT via `Transformers.js` to catch nuances the DOM misses, painting blurs onto a hidden canvas.
+3. **The Orchestrator:** The Chrome service worker coordinates the strict provenance rules and the self-correcting agent loop.
+4. **The Gateway Server:** Chrome extensions struggle to talk to local AI runners (like Ollama) due to CORS restrictions. We engineered a sleek Node gateway on `localhost:8000` to securely shuttle only redacted payloads to our local model (`qwen2.5vl:7b`).
 
 ---
 
@@ -55,12 +55,8 @@ We split the labor into four highly specialized troops:
 
 You might wonder: *If we are doing all this local redaction, doesn't it slow down the experience?*
 
-Historically, extensions dealing with rich media relied on clunky plugins like Flash, or they offloaded all the heavy lifting to distant server farms, resulting in high latency and network bottlenecks. AEGIS rivals—and often beats—these legacy paradigms.
-
-**How do we generate answers so quickly?**
-* **WebAssembly (WASM):** Our heavy ML models (BlazeFace and DistilBERT) are compiled down to WebAssembly. They run at near-native speeds right in your browser memory.
-* **WebGPU Acceleration:** If your browser supports it, AEGIS seamlessly taps into your local GPU hardware.
-* **Zero-Network Privacy:** Because redaction happens locally, we eliminate the massive network payload of sending 4K raw screenshots over the internet. The local Ollama server only receives optimized, necessary data over localhost. 
+* **WebAssembly (WASM):** Our heavy ML models compile down to WASM, running at near-native speeds right in your browser memory.
+* **Zero-Network Privacy:** Because redaction happens locally, we eliminate the massive network payload of sending 4K raw screenshots over the internet. The local Ollama server only receives optimized, redacted data over localhost. 
 
 The result? The speed and fluidity you expect from a state-of-the-art agent, with the security profile of a fortified vault. 
 
@@ -105,7 +101,7 @@ We’ve built this repository to be explored. Here is where the pieces live:
 - `src/content/` — The boots on the ground. Interacts with the DOM, lays down redaction overlays, and fills text.
 - `src/offscreen/` — The hidden laboratory. Masks images via canvas and handles secure PDF extraction.
 - `src/inference/` — The Web Worker running WASM-powered BlazeFace and DistilBERT.
-- `src/popup/` — The sleek user interface.
+- `src/popup/` — The sleek user interface with explicit privacy consent controls.
 - `server/` — The Node gateway safely bridging Chrome to Ollama.
 - `docs/` — The full library of technical specs, architecture diagrams, and testing guides.
 
