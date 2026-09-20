@@ -276,6 +276,7 @@
     body.dark-mode .status.warn { background: #422006; border-color: #a16207; color: #fde68a; }
     body.dark-mode .p-empty { color: #64748b; }
     body.dark-mode .add-field-card { background: #0f172a; border-color: #1d4ed8; }
+    #profile-switcher { font-weight: 600; background: #f8fafc; margin-bottom: 8px; }
     body.dark-mode #profile-switcher { background: #0f172a; color: #f1f5f9; border-color: #334155; }
     /* ── Privacy Risk Score Card ────────────────────────────── */
     @keyframes risk-spin { to { transform: rotate(360deg); } }
@@ -451,7 +452,7 @@
         <span>Profiles</span>
         <span class="hint">Separate people / roles</span>
       </div>
-      <select id="profile-switcher" aria-label="Active profile" style="font-weight:600; background:#f1f5f9; margin-bottom:8px;">
+      <select id="profile-switcher" aria-label="Active profile">
         <option value="Personal">Personal</option>
         <option value="Work">Work</option>
         <option value="Family">Family</option>
