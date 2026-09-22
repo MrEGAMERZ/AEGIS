@@ -16,6 +16,7 @@ const CONFIG = {
   // Display name shown in /health, logs, and the extension popup.
   displayModel: "SARA-Distillation-0.5B",
   upstreamApiKey: process.env.UPSTREAM_API_KEY || "",
+  gatewayPassword: process.env.GATEWAY_PASSWORD || "",
   mock: process.env.MOCK === "1" || process.argv.includes("--mock"),
   requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || 120000),
 };
@@ -349,6 +350,7 @@ async function handleModels(res) {
 
 async function handleChatCompletions(req, res) {
   const started = Date.now();
+  const url = new URL(req.url, `http://${req.headers.host || `localhost:${CONFIG.port}`}`);
   let payload;
   try {
     payload = JSON.parse(await readBody(req));
@@ -374,7 +376,7 @@ async function handleChatCompletions(req, res) {
         });
       }
     }
-    if (!CONFIG.mock && payload && typeof payload === "object" && !payload.model) {
+    if (!CONFIG.mock && payload && typeof payload === "object") {
       payload.model = CONFIG.upstreamModel;
     }
     const data = CONFIG.mock ? mockCompletion(payload) : await callUpstream(payload);
@@ -386,8 +388,9 @@ async function handleChatCompletions(req, res) {
                        (payload?.messages?.length > 2) ||
                        (payload?.messages?.some?.(m => m.role === "system" && m.content?.includes("AEGIS")));
     
+    let action = null;
     if (!isChatMode) {
-      const action = extractAction(raw);
+      action = extractAction(raw);
       if (action) {
         data.choices[0].message.content = JSON.stringify(action);
       }
@@ -421,6 +424,15 @@ const server = http.createServer(async (req, res) => {
   }
 
   const url = new URL(req.url, `http://${req.headers.host || `localhost:${CONFIG.port}`}`);
+
+  if (CONFIG.gatewayPassword && req.method !== "OPTIONS" && url.pathname !== "/health") {
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (token !== CONFIG.gatewayPassword) {
+      log("WARN", "Unauthorized access attempt", { path: url.pathname });
+      return sendJson(res, 401, { error: { message: "Unauthorized. Invalid Gateway Password." } });
+    }
+  }
 
   try {
     if (req.method === "GET" && url.pathname === "/health") return await handleHealth(res);

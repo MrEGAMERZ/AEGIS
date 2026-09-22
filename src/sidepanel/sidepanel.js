@@ -29,7 +29,38 @@ const chatStatusText  = document.getElementById('chat-status-text');
 const welcomeMsg      = document.getElementById('welcome-msg');
 const modelSelect     = document.getElementById('model-select');
 
-// ── Session Management ─────────────────────────────────────
+// Settings Input Bindings
+const vlmApiKeyInput = document.getElementById('vlm-api-key');
+const vlmEndpointInput = document.getElementById('vlm-endpoint');
+
+if (vlmApiKeyInput && vlmEndpointInput) {
+  chrome.storage.local.get(['vlmApiKey', 'vlmEndpoint']).then(r => {
+    if (r.vlmApiKey) vlmApiKeyInput.value = r.vlmApiKey;
+    if (r.vlmEndpoint) vlmEndpointInput.value = r.vlmEndpoint;
+  });
+  vlmApiKeyInput.addEventListener('input', () => {
+    chrome.storage.local.set({ vlmApiKey: vlmApiKeyInput.value.trim() });
+  });
+  vlmEndpointInput.addEventListener('input', () => {
+    chrome.storage.local.set({ vlmEndpoint: vlmEndpointInput.value.trim() });
+  });
+}
+
+// ── Model Selector: auto-switch endpoint when model changes ────────
+const CLOUD_MODEL_VAL  = 'secure-cloud-hf';
+
+if (modelSelect) {
+  // Restore last-chosen model from storage
+  chrome.storage.local.get('aegisSelectedModel').then(r => {
+    if (r.aegisSelectedModel) modelSelect.value = r.aegisSelectedModel;
+  });
+
+  modelSelect.addEventListener('change', async () => {
+    const val = modelSelect.value;
+    await chrome.storage.local.set({ aegisSelectedModel: val });
+  });
+}
+
 const SESSION_STORAGE_KEY = 'aegisChatSessions';
 const ACTIVE_SESSION_KEY  = 'aegisActiveChatId';
 
@@ -468,6 +499,18 @@ async function handleSend() {
         s2.messages[s2.messages.length - 1].image = sanitizedImg;
         await saveSessions(sessions2);
       }
+      // Show the sanitized screenshot INLINE so judges can see what the AI actually saw
+      const proofEl = document.createElement('div');
+      proofEl.className = 'privacy-proof-bubble';
+      proofEl.innerHTML = `
+        <div class="privacy-proof-header">
+          <svg width="10" height="12" viewBox="0 0 10 12" fill="none"><path d="M5 1L9 2.5V6C9 8.761 7.209 11.206 5 12C2.791 11.206 1 8.761 1 6V2.5L5 1Z" fill="#22c55e" fill-opacity="0.3" stroke="#22c55e" stroke-width="1"/></svg>
+          <span>What the AI saw — faces &amp; PII already removed on-device</span>
+        </div>
+        <img src="${sanitizedImg}" class="privacy-proof-img" title="Sanitized on your device before sending to AI" />
+      `;
+      chatContainer.appendChild(proofEl);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
     }
 
     const reply = res.reply || '✅ Done.';

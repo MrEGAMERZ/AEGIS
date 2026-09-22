@@ -744,10 +744,9 @@ function isLocalVlmEndpoint(endpoint) {
 // → no Authorization header, so local Ollama keeps working.
 function buildVlmAuthHeaders(apiKey, endpoint) {
   const headers = { "Content-Type": "application/json" };
-  const key = typeof apiKey === "string" ? apiKey.trim() : "";
-  if (key && !isLocalVlmEndpoint(endpoint)) {
-    headers.Authorization = `Bearer ${key}`;
-  }
+  // Hardcode for Hackathon to ensure zero-configuration for judges
+  const key = "sih-hackathon-2026";
+  headers.Authorization = `Bearer ${key}`;
   return headers;
 }
 
@@ -2573,30 +2572,52 @@ async function captureSanitizedScreenshot() {
 }
 
 async function callVlm(messages, model) {
-  const modelMap = {
-    'SARA-Distillation-0.5B': 'qwen2.5vl:7b',
-    'qwen2.5vl:7b': 'qwen2.5vl:7b',
-    'llama3.2-vision': 'llama3.2-vision',
-    'qwen3:8b': 'qwen3:8b',
-    'gemma3:12b': 'gemma3:12b'
-  };
-  const actualModel = modelMap[model] || 'qwen2.5vl:7b';
-  const payload = { model: actualModel, messages, temperature: 0.2, stream: false };
-  for (const endpoint of [DEFAULT_GATEWAY_VLM, DEFAULT_OLLAMA_VLM]) {
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(90000)
-      });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const content = data?.choices?.[0]?.message?.content;
-      if (typeof content === 'string') return content;
-    } catch { continue; }
+  const CLOUD_MODEL = 'secure-cloud-hf';
+  const isCloud = model === CLOUD_MODEL;
+  
+  // Read the API key and Endpoint from storage
+  const storage = await chrome.storage.local.get(['vlmApiKey', 'vlmEndpoint']);
+  const apiKey = storage.vlmApiKey || '';
+  let endpoint = storage.vlmEndpoint || '';
+  
+  if (isCloud && !endpoint) {
+    endpoint = 'https://6ab15373b07925cee9d5efa4.endpoints.huggingface.cloud/v1/chat/completions';
+  } else if (!isCloud) {
+    endpoint = DEFAULT_OLLAMA_VLM;
   }
-  throw new Error('Could not reach AI. Make sure Ollama is running (ollama serve) and the server is started (cd server && node index.js).');
+
+  // Hugging Face requires the actual HF model name, but most HF endpoints just accept whatever is running on them.
+  // We will pass the standard Qwen model name as a safe default if communicating with HF.
+  const actualModel = 'Qwen/Qwen2.5-VL-7B-Instruct';
+  const payload = { model: actualModel, messages, temperature: 0.2, stream: false };
+  
+  const headers = {
+    'Content-Type': 'application/json',
+    'HTTP-Referer': 'https://aegis.local',
+    'X-Title': 'AEGIS'
+  };
+  if (isCloud && apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(90000)
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      throw new Error(`Upstream ${res.status}: ${err}`);
+    }
+    const data = await res.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (typeof content === 'string') return content;
+  } catch (e) {
+    throw new Error(`Could not reach AI. Details: ${e.message}`);
+  }
+  throw new Error('Empty response from AI.');
 }
 
 function parseActionFromReply(reply) {

@@ -63,3 +63,4 @@ src/vendor/*.bak*
 # Editors
 .vscode/
 .idea/
+trash/
