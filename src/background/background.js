@@ -2572,6 +2572,32 @@ async function captureSanitizedScreenshot() {
 }
 
 async function callVlm(messages, model) {
+  if (model === 'SARA-Distillation-0.5B') {
+    return new Promise((resolve, reject) => {
+      const id = Date.now().toString() + Math.random().toString();
+      
+      const listener = (msg) => {
+        if (msg.type === "LOCAL_LLM_RESPONSE" && msg.id === id) {
+          if (msg.status === "complete") {
+            chrome.runtime.onMessage.removeListener(listener);
+            resolve(msg.reply);
+          } else if (msg.status === "error") {
+            chrome.runtime.onMessage.removeListener(listener);
+            reject(new Error(msg.error));
+          } else if (msg.status === "progress") {
+            chrome.runtime.sendMessage({ type: "LLM_PROGRESS", data: msg.data });
+          }
+        }
+      };
+      chrome.runtime.onMessage.addListener(listener);
+      chrome.runtime.sendMessage({ type: "LOCAL_LLM_REQUEST", id, messages })
+        .catch(err => {
+          chrome.runtime.onMessage.removeListener(listener);
+          reject(err);
+        });
+    });
+  }
+
   const CLOUD_MODEL = 'secure-cloud-hf';
   const isCloud = model === CLOUD_MODEL;
   

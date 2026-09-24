@@ -64,3 +64,5 @@ src/vendor/*.bak*
 .vscode/
 .idea/
 trash/
+sara_workspace/
+src/vendor/models/SARA_ONNX_WEB/

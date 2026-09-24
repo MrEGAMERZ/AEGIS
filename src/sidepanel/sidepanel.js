@@ -747,3 +747,4 @@ if (btnMic) {
     }
   });
 }
+chrome.runtime.onMessage.addListener(msg => { if (msg.type === 'LLM_PROGRESS') { chatStatus.style.display = 'block'; chatStatusText.textContent = `Loading Local Model (${msg.data.file}): ${Math.round(msg.data.progress)}%`; } });
