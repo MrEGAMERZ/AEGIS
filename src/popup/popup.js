@@ -301,11 +301,16 @@ async function loadConfig() {
     type: "GET_CONFIG",
     keys: ["vlmEndpoint", "vlmModel", "faceDetection", "passwordDetection", "piiDetection", "userProfile"],
   });
-  document.getElementById("vlm-endpoint").value = config.vlmEndpoint || "http://localhost:8000/v1/chat/completions";
-  document.getElementById("vlm-model").value = config.vlmModel || "SARA-Distillation-0.5B";
-  document.getElementById("face-detection").checked = config.faceDetection !== false;
-  document.getElementById("password-detection").checked = config.passwordDetection !== false;
-  document.getElementById("pii-detection").checked = config.piiDetection !== false;
+  const endpointEl = document.getElementById("vlm-endpoint");
+  if (endpointEl) endpointEl.value = config.vlmEndpoint || "http://localhost:8000/v1/chat/completions";
+  const modelEl = document.getElementById("vlm-model");
+  if (modelEl) modelEl.value = config.vlmModel || "SARA-Distillation-0.5B";
+  const faceEl = document.getElementById("face-detection");
+  if (faceEl) faceEl.checked = config.faceDetection !== false;
+  const passEl = document.getElementById("password-detection");
+  if (passEl) passEl.checked = config.passwordDetection !== false;
+  const piiEl = document.getElementById("pii-detection");
+  if (piiEl) piiEl.checked = config.piiDetection !== false;
   // Profile fields render from aegisProfiles / userProfile via renderProfile().
   await loadApiKeyStatus();
   await syncGatewayEndpoint();
@@ -376,6 +381,65 @@ function setupConfigListeners() {
     chrome.runtime.sendMessage({ type: "SET_VLM_API_KEY", vlmApiKey }).then(() => loadApiKeyStatus());
   });
 }
+
+// ── Live Shield / Anti-AI Cloak Toggle ────────────────────────────
+const liveShieldToggle = document.getElementById("live-shield-toggle");
+const liveShieldCard   = document.getElementById("live-shield-card");
+const liveShieldBadge  = document.getElementById("live-shield-status-badge");
+const liveShieldDesc   = document.getElementById("live-shield-desc");
+
+async function broadcastLiveShield(enabled) {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    for (const tab of tabs) {
+      if (tab.id) {
+        chrome.tabs.sendMessage(tab.id, {
+          type: "TOGGLE_LIVE_SHIELD",
+          enabled: Boolean(enabled),
+        }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn("[AEGIS] Failed to broadcast live shield state:", err);
+  }
+}
+
+function updateLiveShieldUI(enabled) {
+  if (liveShieldToggle) liveShieldToggle.checked = enabled;
+  if (liveShieldCard) {
+    liveShieldCard.classList.toggle("active", enabled);
+    liveShieldCard.classList.toggle("inactive", !enabled);
+  }
+  if (liveShieldBadge) {
+    liveShieldBadge.textContent = enabled ? "Cloaked" : "Disabled";
+  }
+  if (liveShieldDesc) {
+    liveShieldDesc.textContent = enabled
+      ? "Real-time PII & input cloaking against external AI screen capture"
+      : "Live protection paused — raw inputs exposed to screen capture";
+  }
+}
+
+async function initLiveShield() {
+  try {
+    const stored = await chrome.storage.local.get("liveShieldEnabled");
+    const enabled = stored.liveShieldEnabled !== undefined ? Boolean(stored.liveShieldEnabled) : true;
+    updateLiveShieldUI(enabled);
+  } catch {
+    updateLiveShieldUI(true);
+  }
+}
+
+liveShieldToggle?.addEventListener("change", async (e) => {
+  const enabled = e.target.checked;
+  updateLiveShieldUI(enabled);
+  await chrome.storage.local.set({ liveShieldEnabled: enabled });
+  await broadcastLiveShield(enabled);
+  setStatus(
+    enabled ? "Live Shield active: Screen cloaked from external AIs." : "Live Shield paused: Inputs visible.",
+    enabled ? "success" : "warn"
+  );
+});
 
 // ── Model Status ──────────────────────────────────────────────────
 function updateModelStatus(status, type) {
@@ -1483,6 +1547,7 @@ renderProfile();
 renderVaultList();
 warmOnDeviceModels();
 loadRiskScore();
+initLiveShield();
 
 // ── Privacy Consent ───────────────────────────────────────────────
 async function checkPrivacyConsent() {
@@ -1490,13 +1555,14 @@ async function checkPrivacyConsent() {
   const consentBox = document.getElementById("privacy-consent-box");
   const mainContent = document.getElementById("profile-main-content");
   
-  if (consentBox && mainContent) {
+  if (mainContent) {
+    mainContent.style.display = "block";
+  }
+  if (consentBox) {
     if (localDataConsent === true) {
       consentBox.style.display = "none";
-      mainContent.style.display = "block";
     } else {
       consentBox.style.display = "block";
-      mainContent.style.display = "none";
     }
   }
 }
@@ -1507,7 +1573,8 @@ document.getElementById("privacy-accept-btn")?.addEventListener("click", async (
 });
 
 document.getElementById("privacy-decline-btn")?.addEventListener("click", () => {
-  document.querySelector('.tab[data-tab="chat"]')?.click();
+  const consentBox = document.getElementById("privacy-consent-box");
+  if (consentBox) consentBox.style.display = "none";
 });
 
 checkPrivacyConsent();

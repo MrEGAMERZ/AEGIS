@@ -109,6 +109,15 @@ function getWorker() {
       try { inferenceWorker.terminate(); } catch { /* already dead */ }
       inferenceWorker = null;
     };
+    
+    // -- Local SARA (WebGPU) Worker --
+    if (!self.llmWorker) {
+      self.llmWorker = new Worker(chrome.runtime.getURL("src/offscreen/llm-worker.js"), { type: "module" });
+      self.llmWorker.onmessage = (event) => {
+        // Forward WebGPU LLM replies back to background/sidepanel
+        chrome.runtime.sendMessage({ type: "LOCAL_LLM_RESPONSE", ...event.data });
+      };
+    }
     inferenceWorker.onmessageerror = () => {
       const err = new Error("Inference worker message deserialize failed");
       rejectAllPending(err);
@@ -195,6 +204,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         })
       )
       .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+  
+  if (msg.type === "LOCAL_LLM_REQUEST") {
+    if (self.llmWorker) {
+      self.llmWorker.postMessage({ id: msg.id, type: "GENERATE", messages: msg.messages });
+    }
+    sendResponse({ ok: true });
     return true;
   }
 

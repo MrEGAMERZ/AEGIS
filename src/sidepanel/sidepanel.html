@@ -605,10 +605,8 @@ body.dark-mode .mic-btn.active { color: #f87171; }
       <div class="model-row">
         <label>Model</label>
         <select id="model-select">
-          <option value="SARA-Distillation-0.5B">SARA-0.5B · Local</option>
-          <option value="secure-cloud-hf">Secure Cloud (Hugging Face) ☁️</option>
-          <option value="qwen2.5vl:7b">Qwen2.5-VL 7B</option>
-          <option value="llama3.2-vision">Llama 3.2 Vision</option>
+          <option value="SARA-Distillation-0.5B">SARA-0.5B · Local 🔒</option>
+          <option value="qwen2.5vl:7b" selected>Secure Cloud ☁️</option>
         </select>
       </div>
     </div>
@@ -714,7 +712,7 @@ body.dark-mode .mic-btn.active { color: #f87171; }
         <button class="btn-sm btn-accent" id="privacy-accept-btn" type="button">Accept & Save Locally</button>
       </div>
     </div>
-    <div id="profile-main-content" style="display: none;">
+    <div id="profile-main-content">
       <div class="card">
       <div class="card-title">
         <span>Profiles</span>
@@ -866,10 +864,23 @@ body.dark-mode .mic-btn.active { color: #f87171; }
     </div>
     <div class="card">
       <div class="card-title">Secure Cloud (Government / HF)</div>
-      <input type="password" id="vlm-api-key" placeholder="Cloud API Token (e.g. hf_...)" autocomplete="off">
-      <input type="url" id="vlm-endpoint" placeholder="Endpoint URL (must end in /v1/chat/completions)">
-      <p class="hint" id="api-key-hint">Enter your Private Hugging Face Endpoint URL and Token. This ensures zero data retention for government compliance.</p>
+    <div class="card" id="cloud-settings-card">
+      <div class="card-title">☁️ Secure Cloud (Hugging Face Endpoint)</div>
+      <p class="hint" style="margin-bottom:8px;">Paste your HF Token below. The endpoint URL is pre-filled. Click <strong>Test &amp; Save</strong> to connect.</p>
+      
+      <label style="font-size:11px;color:var(--text-muted);margin-bottom:2px;display:block;">HF API Token</label>
+      <input type="password" id="vlm-api-key" placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off" style="margin-bottom:8px;">
+      
+      <label style="font-size:11px;color:var(--text-muted);margin-bottom:2px;display:block;">Endpoint URL</label>
+      <input type="url" id="vlm-endpoint" placeholder="https://....endpoints.huggingface.cloud/v1/chat/completions" style="margin-bottom:8px;" value="https://6ab15373b07925cee9d5efa4.endpoints.huggingface.cloud/v1/chat/completions">
+      
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+        <button class="btn-sm" id="test-cloud-btn" type="button" style="flex:1;">🔌 Test &amp; Save</button>
+        <span id="cloud-status-badge" style="font-size:11px;padding:2px 8px;border-radius:10px;background:#1e293b;color:#94a3b8;">Not tested</span>
+      </div>
+      <p class="hint" id="api-key-hint">Token is stored locally on your device only. Never transmitted.</p>
     </div>
+
   </div>
 
   

@@ -744,9 +744,10 @@ function isLocalVlmEndpoint(endpoint) {
 // → no Authorization header, so local Ollama keeps working.
 function buildVlmAuthHeaders(apiKey, endpoint) {
   const headers = { "Content-Type": "application/json" };
-  // Hardcode for Hackathon to ensure zero-configuration for judges
-  const key = "sih-hackathon-2026";
-  headers.Authorization = `Bearer ${key}`;
+  const key = typeof apiKey === "string" ? apiKey.trim() : "";
+  if (key && !isLocalVlmEndpoint(endpoint)) {
+    headers.Authorization = `Bearer ${key}`;
+  }
   return headers;
 }
 
@@ -2555,24 +2556,63 @@ async function captureSanitizedScreenshot() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return null;
   try {
-    const rawDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 });
+    const rawDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
     await ensureOffscreen();
+    const config = await chrome.storage.local.get([
+      "faceDetection",
+      "piiDetection",
+      "passwordDetection",
+    ]).catch(() => ({}));
+    const faceDetectionEnabled = config.faceDetection !== false;
+    const piiDetectionEnabled = config.piiDetection !== false;
+    const passwordDetectionEnabled = config.passwordDetection !== false;
+
     const domScan = await sendTabMessage(tab, { type: 'DOM_SCAN' }).catch(() => ({ fields: [], fillableFields: [] }));
+    if (domScan && Array.isArray(domScan.fields)) {
+      domScan.fields = filterFieldsForPasswordDetection(
+        domScan.fields,
+        passwordDetectionEnabled
+      );
+    }
+
     const sanitizeResponse = await chrome.runtime.sendMessage({
       type: 'SANITIZE',
+      screenshot: rawDataUrl,
+      domScanResults: domScan,
+      faceDetection: faceDetectionEnabled,
+      piiDetection: piiDetectionEnabled,
+      // Compatibility aliases
       dataUrl: rawDataUrl,
-      fields: domScan.fields || [],
-      includeFaces: true
+      fields: domScan?.fields || [],
+      includeFaces: faceDetectionEnabled
     });
+
+    if (sanitizeResponse?.error) {
+      console.error('[Aegis] captureSanitizedScreenshot sanitization failed:', sanitizeResponse.error);
+      return null;
+    }
+
+    assertReadyForVlm(sanitizeResponse, {
+      faceDetection: faceDetectionEnabled,
+      piiDetection: piiDetectionEnabled,
+    });
+
     const sanitizedImage = scanPreviewDataUrl(sanitizeResponse);
+    if (sanitizedImage) {
+      chrome.storage.session.set({ lastSanitizedImage: sanitizedImage }).catch(() => {});
+    }
+
     return { sanitizedImage, domScan, tab };
   } catch (e) {
+    console.error('[Aegis] captureSanitizedScreenshot error:', e);
     return null;
   }
 }
 
 async function callVlm(messages, model) {
+  // Feature 5: ensure offscreen doc exists before sending LOCAL_LLM_REQUEST
   if (model === 'SARA-Distillation-0.5B') {
+    await ensureOffscreen();
     return new Promise((resolve, reject) => {
       const id = Date.now().toString() + Math.random().toString();
       
@@ -2585,7 +2625,7 @@ async function callVlm(messages, model) {
             chrome.runtime.onMessage.removeListener(listener);
             reject(new Error(msg.error));
           } else if (msg.status === "progress") {
-            chrome.runtime.sendMessage({ type: "LLM_PROGRESS", data: msg.data });
+            chrome.runtime.sendMessage({ type: "LLM_PROGRESS", data: msg.data }).catch(() => {});
           }
         }
       };
@@ -2598,23 +2638,30 @@ async function callVlm(messages, model) {
     });
   }
 
+  // Feature 3: always use the HF endpoint as fallback for secure-cloud-hf
+  const HF_CLOUD_ENDPOINT = 'https://6ab15373b07925cee9d5efa4.endpoints.huggingface.cloud/v1/chat/completions';
   const CLOUD_MODEL = 'secure-cloud-hf';
   const isCloud = model === CLOUD_MODEL;
   
-  // Read the API key and Endpoint from storage
-  const storage = await chrome.storage.local.get(['vlmApiKey', 'vlmEndpoint']);
-  const apiKey = storage.vlmApiKey || '';
+  // Feature 2: read selectedModel from storage at call time (for instant switching)
+  // Also read API key and custom endpoint
+  const storage = await chrome.storage.local.get(['vlmApiKey', 'vlmEndpoint', 'selectedModel', 'geminiApiKey']);
+  const sessionSecrets = await chrome.storage.session.get(['vlmApiKey']).catch(() => ({}));
+  const apiKey = sessionSecrets.vlmApiKey || storage.vlmApiKey || '';
+  const geminiApiKey = storage.geminiApiKey || '';
   let endpoint = storage.vlmEndpoint || '';
   
-  if (isCloud && !endpoint) {
-    endpoint = 'https://6ab15373b07925cee9d5efa4.endpoints.huggingface.cloud/v1/chat/completions';
-  } else if (!isCloud) {
+  if (isCloud) {
+    // Feature 3: Always fall back to the hardcoded HF endpoint for cloud model
+    if (!endpoint || endpoint === DEFAULT_GATEWAY_VLM || endpoint === DEFAULT_OLLAMA_VLM) {
+      endpoint = HF_CLOUD_ENDPOINT;
+    }
+  } else {
     endpoint = DEFAULT_OLLAMA_VLM;
   }
 
-  // Hugging Face requires the actual HF model name, but most HF endpoints just accept whatever is running on them.
-  // We will pass the standard Qwen model name as a safe default if communicating with HF.
-  const actualModel = 'Qwen/Qwen2.5-VL-7B-Instruct';
+  // Hugging Face endpoints just accept whatever model is running on them.
+  const actualModel = isCloud ? 'Qwen/Qwen2.5-VL-7B-Instruct' : (model || DEFAULT_VLM_MODEL);
   const payload = { model: actualModel, messages, temperature: 0.2, stream: false };
   
   const headers = {
@@ -2622,10 +2669,12 @@ async function callVlm(messages, model) {
     'HTTP-Referer': 'https://aegis.local',
     'X-Title': 'AEGIS'
   };
-  if (isCloud && apiKey) {
+  // Feature 3: Send auth header only if API key is available, omit gracefully if not
+  if (apiKey) {
     headers.Authorization = `Bearer ${apiKey}`;
   }
 
+  const t0 = Date.now();
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
@@ -2639,12 +2688,17 @@ async function callVlm(messages, model) {
     }
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content;
-    if (typeof content === 'string') return content;
+    if (typeof content === 'string') {
+      // Feature 3: timing log on successful cloud response
+      console.log(`[AEGIS] Cloud VLM responded in ${Date.now() - t0}ms`);
+      return content;
+    }
   } catch (e) {
     throw new Error(`Could not reach AI. Details: ${e.message}`);
   }
   throw new Error('Empty response from AI.');
 }
+
 
 function parseActionFromReply(reply) {
   const fenceMatch = reply.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
@@ -2673,7 +2727,19 @@ function stripActionBlock(text) {
 }
 
 async function handleChatRequest(msg) {
-  const { history, model, attachScreenshot } = msg;
+  const { history, attachScreenshot } = msg;
+
+  // Feature 2: Read model from storage at call time for instant switching.
+  // msg.model is still used as fallback for the current request.
+  let model = msg.model || 'SARA-Distillation-0.5B';
+  try {
+    const stored = await chrome.storage.local.get(['selectedModel', 'aegisSelectedModel']);
+    model = stored.selectedModel || stored.aegisSelectedModel || model;
+  } catch { /* use msg.model */ }
+
+  // Feature 1: keywords that mean the user explicitly wants code injected into the page
+  // (evaluated later, after 'latest' is defined)
+  const INJECTION_KEYWORDS = /\b(write\s*(this\s*)?(to|into)\s*(the\s*)?(ide|editor)|type\s*(this\s*)?(into|in)\s*(the\s*)?(editor|field)|inject\s*(this\s*)?(into|in)\s*(the\s*)?(page|field|editor)|fill\s*(this\s*)?(into|in)\s*(the\s*)?(field|editor|form)|put\s*(it\s*)?in\s*(the\s*)?(editor|ide|field))\b/i;
 
   const SYSTEM_PROMPT = `You are AEGIS — a private, secure AI agent for government employees and developers.
 You see a SANITIZED screenshot (faces and personal data already hidden on-device before reaching you).
@@ -2714,6 +2780,8 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
 
   // Latest user message with screenshot
   const latest = history[history.length - 1];
+  // Feature 1: now 'latest' is available — evaluate injection intent
+  const userWantsInjection = INJECTION_KEYWORDS.test(latest?.content || '');
   let firstSanitizedImage = null;
 
   if (attachScreenshot && latest) {
@@ -2760,6 +2828,28 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
   };
 
   parsedAction = resolveAction(rawReply);
+
+  // ── Feature 1: Code-injection guard ──────────────────────────────
+  // If the VLM returns a 'type' action with a long value (>100 chars, likely
+  // code), and the user did NOT explicitly request injection into the page,
+  // block it and return the code as a styled chat message instead.
+  if (
+    parsedAction &&
+    parsedAction.action === 'type' &&
+    typeof parsedAction.value === 'string' &&
+    parsedAction.value.length > 100 &&
+    !userWantsInjection
+  ) {
+    // Detect language hint from the raw reply's code fence
+    const langMatch = rawReply.match(/```([a-zA-Z0-9_+-]+)\s*\n/);
+    const lang = langMatch ? langMatch[1] : 'code';
+    const codeContent = parsedAction.value;
+    return {
+      reply: `Here is the code:\n\`\`\`${lang}\n${codeContent}\n\`\`\``,
+      actionExecuted: null,
+      sanitizedImage: firstSanitizedImage,
+    };
+  }
 
   // Plain text reply — simple Q&A, no agent loop needed
   if (!parsedAction) {

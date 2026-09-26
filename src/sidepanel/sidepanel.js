@@ -30,14 +30,21 @@ const welcomeMsg      = document.getElementById('welcome-msg');
 const modelSelect     = document.getElementById('model-select');
 
 // Settings Input Bindings
-const vlmApiKeyInput = document.getElementById('vlm-api-key');
+const vlmApiKeyInput   = document.getElementById('vlm-api-key');
 const vlmEndpointInput = document.getElementById('vlm-endpoint');
+const testCloudBtn     = document.getElementById('test-cloud-btn');
+const cloudStatusBadge = document.getElementById('cloud-status-badge');
+
+const DEFAULT_HF_ENDPOINT = 'https://6ab15373b07925cee9d5efa4.endpoints.huggingface.cloud/v1/chat/completions';
 
 if (vlmApiKeyInput && vlmEndpointInput) {
   chrome.storage.local.get(['vlmApiKey', 'vlmEndpoint']).then(r => {
-    if (r.vlmApiKey) vlmApiKeyInput.value = r.vlmApiKey;
+    if (r.vlmApiKey)   vlmApiKeyInput.value   = r.vlmApiKey;
     if (r.vlmEndpoint) vlmEndpointInput.value = r.vlmEndpoint;
+    else               vlmEndpointInput.value = DEFAULT_HF_ENDPOINT;
   });
+
+  // Auto-save on every keystroke (original behavior)
   vlmApiKeyInput.addEventListener('input', () => {
     chrome.storage.local.set({ vlmApiKey: vlmApiKeyInput.value.trim() });
   });
@@ -46,20 +53,101 @@ if (vlmApiKeyInput && vlmEndpointInput) {
   });
 }
 
+// ── Test & Save button: ping HF endpoint and show status ───────────
+if (testCloudBtn && cloudStatusBadge) {
+  testCloudBtn.addEventListener('click', async () => {
+    const key      = vlmApiKeyInput?.value?.trim() || '';
+    const endpoint = vlmEndpointInput?.value?.trim() || DEFAULT_HF_ENDPOINT;
+
+    // Save immediately
+    await chrome.storage.local.set({ vlmApiKey: key, vlmEndpoint: endpoint });
+
+    testCloudBtn.textContent = 'Testing…';
+    testCloudBtn.disabled = true;
+    cloudStatusBadge.style.background = '#1e293b';
+    cloudStatusBadge.style.color = '#94a3b8';
+    cloudStatusBadge.textContent = 'Checking…';
+
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (key) headers['Authorization'] = `Bearer ${key}`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: 'Qwen/Qwen2.5-VL-7B-Instruct',
+          messages: [{ role: 'user', content: 'hi' }],
+          max_tokens: 5,
+          stream: false
+        }),
+        signal: AbortSignal.timeout(20000)
+      });
+      if (res.ok || res.status === 422) {
+        // 422 = model accepted request but validation issue — endpoint IS reachable
+        cloudStatusBadge.style.background = '#14532d';
+        cloudStatusBadge.style.color = '#4ade80';
+        cloudStatusBadge.textContent = '✅ Connected!';
+        // Auto-switch to cloud model
+        if (modelSelect) {
+          modelSelect.value = 'secure-cloud-hf';
+          modelSelect.dispatchEvent(new Event('change'));
+        }
+      } else if (res.status === 401 || res.status === 403) {
+        cloudStatusBadge.style.background = '#7f1d1d';
+        cloudStatusBadge.style.color = '#fca5a5';
+        cloudStatusBadge.textContent = '❌ Bad Token (401)';
+      } else if (res.status === 503 || res.status === 502) {
+        cloudStatusBadge.style.background = '#78350f';
+        cloudStatusBadge.style.color = '#fcd34d';
+        cloudStatusBadge.textContent = '⏳ Starting up — wait 2 min';
+      } else {
+        cloudStatusBadge.style.background = '#7f1d1d';
+        cloudStatusBadge.style.color = '#fca5a5';
+        cloudStatusBadge.textContent = `❌ Error ${res.status}`;
+      }
+    } catch (e) {
+      cloudStatusBadge.style.background = '#7f1d1d';
+      cloudStatusBadge.style.color = '#fca5a5';
+      cloudStatusBadge.textContent = e.name === 'TimeoutError' ? '⏱ Timed out — endpoint may be sleeping' : '❌ Unreachable';
+    }
+
+    testCloudBtn.textContent = '🔌 Test & Save';
+    testCloudBtn.disabled = false;
+  });
+}
+
 // ── Model Selector: auto-switch endpoint when model changes ────────
 const CLOUD_MODEL_VAL  = 'secure-cloud-hf';
 
 if (modelSelect) {
   // Restore last-chosen model from storage
-  chrome.storage.local.get('aegisSelectedModel').then(r => {
-    if (r.aegisSelectedModel) modelSelect.value = r.aegisSelectedModel;
+  chrome.storage.local.get(['aegisSelectedModel', 'selectedModel']).then(r => {
+    const saved = r.selectedModel || r.aegisSelectedModel;
+    if (saved) modelSelect.value = saved;
   });
 
   modelSelect.addEventListener('change', async () => {
     const val = modelSelect.value;
-    await chrome.storage.local.set({ aegisSelectedModel: val });
+    // Save under both keys; background.js reads 'selectedModel' at call time
+    await chrome.storage.local.set({ aegisSelectedModel: val, selectedModel: val });
+
+    // Show a brief confirmation chip in the chat
+    const modelLabels = {
+      'SARA-Distillation-0.5B': 'SARA Local',
+      'secure-cloud-hf': 'Secure Cloud',
+      'qwen2.5vl:7b': 'Qwen 2.5 VL 7B',
+      'llama3.2-vision': 'Llama 3.2 Vision',
+    };
+    const label = modelLabels[val] || val;
+    const chip = document.createElement('div');
+    chip.className = 'model-switch-chip';
+    chip.textContent = `✓ Switched to ${label}`;
+    chatContainer.appendChild(chip);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+    setTimeout(() => { if (chip.parentNode) chip.parentNode.removeChild(chip); }, 3000);
   });
 }
+
 
 const SESSION_STORAGE_KEY = 'aegisChatSessions';
 const ACTIVE_SESSION_KEY  = 'aegisActiveChatId';
@@ -681,6 +769,14 @@ document.querySelectorAll('.tab[data-tab="fill"]').forEach(t => {
   t.addEventListener('click', () => {
     // Slight delay so popup.js tab switch finishes first
     setTimeout(loadRiskScore, 120);
+  });
+});
+
+// Ensure profile content is visible when user switches to Profile tab
+document.querySelectorAll('.tab[data-tab="profile"]').forEach(t => {
+  t.addEventListener('click', () => {
+    const mainContent = document.getElementById('profile-main-content');
+    if (mainContent) mainContent.style.display = 'block';
   });
 });
 

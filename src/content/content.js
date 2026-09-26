@@ -517,15 +517,49 @@
   let overlayRaf = 0;
   let overlayListenersAttached = false;
 
-  // Live-page boxes are unused: password/PII/face hides belong on the
-  // offscreen SANITIZE canvas that agents see, not on the user's display.
+  // Live-page cloaking palettes: frosted glass styling with type-specific neon accents.
   const TYPE_COLORS = {
-    password_input:      { border: "transparent", badge: "transparent", fill: "transparent" },
-    sensitive_input:     { border: "transparent", badge: "transparent", fill: "transparent" },
-    contenteditable_pii: { border: "transparent", badge: "transparent", fill: "transparent" },
-    face:                { border: "transparent", badge: "transparent", fill: "transparent" },
+    password_input: {
+      border: "#10b981",
+      badge: "#059669",
+      glow: "rgba(16, 185, 129, 0.5)",
+      fill: "rgba(15, 23, 42, 0.88)",
+      cssClass: "aegis-cloak-password",
+      badgeText: "🔒 AEGIS Shield • Password",
+    },
+    sensitive_input: {
+      border: "#3b82f6",
+      badge: "#2563eb",
+      glow: "rgba(59, 130, 246, 0.5)",
+      fill: "rgba(15, 23, 42, 0.88)",
+      cssClass: "aegis-cloak-sensitive",
+      badgeText: "🔒 AEGIS Shield • Sensitive",
+    },
+    contenteditable_pii: {
+      border: "#8b5cf6",
+      badge: "#7c3aed",
+      glow: "rgba(139, 92, 246, 0.5)",
+      fill: "rgba(15, 23, 42, 0.88)",
+      cssClass: "aegis-cloak-pii",
+      badgeText: "🔒 AEGIS Shield • PII",
+    },
+    face: {
+      border: "#06b6d4",
+      badge: "#0891b2",
+      glow: "rgba(6, 182, 212, 0.5)",
+      fill: "rgba(15, 23, 42, 0.88)",
+      cssClass: "aegis-cloak-face",
+      badgeText: "🔒 AEGIS Shield • Face",
+    },
   };
-  const DEFAULT_COLOR = { border: "transparent", badge: "transparent", fill: "transparent" };
+  const DEFAULT_COLOR = {
+    border: "#64748b",
+    badge: "#475569",
+    glow: "rgba(100, 116, 139, 0.5)",
+    fill: "rgba(15, 23, 42, 0.88)",
+    cssClass: "aegis-cloak-sensitive",
+    badgeText: "🔒 AEGIS Shield",
+  };
 
   function getOrCreateOverlayRoot() {
     let root = document.getElementById(OVERLAY_ROOT_ID);
@@ -607,17 +641,46 @@
   }
 
   function makeOverlayBox(type, labelText) {
-    const colors = TYPE_COLORS[type] || DEFAULT_COLOR;
+    const config = TYPE_COLORS[type] || DEFAULT_COLOR;
     const box = document.createElement("div");
+    box.className = `aegis-cloak-box ${config.cssClass || ""}`;
+
+    // Inlined styles guarantee frosted glass & blur execute even if external CSS is delayed
     Object.assign(box.style, {
       position: "fixed",
-      border: "0",
-      backgroundColor: "transparent",
+      border: `1.5px solid ${config.border}`,
+      backgroundColor: config.fill || "rgba(15, 23, 42, 0.88)",
+      backdropFilter: "blur(14px)",
+      WebkitBackdropFilter: "blur(14px)",
       boxSizing: "border-box",
+      borderRadius: type === "face" ? "12px" : "8px",
       pointerEvents: "none",
     });
-    void colors;
-    void labelText;
+    box.style.setProperty("--aegis-glow", config.glow);
+
+    const badge = document.createElement("div");
+    badge.className = "aegis-cloak-badge";
+    Object.assign(badge.style, {
+      position: "absolute",
+      top: "-11px",
+      left: "8px",
+      background: config.badge,
+      color: "#f8fafc",
+      fontSize: "9.5px",
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontWeight: "600",
+      padding: "1px 7px",
+      borderRadius: "4px",
+      whiteSpace: "nowrap",
+      lineHeight: "14px",
+      letterSpacing: "0.03em",
+      boxShadow: "0 2px 6px rgba(0, 0, 0, 0.5)",
+      border: "1px solid rgba(255, 255, 255, 0.2)",
+      pointerEvents: "none",
+    });
+    badge.textContent = config.badgeText || labelText || "🔒 AEGIS Shield";
+    box.appendChild(badge);
+
     return box;
   }
 
@@ -725,12 +788,30 @@
     repositionOverlays();
   }
 
-  // Live page stays usable. Blur/masks are applied only on the offscreen
-  // SANITIZE frame that a local agent may see. includeFaces is accepted so
-  // existing Privacy Scan / idle messages stay valid, then discarded.
-  function showRedactionOverlay(_fields, _faces, _dpr, options) {
-    void (options && options.includeFaces);
-    clearRedactionOverlay();
+  // Live page visual cloaking. Renders frosted glass overlays over DOM password/PII fields
+  // and biometric face areas so any external screenshot, screen-share, or AI agent captures blurred pixels.
+  let liveShieldEnabled = true;
+
+  async function isLiveShieldActive() {
+    try {
+      const stored = await chrome.storage.local.get("liveShieldEnabled");
+      return stored.liveShieldEnabled !== undefined ? Boolean(stored.liveShieldEnabled) : true;
+    } catch {
+      return true;
+    }
+  }
+
+  async function showRedactionOverlay(fields, faces, dpr, options) {
+    const active = await isLiveShieldActive();
+    if (!active) {
+      clearRedactionOverlay();
+      return;
+    }
+    const includeFaces = options ? options.includeFaces !== false : true;
+    renderFieldOverlays(fields);
+    if (includeFaces) {
+      renderFaceOverlays(faces, dpr);
+    }
   }
 
   function clearRedactionOverlay() {
@@ -870,6 +951,17 @@
       return false;
     }
 
+    if (msg.type === "TOGGLE_LIVE_SHIELD") {
+      liveShieldEnabled = Boolean(msg.enabled);
+      if (msg.enabled) {
+        scheduleSensitiveRescan();
+      } else {
+        clearRedactionOverlay();
+      }
+      sendResponse({ ok: true, liveShieldEnabled: Boolean(msg.enabled) });
+      return false;
+    }
+
     if (msg.type === "EXECUTE_CLICK") {
       sendResponse(executeClick(msg.x, msg.y, msg.selector, msg.text));
       return false;
@@ -966,6 +1058,9 @@
       attributeFilter: ["type", "autocomplete", "name", "id", "aria-label", "placeholder"],
     });
   }
+
+  // Initial live shield scan on page load
+  scheduleSensitiveRescan();
 
   console.log("[SIH26171] Content script loaded, DPR:", window.devicePixelRatio);
 })();

@@ -244,11 +244,11 @@ check("idle rescan does not send DETECT_FACES", (() => {
   return start !== -1 && end > start && !contentSrc.slice(start, end).includes("DETECT_FACES");
 })());
 check(
-  "live overlay does not hide fields from the user",
-  /function showRedactionOverlay[\s\S]*clearRedactionOverlay\(\)/.test(contentSrc) &&
-    contentSrc.includes('backgroundColor: "transparent"') &&
-    !contentSrc.includes("backdropFilter") &&
-    !contentSrc.includes('fill: "rgba(15, 23, 42, 0.92)"')
+  "live overlay active: cloaks sensitive fields from external AI capture",
+  contentSrc.includes("showRedactionOverlay") &&
+    contentSrc.includes("renderFieldOverlays") &&
+    contentSrc.includes("backdropFilter") &&
+    contentSrc.includes("aegis-cloak-box")
 );
 
 console.log("\n7. Face-scan + Fill Form copy");

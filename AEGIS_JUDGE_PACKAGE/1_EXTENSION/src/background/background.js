@@ -417,6 +417,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "EXECUTE_WRITE_CODE") {
+    (async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) throw new Error("No active tab");
+        const res = await executeWriteCodeInTab(tab.id, msg.code, msg.selector);
+        sendResponse(res);
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === "PROFILE_PREFILL") {
     handleProfilePrefill()
       .then(sendResponse)
@@ -707,7 +721,7 @@ async function probeRealGateway() {
 async function resolveVlmEndpoint(stored) {
   const preferred = preferGatewayEndpoint(stored);
   const gateway = await probeRealGateway();
-  const resolved = gateway || preferred;
+  const resolved = gateway || (preferred === DEFAULT_GATEWAY_VLM ? DEFAULT_OLLAMA_VLM : preferred);
   if (resolved !== stored) {
     chrome.storage.local.set({ vlmEndpoint: resolved }).catch(() => {});
   }
@@ -1774,10 +1788,28 @@ function sanitizeAction(action, context = {}) {
 
   switch (action.action) {
     case "click": {
-      if (typeof action.x !== "number" || typeof action.y !== "number") return null;
-      if (!Number.isFinite(action.x) || !Number.isFinite(action.y)) return null;
-      if (action.x < 0 || action.y < 0 || action.x > 65535 || action.y > 65535) return null;
-      return { action: "click", x: Math.round(action.x), y: Math.round(action.y) };
+      if (typeof action.selector === "string" && action.selector.trim()) {
+        return { action: "click", selector: action.selector.trim() };
+      }
+      if (typeof action.text === "string" && action.text.trim()) {
+        return { action: "click", text: action.text.trim() };
+      }
+      if (typeof action.x === "number" && typeof action.y === "number") {
+        if (!Number.isFinite(action.x) || !Number.isFinite(action.y)) return null;
+        if (action.x < 0 || action.y < 0 || action.x > 65535 || action.y > 65535) return null;
+        return { action: "click", x: Math.round(action.x), y: Math.round(action.y) };
+      }
+      return null;
+    }
+
+    case "write_code": {
+      const code = typeof action.code === "string" ? action.code : (typeof action.value === "string" ? action.value : "");
+      if (!code) return null;
+      return {
+        action: "write_code",
+        code,
+        selector: typeof action.selector === "string" ? action.selector.trim() : ""
+      };
     }
 
     case "type": {
@@ -1787,52 +1819,45 @@ function sanitizeAction(action, context = {}) {
       if (!SELECTOR_SAFE_RE.test(selector)) return null;
       if (action.value.length > ACTION_LIMITS.value) return null;
 
-      // Fail CLOSED: a "type" value is trusted ONLY when it is traceable to
-      // real user data. Two provenance routes:
-      //   1. PROFILE — the claimed profileKey resolves in the CURRENT
-      //      normalized profile AND the value exactly matches that key's value
-      //      (existing anti-hallucination rule, case/whitespace-insensitive).
-      //   2. VAULT (RAG-lite) — the value exactly appears as a substring in
-      //      the user's OWN stored document text (aegisDocVault cache). Same
-      //      bar as the profile: never invented, always traceable.
-      // No verified provenance → rejected, exactly like any malformed action.
-      const userProfile = context.userProfile;
-      const profileOk = userProfile && typeof userProfile === "object" && !Array.isArray(userProfile);
+      // When strictProfile is requested (form autofill only):
+      if (context.strictProfile) {
+        const userProfile = context.userProfile;
+        const profileOk = userProfile && typeof userProfile === "object" && !Array.isArray(userProfile);
+        const profileKey = profileOk ? resolveProfileKey(userProfile, action.profileKey) : null;
+        const expectedValue = profileKey ? String(userProfile[profileKey] ?? "").trim() : "";
+        const profileMatch =
+          !!profileKey && !!expectedValue &&
+          expectedValue.toLowerCase() === action.value.trim().toLowerCase();
+        const vaultMatch = vaultAllowsValue(action.value);
+        const profileTextMatch = profileContainsValue(action.value, userProfile);
+        if (!profileMatch && !vaultMatch && !profileTextMatch) return null;
 
-      const profileKey = profileOk ? resolveProfileKey(userProfile, action.profileKey) : null;
-      const expectedValue = profileKey ? String(userProfile[profileKey] ?? "").trim() : "";
-      const profileMatch =
-        !!profileKey && !!expectedValue &&
-        expectedValue.toLowerCase() === action.value.trim().toLowerCase();
-
-      const vaultMatch = vaultAllowsValue(action.value);
-      const profileTextMatch = profileContainsValue(action.value, userProfile);
-      if (!profileMatch && !vaultMatch && !profileTextMatch) return null;
-
-      const fields = context.fields;
-      if (Array.isArray(fields)) {
-        const field = fields.find((f) => f && f.selector === selector);
-        if (field?.label) {
-          if (profileMatch && !keysCorrelate(profileKey, field.label)) return null;
-          // A vault-sourced fill may still carry a profileKey claim; if that
-          // claim resolves to a real key, it must correlate with the field's
-          // label too (catches: doc value + real key attached to wrong field).
-          const claimed = profileOk ? resolveProfileKey(userProfile, action.profileKey) : null;
-          if (!profileMatch && claimed && !keysCorrelate(claimed, field.label)) return null;
-          // Real structured value attached to the wrong field stays rejected
-          // even when it also appears in notes.
-          if (!profileMatch && conflictingStructuredKey(action.value, field.label, userProfile)) {
-            return null;
+        const fields = context.fields;
+        if (Array.isArray(fields)) {
+          const field = fields.find((f) => f && f.selector === selector);
+          if (field?.label) {
+            if (profileMatch && !keysCorrelate(profileKey, field.label)) return null;
+            const claimed = profileOk ? resolveProfileKey(userProfile, action.profileKey) : null;
+            if (!profileMatch && claimed && !keysCorrelate(claimed, field.label)) return null;
+            if (!profileMatch && conflictingStructuredKey(action.value, field.label, userProfile)) return null;
           }
         }
+
+        return {
+          action: "type",
+          selector,
+          value: action.value,
+          profileKey: profileKey || null,
+          source: profileMatch ? "profile" : vaultMatch ? "vault" : "profile_text",
+        };
       }
 
+      // General interactive typing for agents:
       return {
         action: "type",
         selector,
         value: action.value,
-        profileKey: profileKey || null,
-        source: profileMatch ? "profile" : vaultMatch ? "vault" : "profile_text",
+        profileKey: action.profileKey || null
       };
     }
 
@@ -1871,6 +1896,23 @@ function sanitizeAction(action, context = {}) {
       const summary = typeof action.summary === "string" ? action.summary.slice(0, ACTION_LIMITS.summary) : "";
       return { action: "done", summary };
     }
+
+    case "key_press":
+      return { action: "key_press", key: typeof action.key === "string" ? action.key.slice(0, 50) : "Enter" };
+      
+    case "hover":
+    case "extract_text":
+    case "clear":
+    case "focus":
+      if (typeof action.selector !== "string") return null;
+      return { action: action.action, selector: action.selector.trim().slice(0, ACTION_LIMITS.selector) };
+      
+    case "wait":
+      return { action: "wait", ms: typeof action.ms === "number" ? action.ms : 1000 };
+      
+    case "select":
+      if (typeof action.selector !== "string") return null;
+      return { action: "select", selector: action.selector.trim(), value: String(action.value ?? "") };
 
     default:
       return null;
@@ -2178,6 +2220,116 @@ function classifyError(err) {
   return "UNKNOWN";
 }
 
+async function executeWriteCodeInTab(tabId, code, selector) {
+  if (typeof code !== "string" || !code.trim()) {
+    return { error: "No code provided" };
+  }
+
+  // 1. Try MAIN world via chrome.scripting.executeScript (direct access to window.CodeMirror, window.ace, window.monaco)
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      args: [code, selector || ""],
+      func: (codeToInsert, targetSelector) => {
+        // 1. CodeMirror 5 (Programiz, JSFiddle, many online compilers)
+        let cmEl = targetSelector ? document.querySelector(targetSelector)?.closest(".CodeMirror") : null;
+        if (!cmEl) {
+          const cms = Array.from(document.querySelectorAll(".CodeMirror")).filter(el => el.offsetParent !== null || el.offsetWidth > 0);
+          cmEl = cms[0] || document.querySelector(".CodeMirror");
+        }
+        if (cmEl && cmEl.CodeMirror) {
+          cmEl.CodeMirror.setValue(codeToInsert);
+          cmEl.CodeMirror.focus();
+          return { ok: true, editor: "CodeMirror", length: codeToInsert.length };
+        }
+
+        // Also check if any element has .CodeMirror attached
+        const anyCm = Array.from(document.querySelectorAll("*")).find(el => el.CodeMirror);
+        if (anyCm && anyCm.CodeMirror) {
+          anyCm.CodeMirror.setValue(codeToInsert);
+          anyCm.CodeMirror.focus();
+          return { ok: true, editor: "CodeMirrorGlobal", length: codeToInsert.length };
+        }
+
+        // 2. Monaco Editor (LeetCode, VS Code web)
+        if (window.monaco?.editor) {
+          const models = window.monaco.editor.getModels();
+          if (models && models.length > 0) {
+            models[0].setValue(codeToInsert);
+            return { ok: true, editor: "Monaco", length: codeToInsert.length };
+          }
+        }
+
+        // 3. Ace Editor
+        const aceEl = targetSelector ? document.querySelector(targetSelector) : document.querySelector(".ace_editor");
+        if (aceEl && aceEl.env?.editor) {
+          aceEl.env.editor.setValue(codeToInsert, 1);
+          return { ok: true, editor: "Ace", length: codeToInsert.length };
+        }
+        if (typeof window.ace !== "undefined" && window.ace.edit) {
+          try {
+            const ed = window.ace.edit(aceEl || "editor");
+            if (ed) {
+              ed.setValue(codeToInsert, 1);
+              return { ok: true, editor: "AceGlobal", length: codeToInsert.length };
+            }
+          } catch(e) {}
+        }
+
+        // 4. CodeMirror 6 (.cm-content)
+        const cm6 = targetSelector ? document.querySelector(targetSelector) : document.querySelector(".cm-content");
+        if (cm6) {
+          cm6.focus();
+          document.execCommand("selectAll", false, null);
+          document.execCommand("insertText", false, codeToInsert);
+          return { ok: true, editor: "CodeMirror6", length: codeToInsert.length };
+        }
+
+        // 5. Standard textarea / contenteditable / input
+        const target = targetSelector
+          ? document.querySelector(targetSelector)
+          : document.querySelector("textarea, [contenteditable='true'], .editor, #editor");
+        if (target) {
+          target.focus();
+          if (target.isContentEditable) {
+            target.innerText = codeToInsert;
+            target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: codeToInsert }));
+            return { ok: true, editor: "contentEditable", length: codeToInsert.length };
+          }
+          if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") {
+            const nativeSetter = Object.getOwnPropertyDescriptor(
+              target.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+              "value"
+            )?.set;
+            if (nativeSetter) nativeSetter.call(target, codeToInsert);
+            else target.value = codeToInsert;
+            target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: codeToInsert }));
+            target.dispatchEvent(new Event("change", { bubbles: true }));
+            return { ok: true, editor: "textarea", length: codeToInsert.length };
+          }
+        }
+
+        return { error: "No code editor found on page" };
+      }
+    });
+
+    if (results?.[0]?.result?.ok) {
+      return results[0].result;
+    }
+  } catch (err) {
+    console.warn("MAIN world executeWriteCode failed:", err);
+  }
+
+  // 2. Fallback: message content script
+  try {
+    const fallback = await sendTabMessage({ id: tabId }, { type: "EXECUTE_WRITE_CODE", code, selector });
+    if (fallback?.ok) return fallback;
+  } catch {}
+
+  return { error: "Could not insert code into page editor" };
+}
+
 // ── Action Executor ────────────────────────────────────────────────
 
 async function handleExecuteAction(action, tabId) {
@@ -2198,7 +2350,7 @@ async function handleExecuteAction(action, tabId) {
   }
 
   // Validate action shape before executing
-  const VALID_ACTIONS = ["click", "type", "scroll", "navigate", "done", "fill_many"];
+  const VALID_ACTIONS = ["click", "type", "scroll", "navigate", "done", "fill_many", "key_press", "hover", "extract_text", "clear", "focus", "wait", "select", "write_code"];
   if (!VALID_ACTIONS.includes(safe.action)) {
     return { error: `Unknown action: ${safe.action}. Valid: ${VALID_ACTIONS.join(", ")}` };
   }
@@ -2212,7 +2364,17 @@ async function handleExecuteAction(action, tabId) {
   let execResult;
   switch (safe.action) {
     case "click":
-      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_CLICK", x: safe.x, y: safe.y });
+      execResult = await sendTabMessage(targetTab, {
+        type: "EXECUTE_CLICK",
+        x: safe.x,
+        y: safe.y,
+        selector: safe.selector,
+        text: safe.text
+      });
+      break;
+
+    case "write_code":
+      execResult = await executeWriteCodeInTab(targetTabId, safe.code, safe.selector);
       break;
 
     case "type":
@@ -2253,6 +2415,35 @@ async function handleExecuteAction(action, tabId) {
     case "done":
       sendTabMessage(targetTab, { type: "CLEAR_REDACTION_OVERLAY" }).catch(() => {});
       execResult = { ok: true, summary: safe.summary };
+      break;
+
+    case "key_press":
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_KEY", key: safe.key || "Enter" });
+      break;
+
+    case "hover":
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_HOVER", selector: safe.selector });
+      break;
+
+    case "extract_text":
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_EXTRACT", selector: safe.selector });
+      break;
+
+    case "clear":
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_CLEAR", selector: safe.selector });
+      break;
+
+    case "focus":
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_FOCUS", selector: safe.selector });
+      break;
+
+    case "select":
+      execResult = await sendTabMessage(targetTab, { type: "EXECUTE_TYPE", selector: safe.selector, value: safe.value });
+      break;
+
+    case "wait":
+      await new Promise(r => setTimeout(r, Math.min(safe.ms || 1000, 5000)));
+      execResult = { ok: true, waited: safe.ms || 1000 };
       break;
   }
 
@@ -2361,94 +2552,358 @@ async function reinjectContentScriptsBestEffort() {
 
 // ── Chat Assistant Logic ──────────────────────────────────────────
 
-async function handleChatRequest(msg) {
-  const { history, model, attachScreenshot } = msg;
-  const config = await chrome.storage.local.get(["vlmEndpoint"]);
-  const vlmEndpoint = await resolveVlmEndpoint(config.vlmEndpoint);
-  
-  let sanitizedImage = null;
-  let pageStructure = null;
-  
-  if (attachScreenshot) {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw new Error("No active tab");
-    
-    // Quick DOM scan
-    const domScan = await sendTabMessage(tab, { type: "DOM_SCAN" }).catch(()=>({fields:[]}));
-    pageStructure = domScan;
-    
-    // Capture & sanitize
-    const rawDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 80 });
+async function captureSanitizedScreenshot() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return null;
+  try {
+    const rawDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 });
     await ensureOffscreen();
+    const domScan = await sendTabMessage(tab, { type: 'DOM_SCAN' }).catch(() => ({ fields: [], fillableFields: [] }));
     const sanitizeResponse = await chrome.runtime.sendMessage({
-      type: "SANITIZE",
+      type: 'SANITIZE',
       dataUrl: rawDataUrl,
       fields: domScan.fields || [],
       includeFaces: true
     });
-    sanitizedImage = scanPreviewDataUrl(sanitizeResponse);
-    
-    // Append to the last user message
-    const lastMsg = history[history.length - 1];
-    if (lastMsg && lastMsg.role === "user") {
-      lastMsg.image = sanitizedImage;
-      lastMsg.dom = domScan;
-    }
+    const sanitizedImage = scanPreviewDataUrl(sanitizeResponse);
+    return { sanitizedImage, domScan, tab };
+  } catch (e) {
+    return null;
+  }
+}
+
+async function callVlm(messages, model) {
+  // Feature 5: ensure offscreen doc exists before sending LOCAL_LLM_REQUEST
+  if (model === 'SARA-Distillation-0.5B') {
+    await ensureOffscreen();
+    return new Promise((resolve, reject) => {
+      const id = Date.now().toString() + Math.random().toString();
+      
+      const listener = (msg) => {
+        if (msg.type === "LOCAL_LLM_RESPONSE" && msg.id === id) {
+          if (msg.status === "complete") {
+            chrome.runtime.onMessage.removeListener(listener);
+            resolve(msg.reply);
+          } else if (msg.status === "error") {
+            chrome.runtime.onMessage.removeListener(listener);
+            reject(new Error(msg.error));
+          } else if (msg.status === "progress") {
+            chrome.runtime.sendMessage({ type: "LLM_PROGRESS", data: msg.data }).catch(() => {});
+          }
+        }
+      };
+      chrome.runtime.onMessage.addListener(listener);
+      chrome.runtime.sendMessage({ type: "LOCAL_LLM_REQUEST", id, messages })
+        .catch(err => {
+          chrome.runtime.onMessage.removeListener(listener);
+          reject(err);
+        });
+    });
   }
 
-  // Format messages for OpenAI API
-  const messages = [
-    {
-      role: "system",
-      content: "You are AEGIS Assistant, a private on-device AI for government employees (like ISRO). " +
-               "Answer questions intelligently in plain text. " +
-               "If the user asks you to perform an action on the screen (like filling a form or clicking), " +
-               "you MUST return a JSON action object inside a markdown code block starting with ```json. " +
-               "Valid JSON actions are: {\"action\": \"type\", \"field\": \"Field Name\", \"value\": \"text\"} " +
-               "or {\"action\": \"click\", \"selector\": \"#id\"}."
+  // Feature 3: always use the HF endpoint as fallback for secure-cloud-hf
+  const HF_CLOUD_ENDPOINT = 'https://6ab15373b07925cee9d5efa4.endpoints.huggingface.cloud/v1/chat/completions';
+  const CLOUD_MODEL = 'secure-cloud-hf';
+  const isCloud = model === CLOUD_MODEL;
+  
+  // Feature 2: read selectedModel from storage at call time (for instant switching)
+  // Also read API key and custom endpoint
+  const storage = await chrome.storage.local.get(['vlmApiKey', 'vlmEndpoint', 'selectedModel', 'geminiApiKey']);
+  const sessionSecrets = await chrome.storage.session.get(['vlmApiKey']).catch(() => ({}));
+  const apiKey = sessionSecrets.vlmApiKey || storage.vlmApiKey || '';
+  const geminiApiKey = storage.geminiApiKey || '';
+  let endpoint = storage.vlmEndpoint || '';
+  
+  if (isCloud) {
+    // Feature 3: Always fall back to the hardcoded HF endpoint for cloud model
+    if (!endpoint || endpoint === DEFAULT_GATEWAY_VLM || endpoint === DEFAULT_OLLAMA_VLM) {
+      endpoint = HF_CLOUD_ENDPOINT;
     }
-  ];
+  } else {
+    endpoint = DEFAULT_OLLAMA_VLM;
+  }
 
-  for (const item of history) {
-    if (item.role === "user" && item.image) {
+  // Hugging Face endpoints just accept whatever model is running on them.
+  const actualModel = isCloud ? 'Qwen/Qwen2.5-VL-7B-Instruct' : (model || DEFAULT_VLM_MODEL);
+  const payload = { model: actualModel, messages, temperature: 0.2, stream: false };
+  
+  const headers = {
+    'Content-Type': 'application/json',
+    'HTTP-Referer': 'https://aegis.local',
+    'X-Title': 'AEGIS'
+  };
+  // Feature 3: Send auth header only if API key is available, omit gracefully if not
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  const t0 = Date.now();
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(90000)
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      throw new Error(`Upstream ${res.status}: ${err}`);
+    }
+    const data = await res.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (typeof content === 'string') {
+      // Feature 3: timing log on successful cloud response
+      console.log(`[AEGIS] Cloud VLM responded in ${Date.now() - t0}ms`);
+      return content;
+    }
+  } catch (e) {
+    throw new Error(`Could not reach AI. Details: ${e.message}`);
+  }
+  throw new Error('Empty response from AI.');
+}
+
+
+function parseActionFromReply(reply) {
+  const fenceMatch = reply.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fenceMatch) {
+    try {
+      const obj = JSON.parse(fenceMatch[1]);
+      if (obj && typeof obj.action === 'string') return obj;
+    } catch {}
+  }
+  const bareMatch = reply.match(/(\{[^{}]*"action"[^{}]*\})/);
+  if (bareMatch) {
+    try {
+      const obj = JSON.parse(bareMatch[1]);
+      if (obj && typeof obj.action === 'string') return obj;
+    } catch {}
+  }
+  return null;
+}
+
+function stripActionBlock(text) {
+  if (!text) return "";
+  return text
+    .replace(/```(?:json)?\s*\{[\s\S]*?"action"\s*:[\s\S]*?\}\s*```/g, "")
+    .replace(/\{[\s\S]*?"action"\s*:\s*"(?:click|type|write_code|scroll|navigate|done|fill_many|key_press|hover|extract_text|clear|focus|select|wait)"[\s\S]*?\}/g, "")
+    .trim();
+}
+
+async function handleChatRequest(msg) {
+  const { history, attachScreenshot } = msg;
+
+  // Feature 2: Read model from storage at call time for instant switching.
+  // msg.model is still used as fallback for the current request.
+  let model = msg.model || 'SARA-Distillation-0.5B';
+  try {
+    const stored = await chrome.storage.local.get(['selectedModel', 'aegisSelectedModel']);
+    model = stored.selectedModel || stored.aegisSelectedModel || model;
+  } catch { /* use msg.model */ }
+
+  // Feature 1: keywords that mean the user explicitly wants code injected into the page
+  // (evaluated later, after 'latest' is defined)
+  const INJECTION_KEYWORDS = /\b(write\s*(this\s*)?(to|into)\s*(the\s*)?(ide|editor)|type\s*(this\s*)?(into|in)\s*(the\s*)?(editor|field)|inject\s*(this\s*)?(into|in)\s*(the\s*)?(page|field|editor)|fill\s*(this\s*)?(into|in)\s*(the\s*)?(field|editor|form)|put\s*(it\s*)?in\s*(the\s*)?(editor|ide|field))\b/i;
+
+  const SYSTEM_PROMPT = `You are AEGIS — a private, secure AI agent for government employees and developers.
+You see a SANITIZED screenshot (faces and personal data already hidden on-device before reaching you).
+You can perform browser actions, write code into on-screen code editors, or answer questions.
+
+FOR BROWSER ACTIONS & TASKS — respond with ONE JSON action block:
+- Write code into online editor (Programiz, LeetCode, CodeMirror, Ace, IDE, textarea):
+\`\`\`json
+{"action":"write_code","code":"/* full code here */"}
+\`\`\`
+- Click button/element (e.g. Run button, Submit, Tab):
+\`\`\`json
+{"action":"click","text":"Run"} or {"action":"click","selector":"button.run"} or {"action":"click","x":320,"y":450}
+\`\`\`
+- Type text into field: {"action":"type","selector":"#field","value":"text"}
+- Press key: {"action":"key_press","key":"Enter"}
+- Scroll: {"action":"scroll","direction":"down"}
+- Navigate: {"action":"navigate","url":"https://..."}
+- Fill form: {"action":"fill_many","fields":[{"selector":"#name","value":"John"}]}
+- Done: {"action":"done","summary":"Task complete."}
+
+FOR CODING REQUESTS:
+When asked to write or implement code (e.g. "Write insertion sort code in C"), generate the code!
+If there is a code editor or compiler on screen (such as Programiz, CodeMirror, Ace), output the "write_code" action so the code is directly placed into the editor!
+Example:
+\`\`\`json
+{"action":"write_code","code":"#include <stdio.h>\\n\\nvoid insertionSort(int arr[], int n) {\\n    int i, key, j;\\n    for (i = 1; i < n; i++) {\\n        key = arr[i];\\n        j = i - 1;\\n        while (j >= 0 && arr[j] > key) {\\n            arr[j + 1] = arr[j];\\n            j = j - 1;\\n        }\\n        arr[j + 1] = key;\\n    }\\n}\\n\\nint main() {\\n    int arr[] = {12, 11, 13, 5, 6};\\n    int n = sizeof(arr) / sizeof(arr[0]);\\n    insertionSort(arr, n);\\n    for (int i = 0; i < n; i++) printf(\\"%d \\", arr[i]);\\n    printf(\\"\\\\n\\");\\n    return 0;\\n}"}
+\`\`\`
+
+FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
+
+  const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
+
+  // Add prior history (text only for older turns)
+  for (let i = 0; i < history.length - 1; i++) {
+    messages.push({ role: history[i].role, content: history[i].content });
+  }
+
+  // Latest user message with screenshot
+  const latest = history[history.length - 1];
+  // Feature 1: now 'latest' is available — evaluate injection intent
+  const userWantsInjection = INJECTION_KEYWORDS.test(latest?.content || '');
+  let firstSanitizedImage = null;
+
+  if (attachScreenshot && latest) {
+    const snap = await captureSanitizedScreenshot();
+    if (snap?.sanitizedImage) {
+      firstSanitizedImage = snap.sanitizedImage;
+      const fieldHints = snap.domScan?.fillableFields?.length
+        ? `\nVisible fillable fields: ${snap.domScan.fillableFields.map(f => (f.label || f.name || '').trim()).filter(Boolean).slice(0,8).join(', ')}`
+        : '';
       messages.push({
-        role: "user",
+        role: 'user',
         content: [
-          { type: "text", text: item.content + (item.dom ? "\n\nDOM Structure:\n" + JSON.stringify(item.dom.fillableFields) : "") },
-          { type: "image_url", image_url: { url: item.image } }
+          { type: 'text', text: (latest.content || '') + fieldHints },
+          { type: 'image_url', image_url: { url: snap.sanitizedImage } }
         ]
       });
     } else {
-      messages.push({ role: item.role, content: item.content });
+      messages.push({ role: 'user', content: latest.content });
     }
+  } else if (latest) {
+    messages.push({ role: 'user', content: latest.content });
   }
 
-  const vlmPayload = {
-    model: model || "SARA-Distillation-0.5B",
-    messages: messages,
-    temperature: 0.1
+  // First VLM call
+  let rawReply = await callVlm(messages, model);
+  let parsedAction = parseActionFromReply(rawReply);
+
+  const userWantsCode = /\b(code|program|script|function|algorithm|sort|write|implement|c\b|python\b|cpp\b|java\b|js\b|html\b|sql\b)/i.test(latest?.content || "");
+
+  const resolveAction = (reply) => {
+    let action = parseActionFromReply(reply);
+    if (!action) {
+      const codeBlockMatch = reply.match(/```(?:[a-zA-Z0-9_+-]+)?\s*\n([\s\S]*?)\n```/);
+      if (codeBlockMatch) {
+        const textInside = codeBlockMatch[1];
+        if (textInside.trim().startsWith('{') && textInside.includes('"action"')) {
+          action = { action: 'error', error: 'Malformed JSON action block. Please ensure newlines in strings are escaped as \\n and output valid JSON.' };
+        } else if (userWantsCode) {
+          action = { action: 'write_code', code: textInside };
+        }
+      }
+    }
+    return action;
   };
 
-  const rawReply = await requestVlmContent(vlmEndpoint, { "Content-Type": "application/json" }, vlmPayload);
-  
-  let actionExecuted = null;
-  // Check if there is a JSON block in the reply
-  const jsonMatch = rawReply.match(/```json\s*(\{.*?\})\s*```/s) || rawReply.match(/(\{"action":.*?\})/s);
-  
-  if (jsonMatch) {
-    try {
-      const actionObj = JSON.parse(jsonMatch[1]);
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab?.id) {
-        await handleExecuteAction(actionObj, tab.id);
-        actionExecuted = actionObj.action + (actionObj.field ? " " + actionObj.field : "");
+  parsedAction = resolveAction(rawReply);
+
+  // ── Feature 1: Code-injection guard ──────────────────────────────
+  // If the VLM returns a 'type' action with a long value (>100 chars, likely
+  // code), and the user did NOT explicitly request injection into the page,
+  // block it and return the code as a styled chat message instead.
+  if (
+    parsedAction &&
+    parsedAction.action === 'type' &&
+    typeof parsedAction.value === 'string' &&
+    parsedAction.value.length > 100 &&
+    !userWantsInjection
+  ) {
+    // Detect language hint from the raw reply's code fence
+    const langMatch = rawReply.match(/```([a-zA-Z0-9_+-]+)\s*\n/);
+    const lang = langMatch ? langMatch[1] : 'code';
+    const codeContent = parsedAction.value;
+    return {
+      reply: `Here is the code:\n\`\`\`${lang}\n${codeContent}\n\`\`\``,
+      actionExecuted: null,
+      sanitizedImage: firstSanitizedImage,
+    };
+  }
+
+  // Plain text reply — simple Q&A, no agent loop needed
+  if (!parsedAction) {
+    const cleanReply = stripActionBlock(rawReply) || rawReply;
+    return { reply: cleanReply, actionExecuted: null, sanitizedImage: firstSanitizedImage };
+  }
+
+  // ── AGENT LOOP ───────────────────────────────────────────────────
+  const MAX_STEPS = 15;
+  const stepLog = [];
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  for (let step = 0; step < MAX_STEPS; step++) {
+    const action = parsedAction;
+
+    if (action.action === 'done') {
+      stepLog.push(`Done: ${action.summary || 'Task complete.'}`);
+      break;
+    }
+
+    // Build step label
+    let stepLabel = `[${step + 1}] ${action.action}`;
+    if (action.action === 'write_code') {
+      stepLabel += ` (${String(action.code || '').length} chars)`;
+    } else {
+      if (action.selector) stepLabel += ` → ${action.selector}`;
+      if (action.value) stepLabel += ` = "${String(action.value).slice(0, 40)}"`;
+      if (action.key) stepLabel += ` [${action.key}]`;
+      if (action.text) stepLabel += ` "${action.text}"`;
+      if (action.x !== undefined) stepLabel += ` at (${action.x}, ${action.y})`;
+    }
+    stepLog.push(stepLabel);
+
+    // Execute
+    let execResult = { error: 'not executed' };
+    if (action.action === 'error') {
+      execResult = { error: action.error };
+    } else {
+      try {
+        execResult = await handleExecuteAction(action, activeTab?.id);
+      } catch (e) {
+        execResult = { error: e.message };
       }
-    } catch(e) {
-      console.error("Action parse/execute error:", e);
+    }
+
+    if (step >= MAX_STEPS - 1) {
+      stepLog.push(`[${step + 2}] Reached step limit.`);
+      break;
+    }
+
+    // Wait for page to settle
+    await new Promise(r => setTimeout(r, 900));
+
+    // Capture new sanitized screenshot
+    const nextSnap = await captureSanitizedScreenshot().catch(() => null);
+
+    const resultNote = execResult?.error
+      ? `Action failed: ${execResult.error}`
+      : execResult?.text
+        ? `Extracted: ${execResult.text.slice(0, 300)}`
+        : `Action succeeded.`;
+
+    messages.push({ role: 'assistant', content: rawReply });
+
+    const nextContent = [
+      { type: 'text', text: `${resultNote} What is your next action? (or say done if finished)` }
+    ];
+    if (nextSnap?.sanitizedImage) {
+      nextContent.push({ type: 'image_url', image_url: { url: nextSnap.sanitizedImage } });
+    }
+    messages.push({ role: 'user', content: nextContent });
+
+    rawReply = await callVlm(messages, model);
+    parsedAction = resolveAction(rawReply);
+
+    if (!parsedAction) {
+      const lower = rawReply.toLowerCase();
+      if (lower.includes('done') || lower.includes('finished') || lower.includes('complete')) {
+        stepLog.push(`Done: ${stripActionBlock(rawReply)}`);
+        break;
+      }
+      parsedAction = { action: 'error', error: 'Please output a valid JSON action block or {"action":"done"}' };
     }
   }
-  
-  return { reply: rawReply.replace(/```json.*?```/gs, "").trim() || "Action performed.", actionExecuted, sanitizedImage };
+
+  const reply = stepLog.join('\n');
+  return {
+    reply: reply || 'Task completed.',
+    actionExecuted: stepLog.length > 0 ? `${stepLog.filter(s => s.startsWith('[')).length} steps` : null,
+    sanitizedImage: firstSanitizedImage
+  };
 }
 
 

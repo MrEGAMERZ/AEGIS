@@ -1,54 +1,891 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>AEGIS Chat</title>
-  <link rel="stylesheet" href="sidepanel.css" />
+  <meta charset="utf-8">
+  <title>AEGIS</title>
+  <style>
+/* ─── All popup.html styles (verbatim) ───────────────────── */
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    body {
+      width: 360px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px; color: #0f172a; background: #ffffff;
+    }
+    .header { padding: 14px 16px 0; display: flex; justify-content: space-between; align-items: center; }
+    .header-left { display: flex; align-items: center; gap: 8px; }
+    .header h1 { font-size: 15px; font-weight: 700; color: #0f172a; }
+    .header .badge { font-size: 9px; background: #dbeafe; color: #1d4ed8; padding: 2px 7px; border-radius: 10px; font-weight: 700; }
+    .header-actions { display: flex; gap: 4px; align-items: center; }
+    .icon-btn {
+      width: 28px; height: 28px; border: none; background: #f1f5f9;
+      border-radius: 6px; cursor: pointer; font-size: 13px;
+      display: flex; justify-content: center; align-items: center;
+    }
+    .icon-btn:hover { background: #e2e8f0; }
+    .theme-btn {
+      width: auto; min-width: 64px; padding: 0 10px; gap: 5px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.2px; color: #334155;
+      border: 1px solid #e2e8f0 !important; background: #f8fafc !important;
+      border-radius: 99px !important; display: flex; align-items: center;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .theme-btn:hover { background: #e2e8f0 !important; border-color: #cbd5e1 !important; }
+    .theme-btn .theme-icon { font-size: 12px; line-height: 1; }
+    .btn-stop { color: #b91c1c; border-color: #fecaca; background: #fef2f2; font-weight: 600; }
+    .btn-stop:hover { background: #fee2e2; }
+    .model-status {
+      font-size: 9px; font-weight: 600; padding: 3px 8px; border-radius: 999px;
+      background: #fff; border: 1px solid #e2e8f0; color: #64748b;
+    }
+    .model-status.ready { border-color: #86efac; background: #f0fdf4; color: #15803d; }
+    .model-status.failed { border-color: #fca5a5; background: #fef2f2; color: #dc2626; }
+    .model-status.loading { border-color: #fcd34d; background: #fffbeb; color: #b45309; }
+    .model-status[hidden] { display: none; }
+
+    .tab-bar { display: flex; padding: 10px 16px 0; gap: 2px; border-bottom: 1px solid #e2e8f0; }
+    .tab {
+      flex: 1; padding: 8px 0; text-align: center; font-size: 11px; font-weight: 600;
+      color: #64748b; border: none; background: none; cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+    }
+    .tab:hover { color: #334155; }
+    .tab.active { color: #2563eb; border-bottom-color: #2563eb; }
+    .tab-content { display: none; padding: 12px 16px 16px; animation: fadeIn 0.2s ease; }
+    .tab-content.active { display: block; }
+
+    .card {
+      background: #f8fafc; border: 1px solid #e2e8f0;
+      border-radius: 10px; padding: 12px; margin-bottom: 10px;
+    }
+    .card-title {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.4px; color: #64748b; margin-bottom: 8px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .hint { font-size: 11px; color: #64748b; font-weight: 500; text-transform: none; letter-spacing: 0; }
+
+    .receipt { display: none; }
+    .receipt.visible { display: block; }
+    .receipt-row { display: flex; justify-content: space-between; font-size: 12px; color: #64748b; margin-bottom: 4px; }
+    .receipt-row span:last-child { color: #0f172a; font-weight: 600; }
+    .receipt-badges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    .badge-pill {
+      font-size: 10px; font-weight: 500; padding: 3px 8px; border-radius: 999px;
+      background: #f1f5f9; border: 1px solid #e2e8f0; color: #475569;
+    }
+    .badge-pill.warn { border-color: #fed7aa; background: #fff7ed; color: #c2410c; }
+
+    .pipeline { display: none; font-size: 11px; color: #64748b; }
+    .pipeline.visible { display: block; }
+    .pipeline-step { margin-bottom: 3px; padding-left: 4px; }
+    .pipeline-step.done { color: #15803d; }
+    .pipeline-step.active { color: #2563eb; font-weight: 600; }
+
+    .preview-wrap { display: block; margin: 0 12px 12px; }
+    .preview-wrap img { display: none; width: 100%; max-height: 240px; object-fit: contain; border-radius: 8px; background: #f1f5f9; border: 1px solid #e2e8f0; }
+    .preview-wrap.has-image img { display: block; }
+    .preview-empty { font-size: 12px; color: #64748b; line-height: 1.45; }
+    .preview-wrap.has-image .preview-empty { display: none; }
+    .preview-caption { font-size: 11px; color: #64748b; margin-top: 8px; line-height: 1.4; }
+    .preview-legend { font-size: 11px; font-weight: 600; color: #334155; margin-top: 8px; line-height: 1.4; }
+
+    /* ── Scan Progress Bar ────────────────────────────────────────── */
+    @keyframes shimmer {
+      0%   { background-position: -200% center; }
+      100% { background-position:  200% center; }
+    }
+    @keyframes pulse-dot {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(37,99,235,0.5); }
+      50%       { box-shadow: 0 0 0 4px rgba(37,99,235,0); }
+    }
+    .scan-progress { display: none; margin-bottom: 10px; }
+    .scan-progress.visible { display: block; animation: fadeIn 0.2s ease; }
+    .scan-progress-header {
+      display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px;
+    }
+    .scan-progress-label {
+      font-size: 10px; font-weight: 700; color: #2563eb; text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .scan-progress-pct {
+      font-size: 10px; font-weight: 700; color: #64748b; font-variant-numeric: tabular-nums;
+    }
+    .scan-progress-track {
+      height: 7px; background: #e2e8f0; border-radius: 99px; overflow: hidden; margin-bottom: 8px;
+    }
+    .scan-progress-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #2563eb 0%, #60a5fa 50%, #2563eb 100%);
+      background-size: 200% 100%;
+      border-radius: 99px;
+      transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1), background 0.3s ease;
+      animation: shimmer 1.8s linear infinite;
+    }
+    .scan-progress-fill.done {
+      background: linear-gradient(90deg, #16a34a, #4ade80, #16a34a);
+      background-size: 200% 100%;
+      animation: shimmer 1.8s linear infinite;
+    }
+    .scan-progress-fill.error {
+      background: #dc2626;
+      animation: none;
+    }
+    .scan-progress-stages { display: flex; justify-content: space-between; }
+    .scan-stage {
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      flex: 1; font-size: 9px; font-weight: 600; color: #94a3b8;
+      text-transform: uppercase; letter-spacing: 0.3px; transition: color 0.25s;
+    }
+    .scan-stage .stage-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: #e2e8f0; border: 2px solid #cbd5e1;
+      transition: background 0.3s, border-color 0.3s, transform 0.25s, box-shadow 0.3s;
+    }
+    .scan-stage.active { color: #2563eb; }
+    .scan-stage.active .stage-dot {
+      background: #2563eb; border-color: #2563eb; transform: scale(1.35);
+      animation: pulse-dot 1.2s ease-in-out infinite;
+    }
+    .scan-stage.done { color: #16a34a; }
+    .scan-stage.done .stage-dot { background: #16a34a; border-color: #16a34a; box-shadow: 0 0 0 2px rgba(22,163,74,0.2); }
+
+    body.dark-mode .scan-progress-track { background: #334155; }
+    body.dark-mode .scan-progress-label { color: #60a5fa; }
+    body.dark-mode .scan-progress-pct { color: #64748b; }
+    body.dark-mode .scan-progress-fill { background: linear-gradient(90deg, #3b82f6 0%, #93c5fd 50%, #3b82f6 100%); background-size: 200% 100%; }
+    body.dark-mode .scan-progress-fill.done { background: linear-gradient(90deg, #22c55e, #86efac, #22c55e); background-size: 200% 100%; }
+    body.dark-mode .scan-stage { color: #475569; }
+    body.dark-mode .scan-stage .stage-dot { background: #334155; border-color: #475569; }
+    body.dark-mode .scan-stage.active { color: #60a5fa; }
+    body.dark-mode .scan-stage.active .stage-dot { background: #3b82f6; border-color: #3b82f6; }
+    body.dark-mode .scan-stage.done { color: #4ade80; }
+    body.dark-mode .scan-stage.done .stage-dot { background: #22c55e; border-color: #22c55e; box-shadow: 0 0 0 2px rgba(34,197,94,0.2); }
+
+    input[type="text"], input[type="url"], input[type="password"], select, textarea {
+      width: 100%; padding: 8px 10px; background: #ffffff; border: 1px solid #e2e8f0;
+      border-radius: 8px; color: #0f172a; font-size: 12px; margin-bottom: 6px;
+      font-family: inherit;
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.08); }
+    textarea { min-height: 50px; resize: vertical; }
+    label { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 5px; cursor: pointer; font-weight: 500; color: #334155; font-size: 12px; }
+    input[type="checkbox"] { accent-color: #2563eb; width: 14px; height: 14px; margin-top: 2px; }
+
+    .btn-primary { width: 100%; padding: 10px; background: #2563eb; color: #fff; border: none; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-row { display: flex; gap: 6px; }
+    .btn-sm {
+      flex: 1; padding: 7px 6px; background: #ffffff; color: #334155;
+      border: 1px solid #e2e8f0; border-radius: 7px; font-size: 11px;
+      font-weight: 500; cursor: pointer; text-align: center;
+    }
+    .btn-sm:hover { background: #f1f5f9; }
+    .btn-accent { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; font-weight: 600; }
+    .btn-accent:hover { background: #dcfce7; }
+    button:disabled { background: #f1f5f9 !important; color: #94a3b8 !important; cursor: not-allowed; border-color: #e2e8f0 !important; }
+    body.dark-mode button:disabled { background: #1e293b !important; color: #64748b !important; border-color: #334155 !important; }
+
+    .profile-list { max-height: 180px; overflow-y: auto; padding: 2px; margin-bottom: 6px; }
+    .p-row { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; }
+    .p-row input[type="text"] { flex: 1; margin: 0; }
+    .p-row .p-del {
+      width: auto; padding: 5px 8px; font-size: 10px; background: #fef2f2; color: #dc2626;
+      border: 1px solid #fecaca; border-radius: 6px; cursor: pointer;
+    }
+    .p-empty { font-size: 12px; color: #94a3b8; padding: 12px; text-align: center; }
+    .vault-list { font-size: 11px; color: #475569; margin-top: 8px; }
+    .vault-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid #e2e8f0; }
+    .vault-row:last-child { border-bottom: none; }
+    .doc-save-card {
+      margin-top: 10px; padding: 10px; background: #eff6ff; border: 1px solid #bfdbfe;
+      border-radius: 8px;
+    }
+    .transcript-mini {
+      margin-top: 8px; padding: 8px; background: #ffffff; border: 1px solid #e2e8f0;
+      border-radius: 6px; font-size: 12px; color: #334155; min-height: 36px;
+    }
+    .btn-sm.recording { background: #e11d48; color: #fff; border-color: #e11d48; }
+    .field-preview { max-height: 140px; overflow-y: auto; margin: 8px 0; }
+    .fp-row { display: flex; gap: 8px; font-size: 12px; padding: 4px 0; border-bottom: 1px solid #dbeafe; }
+    .fp-row:last-child { border-bottom: none; }
+    .fp-key { color: #64748b; min-width: 92px; flex-shrink: 0; font-weight: 600; }
+    .fp-val { color: #0f172a; word-break: break-word; }
+
+    .drop-zone {
+      border: 2px dashed #e2e8f0; border-radius: 8px; padding: 16px; text-align: center;
+      background: #ffffff; cursor: pointer;
+    }
+    .drop-zone:hover, .drop-zone.dragover { border-color: #2563eb; background: #eff6ff; }
+
+    .doc-preview { margin-top: 8px; }
+    .doc-preview-text {
+      max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+      font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #0f172a; background: #ffffff; border: 1px solid #e2e8f0;
+      border-radius: 6px; padding: 8px; margin: 0;
+    }
+
+    .add-field-card { padding: 10px; background: #f8fafc; border: 1px solid #2563eb; border-radius: 8px; margin-bottom: 6px; }
+
+    .status { margin: 0 16px 12px; padding: 8px 12px; border-radius: 8px; font-size: 12px; display: none; line-height: 1.5; word-break: break-word; }
+    .status.active { display: block; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+    .status.success { display: block; background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+    .status.error { display: block; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+    .status.warn { display: block; background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
+
+    body.dark-mode { background: #0f172a; color: #f1f5f9; }
+    body.dark-mode .header h1 { color: #f1f5f9; }
+    body.dark-mode .icon-btn { background: #1e293b; color: #f1f5f9; }
+    body.dark-mode .icon-btn:hover { background: #334155; }
+    body.dark-mode .tab-bar { border-bottom-color: #334155; }
+    body.dark-mode .tab { color: #64748b; }
+    body.dark-mode .tab.active { color: #60a5fa; border-bottom-color: #60a5fa; }
+    body.dark-mode .card { background: #1e293b; border-color: #334155; }
+    body.dark-mode .card-title { color: #94a3b8; }
+    body.dark-mode input[type="text"], body.dark-mode input[type="url"], body.dark-mode input[type="password"],
+    body.dark-mode select, body.dark-mode textarea { background: #0f172a; border-color: #334155; color: #f1f5f9; }
+    body.dark-mode .btn-sm { background: #1e293b; color: #cbd5e1; border-color: #334155; }
+    body.dark-mode .btn-sm:hover { background: #334155; }
+    body.dark-mode .p-row input { background: #0f172a; color: #f1f5f9; border-color: #334155; }
+    body.dark-mode .drop-zone { background: #0f172a; border-color: #334155; }
+    body.dark-mode .doc-preview-text { background: #0f172a; border-color: #334155; color: #e2e8f0; }
+    body.dark-mode .doc-save-card { background: #0f172a; border-color: #1d4ed8; }
+    body.dark-mode .transcript-mini { background: #0f172a; border-color: #334155; color: #e2e8f0; }
+    body.dark-mode .fp-row { border-color: #334155; }
+    body.dark-mode .fp-key { color: #94a3b8; }
+    body.dark-mode .fp-val { color: #f1f5f9; }
+    body.dark-mode label { color: #cbd5e1; }
+    body.dark-mode .model-status { background: #1e293b; border-color: #334155; color: #94a3b8; }
+    body.dark-mode .vault-row { border-color: #334155; }
+    body.dark-mode .theme-btn { color: #e2e8f0; border-color: #334155 !important; background: #1e293b !important; }
+    body.dark-mode .theme-btn:hover { background: #334155 !important; border-color: #475569 !important; }
+    body.dark-mode .hint { color: #94a3b8; }
+    body.dark-mode .privacy-notice { color: #60a5fa !important; background: rgba(59, 130, 246, 0.1) !important; border-color: rgba(59, 130, 246, 0.2) !important; }
+    body.dark-mode .receipt-row { color: #94a3b8; }
+    body.dark-mode .receipt-row span:last-child { color: #f1f5f9; }
+    body.dark-mode .badge-pill { background: #0f172a; border-color: #334155; color: #cbd5e1; }
+    body.dark-mode .pipeline { color: #94a3b8; }
+    body.dark-mode .pipeline-step.done { color: #4ade80; }
+    body.dark-mode .pipeline-step.active { color: #60a5fa; }
+    body.dark-mode .preview-wrap img { background: #0f172a; border-color: #334155; }
+    body.dark-mode .preview-caption, body.dark-mode .preview-empty { color: #94a3b8; }
+    body.dark-mode .preview-legend { color: #e2e8f0; }
+    body.dark-mode .header .badge { background: #1e3a8a; color: #bfdbfe; }
+    body.dark-mode .btn-stop { background: #450a0a; color: #fecaca; border-color: #7f1d1d; }
+    body.dark-mode .btn-stop:hover { background: #7f1d1d; }
+    body.dark-mode .status.active { background: #1e3a8a; border-color: #1d4ed8; color: #bfdbfe; }
+    body.dark-mode .status.success { background: #14532d; border-color: #166534; color: #bbf7d0; }
+    body.dark-mode .status.error { background: #450a0a; border-color: #7f1d1d; color: #fecaca; }
+    body.dark-mode .status.warn { background: #422006; border-color: #a16207; color: #fde68a; }
+    body.dark-mode .p-empty { color: #64748b; }
+    body.dark-mode .add-field-card { background: #0f172a; border-color: #1d4ed8; }
+    #profile-switcher { font-weight: 600; background: #f8fafc; margin-bottom: 8px; }
+    body.dark-mode #profile-switcher { background: #0f172a; color: #f1f5f9; border-color: #334155; }
+    /* ── Privacy Risk Score Card ────────────────────────────── */
+    @keyframes risk-spin { to { transform: rotate(360deg); } }
+    @keyframes risk-pop { 0% { transform: scale(0.5); opacity:0; } 70% { transform: scale(1.15); } 100% { transform: scale(1); opacity:1; } }
+    .risk-card {
+      border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
+      border: 1.5px solid #e2e8f0; background: #f8fafc;
+      animation: fadeIn 0.25s ease;
+    }
+    .risk-card-header { display: flex; align-items: center; gap: 10px; }
+    .risk-grade-badge {
+      width: 44px; height: 44px; border-radius: 10px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; font-weight: 900; color: #fff; letter-spacing: -1px;
+      animation: risk-pop 0.4s cubic-bezier(0.34,1.56,0.64,1) both;
+    }
+    .risk-grade-badge.loading {
+      background: #e2e8f0 !important; animation: none;
+      position: relative; overflow: hidden;
+    }
+    .risk-grade-badge.loading::after {
+      content: ""; position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.6) 50%, transparent 100%);
+      background-size: 200% 100%; animation: shimmer 1.2s linear infinite;
+    }
+    .risk-info { flex: 1; min-width: 0; }
+    .risk-label { font-size: 11px; font-weight: 700; color: #334155; }
+    .risk-host { font-size: 10px; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+    .risk-score-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+    .risk-score-num { font-size: 19px; font-weight: 800; line-height: 1; }
+    .risk-score-max { font-size: 10px; color: #94a3b8; font-weight: 600; }
+    .risk-refresh-btn {
+      width: 26px; height: 26px; border: 1px solid #e2e8f0; background: #fff; border-radius: 6px;
+      cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; transition: background 0.15s;
+    }
+    .risk-refresh-btn:hover { background: #f1f5f9; }
+    .risk-refresh-btn.spinning { animation: risk-spin 0.7s linear 1; }
+    .risk-factors { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+    .risk-factor {
+      display: flex; align-items: center; gap: 6px; font-size: 10px; color: #475569;
+      padding: 3px 6px; border-radius: 5px; background: #fff; border: 1px solid #e2e8f0;
+    }
+    .risk-factor .rf-dot {
+      width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+    }
+    .rf-dot.high   { background: #dc2626; }
+    .rf-dot.medium { background: #d97706; }
+    .rf-dot.low    { background: #2563eb; }
+    .risk-safe-msg { font-size: 10px; color: #16a34a; font-weight: 600; margin-top: 6px; display: flex; align-items: center; gap: 4px; }
+    body.dark-mode .risk-card { background: #1e293b; border-color: #334155; }
+    body.dark-mode .risk-label { color: #e2e8f0; }
+    body.dark-mode .risk-host { color: #64748b; }
+    body.dark-mode .risk-score-max { color: #64748b; }
+    body.dark-mode .risk-refresh-btn { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+    body.dark-mode .risk-refresh-btn:hover { background: #334155; }
+    body.dark-mode .risk-factor { background: #0f172a; border-color: #334155; color: #94a3b8; }
+    body.dark-mode .risk-grade-badge.loading { background: #334155 !important; }
+    body.dark-mode .risk-safe-msg { color: #4ade80; }
+  
+
+/* ─── Sidepanel layout overrides ─────────────────────────── */
+body {
+  width: 100% !important;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.tab-content { overflow-y: auto; flex: 1; }
+#tab-chat { display: none; flex-direction: column; padding: 0; overflow: hidden; position: relative; }
+#tab-chat.active { display: flex; }
+.tab-content.active { display: block; }
+
+/* ── Chat toolbar + history ──────────────────────────────── */
+.chat-toolbar {
+  flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; background: #fff; border-bottom: 1px solid #e2e8f0;
+}
+body.dark-mode .chat-toolbar { background: #0f172a; border-color: #1e293b; }
+.chat-history-btn {
+  flex: 1; min-width: 0; height: 32px; padding: 0 10px; gap: 6px;
+  display: flex; align-items: center;
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+  cursor: pointer; color: #0f172a; font: inherit; text-align: left;
+}
+.chat-history-btn:hover { background: #f1f5f9; }
+.chat-history-btn[aria-expanded="true"] { border-color: #2563eb; background: #eff6ff; }
+body.dark-mode .chat-history-btn { background: #1e293b; border-color: #334155; color: #f1f5f9; }
+body.dark-mode .chat-history-btn:hover,
+body.dark-mode .chat-history-btn[aria-expanded="true"] { background: #334155; border-color: #3b82f6; }
+.current-chat-name {
+  flex: 1; min-width: 0; font-size: 13px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-caret { flex-shrink: 0; color: #64748b; }
+.chat-icon-btn {
+  width: 32px; height: 32px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
+  color: #334155; cursor: pointer;
+}
+.chat-icon-btn:hover { background: #f1f5f9; }
+body.dark-mode .chat-icon-btn { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+body.dark-mode .chat-icon-btn:hover { background: #334155; }
+.sessions-panel[hidden] { display: none !important; }
+.sessions-panel {
+  display: flex; flex-direction: column; flex-shrink: 0;
+  max-height: 42vh; background: #fff; border-bottom: 1px solid #e2e8f0;
+}
+body.dark-mode .sessions-panel { background: #0f172a; border-color: #1e293b; }
+.sessions-list { overflow-y: auto; padding: 6px; }
+.sessions-empty { padding: 14px 10px; text-align: center; font-size: 12px; color: #94a3b8; }
+.session-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent;
+}
+.session-item:hover { background: #f8fafc; }
+.session-item.active { background: #eff6ff; border-color: #bfdbfe; }
+body.dark-mode .session-item:hover { background: #1e293b; }
+body.dark-mode .session-item.active { background: rgba(30,58,138,0.25); border-color: rgba(59,130,246,0.35); }
+.session-info { flex: 1; min-width: 0; }
+.session-name { font-size: 12px; font-weight: 600; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.dark-mode .session-name { color: #e2e8f0; }
+.session-meta { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+.session-delete {
+  flex-shrink: 0; width: 24px; height: 24px; border: none; background: none;
+  border-radius: 6px; cursor: pointer; color: #94a3b8; font-size: 16px; line-height: 1;
+}
+.session-delete:hover { color: #dc2626; background: #fef2f2; }
+.chat-clear-row {
+  flex-shrink: 0; margin: 0 6px 6px; padding: 8px;
+  background: none; border: 1px solid #e2e8f0; border-radius: 8px;
+  font-size: 12px; font-weight: 600; color: #64748b; cursor: pointer;
+}
+.chat-clear-row:hover { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
+body.dark-mode .chat-clear-row { border-color: #334155; color: #94a3b8; }
+body.dark-mode .chat-clear-row:hover { background: #450a0a; border-color: #7f1d1d; color: #fecaca; }
+
+/* ── Chat UI ─────────────────────────────────────────────── */
+.chat-container {
+  flex: 1; overflow-y: auto; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.welcome-msg { text-align: center; padding: 24px 16px; }
+.welcome-icon { font-size: 40px; margin-bottom: 12px; }
+.welcome-title { font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
+body.dark-mode .welcome-title { color: #f1f5f9; }
+.welcome-body { font-size: 12px; line-height: 1.6; color: #64748b; margin-bottom: 14px; }
+.welcome-examples { display: flex; flex-direction: column; gap: 7px; text-align: left; }
+.example-chip {
+  padding: 9px 12px; background: #f8fafc; border: 1px solid #e2e8f0;
+  border-radius: 8px; font-size: 12px; cursor: pointer; color: #1e293b;
+  font-weight: 500; transition: all 0.15s ease;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.example-chip::after { content: "→"; font-size: 13px; color: #94a3b8; transition: transform 0.15s ease, color 0.15s ease; }
+.example-chip:hover {
+  background: #eff6ff; border-color: #93c5fd; color: #1d4ed8;
+  transform: translateY(-1px); box-shadow: 0 2px 4px rgba(37, 99, 235, 0.08);
+}
+.example-chip:hover::after { color: #2563eb; transform: translateX(2px); }
+body.dark-mode .example-chip { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+body.dark-mode .example-chip::after { color: #64748b; }
+body.dark-mode .example-chip:hover {
+  background: #1e293b; border-color: #3b82f6; color: #60a5fa;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+body.dark-mode .example-chip:hover::after { color: #60a5fa; transform: translateX(2px); }
+.message { display: flex; flex-direction: column; max-width: 90%; animation: fadeIn 0.2s ease; }
+.message.user {
+  align-self: flex-end; background: #eff6ff; border: 1px solid #bfdbfe;
+  border-radius: 12px 12px 0 12px; padding: 10px 12px;
+}
+.message.assistant {
+  align-self: flex-start; background: #f8fafc; border: 1px solid #e2e8f0;
+  border-radius: 12px 12px 12px 0; padding: 10px 12px; width: 100%;
+}
+body.dark-mode .message.user { background: #1e3a8a; border-color: #3b82f6; color: #dbeafe; }
+body.dark-mode .message.assistant { background: #1e293b; border-color: #334155; }
+.message-content { font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.message-img { max-width: 100%; border-radius: 6px; margin-bottom: 8px; border: 1px solid #e2e8f0; }
+
+.chat-status { flex-shrink: 0; padding: 4px 14px; font-size: 11px; color: #64748b; display: flex; align-items: center; gap: 6px; }
+.chat-status[hidden] { display: none !important; }
+@keyframes spin { 100% { transform: rotate(360deg); } }
+.spinner { display: inline-block; animation: spin 1s linear infinite; }
+
+.chat-input-area {
+  flex-shrink: 0; border-top: 1px solid #e2e8f0;
+  padding: 10px 12px 14px; background: #fff;
+}
+body.dark-mode .chat-input-area { border-color: #1e293b; background: #0f172a; }
+.chat-input-row {
+  display: flex; align-items: flex-end; gap: 6px;
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 6px;
+}
+body.dark-mode .chat-input-row { background: #1e293b; border-color: #334155; }
+.chat-input-row:focus-within { border-color: #2563eb; }
+#chat-input {
+  flex: 1; background: transparent; border: none; outline: none;
+  resize: none; color: #0f172a; font-size: 13px;
+  max-height: 100px; overflow-y: auto; padding: 4px; font-family: inherit;
+}
+body.dark-mode #chat-input { color: #f1f5f9; }
+
+.mic-btn { color: #64748b; background: transparent; border: none; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; transition: color 0.2s; }
+.mic-btn:hover { color: #2563eb; }
+.mic-btn.active { color: #ef4444; animation: pulse-dot 1.5s infinite; }
+body.dark-mode .mic-btn { color: #94a3b8; }
+body.dark-mode .mic-btn:hover { color: #60a5fa; }
+body.dark-mode .mic-btn.active { color: #f87171; }
+
+.send-btn { color: #2563eb; opacity: 0.4; }
+.send-btn.active { opacity: 1; }
+.chat-footer { display: flex; align-items: center; margin-top: 6px; gap: 6px; }
+.privacy-note-chat, .privacy-indicator { flex: 1; font-size: 10px; color: #94a3b8; }
+.screenshot-hint { font-size: 10px; color: #2563eb; font-weight: 600; }
+.screenshot-hint.hidden { display: none; }
+.model-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.model-row label { font-size: 11px; color: #64748b; margin: 0; font-weight: 500; flex-shrink: 0; }
+.model-row select { margin: 0; padding: 4px 6px; font-size: 11px; flex: 1; }
+
+/* Fix status + preview position within fill tab */
+#tab-fill .status { margin: 0 0 10px !important; }
+#tab-fill .preview-wrap { margin: 0 0 16px !important; }
+  </style>
+  <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
-  <div class="app-container">
-    <header class="header">
-      <div class="logo">
-        <img src="../icons/icon32.png" alt="AEGIS" width="24" height="24">
-        <span>AEGIS Assistant</span>
-      </div>
-      <div class="header-controls">
-        <select id="model-select">
-          <option value="SARA-Distillation-0.5B" selected>SARA-0.5B (Local)</option>
-          <option value="qwen2.5vl:7b">Qwen2.5-VL 7B</option>
-          <option value="llama3.2-vision">Llama 3.2 Vision</option>
-        </select>
-        <button id="btn-clear" title="Clear Chat">🗑️</button>
-      </div>
-    </header>
+
+  <div class="header">
+    <div class="header-left">
+      <h1>AEGIS</h1>
+      <span class="badge">On-device</span>
+    </div>
+    <div class="header-actions">
+      <span class="model-status loading" id="model-status">Loading models</span>
+      <button class="icon-btn theme-btn" id="theme-toggle-btn" type="button" title="Theme">Auto</button>
+    </div>
+  </div>
+
+  <div class="tab-bar" role="tablist" aria-label="Main Navigation">
+    <button class="tab active" data-tab="chat" role="tab" aria-selected="true" aria-controls="tab-chat">Chat</button>
+    <button class="tab" data-tab="fill" role="tab" aria-selected="false" aria-controls="tab-fill">Fill</button>
+    <button class="tab" data-tab="profile" role="tab" aria-selected="false" aria-controls="tab-profile">Profile</button>
+    <button class="tab" data-tab="settings" role="tab" aria-selected="false" aria-controls="tab-settings">Settings</button>
+  </div>
+
+  <div class="tab-content active" id="tab-chat">
+
+    <div class="chat-toolbar">
+      <button type="button" class="chat-history-btn" id="btn-sessions-toggle" aria-expanded="false" aria-controls="sessions-panel" title="Chat history">
+        <span id="current-chat-name" class="current-chat-name">New chat</span>
+        <svg class="chat-caret" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <button type="button" class="chat-icon-btn" id="btn-new-chat" aria-label="New chat" title="New chat">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="sessions-panel" id="sessions-panel" hidden>
+      <div class="sessions-list" id="sessions-list"></div>
+      <button type="button" class="chat-clear-row" id="btn-clear-chat" hidden>Clear this chat</button>
+    </div>
 
     <div class="chat-container" id="chat-container">
-      <div class="welcome-message">
-        <div class="bot-icon">🤖</div>
-        <h3>How can I help you today?</h3>
-        <p>I am a fully private, on-device assistant. I can answer questions, write code, or execute actions on your browser. Your screen and data stay local.</p>
+      <div class="welcome-msg" id="welcome-msg">
+        <div class="welcome-logo">
+          <svg width="36" height="42" viewBox="0 0 36 42" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18 2L34 8V20C34 29.941 27.041 38.941 18 41C8.959 38.941 2 29.941 2 20V8L18 2Z" fill="#2563eb" fill-opacity="0.12" stroke="#2563eb" stroke-width="2"/>
+            <path d="M12 20.5L16 24.5L24 16.5" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="welcome-title">AEGIS Assistant</div>
+        <div class="welcome-body">Privacy-first AI assistant. Everything stays on your device — no raw data ever leaves your machine.</div>
+        <div class="welcome-examples">
+          <div class="example-chip" data-msg="Summarise what is on this page">Summarize this page</div>
+          <div class="example-chip" data-msg="Fill this form using my saved profile">Fill this form</div>
+          <div class="example-chip" data-msg="What is on my screen right now? Describe everything you see.">📸 What's on my screen?</div>
+          <div class="example-chip" data-msg="What are the privacy risks on this page?">Check privacy risks</div>
+          <div class="example-chip" data-msg="Write a Python script to parse a CSV file">Write code for me</div>
+        </div>
       </div>
     </div>
 
-    <div class="input-area">
-      <div class="status-bar" id="status-bar" hidden>
-        <span class="status-icon">🔄</span> <span id="status-text">Processing...</span>
-      </div>
-      <div class="input-wrapper">
-        <button id="btn-screenshot" class="btn-icon" title="Share Sanitized Screen">
-          📸
+    <div class="chat-status" id="chat-status" hidden>
+      <div class="chat-status-dot"></div>
+      <span id="chat-status-text">Capturing and thinking…</span>
+    </div>
+
+    <div class="chat-input-area">
+      <div class="chat-input-row">
+        <textarea id="chat-input" placeholder="Message AEGIS…" rows="1"></textarea>
+        
+        <button class="mic-btn" id="btn-mic" type="button" title="Voice Input">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+          </svg>
         </button>
-        <textarea id="chat-input" placeholder="Message AEGIS..." rows="1"></textarea>
-        <button id="btn-send" class="btn-icon send-btn" title="Send Message">
-          ➤
+        <button class="send-btn" id="btn-send">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M13 7L1 1L4.5 7L1 13L13 7Z" fill="currentColor"/>
+          </svg>
         </button>
       </div>
-      <div class="privacy-note">
-        🔒 End-to-End Encrypted & Local
+      <div class="chat-footer">
+        <div class="privacy-indicator">
+          <svg width="10" height="12" viewBox="0 0 10 12" fill="none" aria-hidden="true">
+            <path d="M5 1L9 2.5V6C9 8.761 7.209 11.206 5 12C2.791 11.206 1 8.761 1 6V2.5L5 1Z" fill="#22c55e" fill-opacity="0.2" stroke="#22c55e" stroke-width="1"/>
+          </svg>
+          Screen sanitized before sending
+        </div>
+      </div>
+      <div class="model-row">
+        <label>Model</label>
+        <select id="model-select">
+          <option value="SARA-Distillation-0.5B">SARA-0.5B · Local 🔒</option>
+          <option value="qwen2.5vl:7b" selected>Secure Cloud ☁️</option>
+        </select>
       </div>
     </div>
   </div>
-  <script src="sidepanel.js"></script>
+
+  <div class="tab-content" id="tab-fill">
+
+    <!-- ❤️ Privacy Risk Score Card — always shown at top -->
+    <div class="risk-card" id="risk-card">
+      <div class="risk-card-header">
+        <div class="risk-grade-badge loading" id="risk-grade-badge">&nbsp;</div>
+        <div class="risk-info">
+          <div class="risk-label">🛡️ Privacy Risk Score</div>
+          <div class="risk-host" id="risk-host">Scanning…</div>
+          <div class="risk-score-row">
+            <span class="risk-score-num" id="risk-score-num" style="color:#94a3b8">--</span>
+            <span class="risk-score-max">/100</span>
+          </div>
+        </div>
+        <button class="risk-refresh-btn" id="risk-refresh-btn" title="Re-scan this page">↻</button>
+      </div>
+      <div class="risk-factors" id="risk-factors"></div>
+    </div>
+
+    <div class="card receipt" id="receipt">
+      <div class="card-title">Last privacy receipt</div>
+      <div class="receipt-row"><span>Fields masked</span><span id="r-fields">--</span></div>
+      <div class="receipt-row"><span>Faces detected</span><span id="r-faces">--</span></div>
+      <div class="receipt-row"><span>PII spans</span><span id="r-pii">--</span></div>
+      <div class="receipt-row"><span>Total latency</span><span id="r-total">--</span></div>
+      <div class="receipt-badges" id="r-badges"></div>
+    </div>
+
+    <div class="card scan-progress" id="scan-progress">
+      <div class="scan-progress-header">
+        <span class="scan-progress-label">🔍 Privacy Scan</span>
+        <span class="scan-progress-pct" id="scan-progress-pct">0%</span>
+      </div>
+      <div class="scan-progress-track">
+        <div class="scan-progress-fill" id="scan-progress-fill"></div>
+      </div>
+      <div class="scan-progress-stages">
+        <div class="scan-stage" id="sp-stage-capture">
+          <div class="stage-dot"></div>Capture
+        </div>
+        <div class="scan-stage" id="sp-stage-dom">
+          <div class="stage-dot"></div>DOM Scan
+        </div>
+        <div class="scan-stage" id="sp-stage-detect">
+          <div class="stage-dot"></div>Detect &amp; Mask
+        </div>
+        <div class="scan-stage" id="sp-stage-done">
+          <div class="stage-dot"></div>Done
+        </div>
+      </div>
+    </div>
+
+    <div class="card pipeline" id="pipeline">
+      <div class="card-title">Pipeline</div>
+      <div class="pipeline-step" id="step-capture">1. Capture viewport</div>
+      <div class="pipeline-step" id="step-redact">2. Local redaction</div>
+      <div class="pipeline-step" id="step-vlm">3. Local model on sanitized context</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">This page</div>
+      <textarea id="task-input" placeholder="Optional: what to fill on this page"></textarea>
+      <button class="btn-primary" id="fill-btn">Fill Form</button>
+      <div class="btn-row" style="margin-top:6px;">
+        <button class="btn-sm" id="scan-btn">Privacy Scan</button>
+        <button class="btn-sm btn-stop" id="stop-scan-btn" type="button" disabled title="Stop an in-progress Privacy Scan">Stop scan</button>
+      </div>
+      <div class="btn-row" style="margin-top:6px;">
+        <button class="btn-sm" id="run-btn">Run Agent</button>
+      </div>
+      <p class="hint" id="fill-form-hint" style="margin-top:8px;">Speak or drop a PDF on the <strong>Profile</strong> tab first. Fill uses the selected profile. Missing fields stay blank.</p>
+    </div>
+
+  <!-- Status & Preview moved to Fill Tab -->
+  <div class="status" id="status"></div>
+
+  <div class="card preview-wrap" id="preview-wrap">
+    <div class="card-title">What the agent would see</div>
+    <p class="preview-empty" id="preview-empty">Run <strong>Privacy Scan</strong> on Fill (or Scan faces in Settings). This frame shows faces, passwords, and PII already hidden — the only screenshot any AI agent is allowed to receive.</p>
+    <img id="sanitize-preview" alt="Redacted screenshot: faces and personal fields hidden before any model">
+    <p class="preview-legend" id="preview-legend" hidden></p>
+    <p class="preview-caption" id="preview-caption">Solid black boxes on this device. Faces, photos, passwords, and filled personal fields never go on the network.</p>
+  </div>
+  </div> <!-- Close tab-fill -->
+
+  <!-- Profile -->
+  <div class="tab-content" id="tab-profile">
+    <div class="card" id="privacy-consent-box" style="display: none; text-align: center; padding: 24px 16px;">
+      <div style="font-size: 16px; font-weight: 600; margin-bottom: 12px;">Local Storage Permission</div>
+      <div style="font-size: 13px; margin-bottom: 16px; line-height: 1.5;" class="hint">
+        To act as a local brain and memory, AEGIS needs permission to save your profile data in JSON format on this device.
+      </div>
+      <div style="font-size: 12px; margin-bottom: 24px; line-height: 1.5; padding: 12px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 6px; color: #2563eb;" class="privacy-notice">
+        <strong>Zero Privacy Compromise:</strong> Your data is stored strictly locally. There are no leaks and nothing is ever uploaded to the cloud.
+      </div>
+      <div class="btn-row" style="justify-content: center; gap: 16px;">
+        <button class="btn-sm" id="privacy-decline-btn" type="button">Decline</button>
+        <button class="btn-sm btn-accent" id="privacy-accept-btn" type="button">Accept & Save Locally</button>
+      </div>
+    </div>
+    <div id="profile-main-content">
+      <div class="card">
+      <div class="card-title">
+        <span>Profiles</span>
+        <span class="hint">Separate people / roles</span>
+      </div>
+      <select id="profile-switcher" aria-label="Active profile">
+        <option value="Personal">Personal</option>
+        <option value="Work">Work</option>
+        <option value="Family">Family</option>
+      </select>
+      <div class="btn-row">
+        <button class="btn-sm" id="profile-new-btn" type="button">+ New</button>
+        <button class="btn-sm" id="profile-rename-btn" type="button">Rename</button>
+        <button class="btn-sm" id="profile-delete-btn" type="button">Delete</button>
+      </div>
+      <div id="profile-name-card" class="add-field-card" style="display:none; margin-top:8px;">
+        <input type="text" id="profile-name-input" maxlength="32" placeholder="Profile name">
+        <div class="btn-row">
+          <button class="btn-sm btn-accent" id="profile-name-save-btn" type="button">Create</button>
+          <button class="btn-sm" id="profile-name-cancel-btn" type="button">Cancel</button>
+        </div>
+      </div>
+      <p class="hint" style="display:block; margin-top:6px;">Speak, upload, and Fill Form all use the selected profile. Each profile keeps its own fields.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>Speak details</span>
+        <span class="hint">10 languages</span>
+      </div>
+      <select id="voice-lang-select" aria-label="Speech language">
+        <option value="en-US">English (US / India)</option>
+        <option value="hi-IN">Hindi</option>
+        <option value="bn-IN">Bengali</option>
+        <option value="ta-IN">Tamil</option>
+        <option value="te-IN">Telugu</option>
+        <option value="mr-IN">Marathi</option>
+        <option value="kn-IN">Kannada</option>
+        <option value="gu-IN">Gujarati</option>
+        <option value="ml-IN">Malayalam</option>
+        <option value="pa-IN">Punjabi</option>
+      </select>
+      <div class="btn-row">
+        <button class="btn-sm" id="voice-start-btn" type="button">Start listening</button>
+        <button class="btn-sm" id="open-voice-page-btn" type="button">Full mic page</button>
+      </div>
+      <p class="hint" style="display:block; margin-top:6px;">Chrome speech may send audio to Google. After that, text stays here. Click Save to store fields.</p>
+      <div id="voice-transcript" class="transcript-mini" style="display:none;"></div>
+      <div id="voice-field-preview" class="field-preview" style="display:none;"></div>
+      <div class="btn-row" id="voice-save-row" style="display:none; margin-top:6px;">
+        <button class="btn-sm btn-accent" id="save-voice-btn" type="button">Save spoken fields</button>
+        <button class="btn-sm" id="discard-voice-btn" type="button">Don't save</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>Upload document</span>
+        <span class="hint">PDF, Word, text</span>
+      </div>
+      <div id="drop-zone" class="drop-zone">
+        <input type="file" id="doc-file-input" accept=".pdf,.docx,.txt,.json,.csv,.md,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;">
+        <div style="font-size:12px; color:#334155; font-weight:600;">Drop or click to upload</div>
+        <div style="font-size:10px; color:#94a3b8; margin-top:4px;">Read on this device. Review fields, then Save to your profile and local knowledge.</div>
+      </div>
+      <label style="margin-top:8px;">
+        <input type="checkbox" id="analyze-with-ai" checked>
+        <span>
+          Structure with local AI
+          <span class="hint" style="display:block;">Sends extracted text only to http://localhost. Remote AI is blocked. Nothing is stored until you Save.</span>
+        </span>
+      </label>
+      <div class="doc-preview" id="doc-preview-wrap" style="display:none;">
+        <div class="card-title" style="margin-bottom:4px;">
+          <span id="doc-preview-title" style="text-transform:none; letter-spacing:0;">Extracted text</span>
+          <span class="hint" id="doc-preview-meta"></span>
+        </div>
+        <pre class="doc-preview-text" id="doc-preview-text"></pre>
+      </div>
+      <div class="doc-save-card" id="doc-save-card" style="display:none;">
+        <div class="card-title" style="margin-bottom:4px;">
+          <span>Save this?</span>
+          <span class="hint">On this device only</span>
+        </div>
+        <p class="hint" style="display:block; margin-bottom:4px;">Save writes phone, email, and other fields into the list below, and keeps the document text as local knowledge for Fill Form.</p>
+        <div id="doc-field-preview" class="field-preview"></div>
+        <div class="btn-row">
+          <button class="btn-sm btn-accent" id="save-extracted-btn" type="button">Save</button>
+          <button class="btn-sm" id="discard-extracted-btn" type="button">Don't save</button>
+        </div>
+      </div>
+      <div class="card-title" style="margin-top:10px; margin-bottom:4px;">
+        <span>Local knowledge</span>
+        <span class="hint">Document text on this machine</span>
+      </div>
+      <p class="hint" style="display:block;">Saved text stays on this device so Fill Form — and later personal memory — can use it without uploading again.</p>
+      <div id="vault-list" class="vault-list"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>Saved fields</span>
+        <span class="hint" id="saved-fields-hint">On-device</span>
+      </div>
+      <div id="profile-list" class="profile-list">
+        <div class="p-empty">Loading profile...</div>
+      </div>
+      <div id="add-field-card" class="add-field-card" style="display:none;">
+        <select id="profile-select-key">
+          <option value="">-- Choose field --</option>
+        </select>
+        <input type="text" id="profile-input-val" placeholder="Enter value">
+        <div class="btn-row">
+          <button class="btn-sm" id="profile-save-btn" style="background:#2563eb; color:#fff; border-color:#2563eb; font-weight:600;">Save</button>
+          <button class="btn-sm" id="profile-cancel-btn">Cancel</button>
+        </div>
+      </div>
+      <div class="btn-row" id="profile-action-btns">
+        <button class="btn-sm btn-accent" id="profile-sample-btn">Demo</button>
+        <button class="btn-sm" id="profile-add-btn">+ Add</button>
+        <button class="btn-sm" id="profile-clear-btn">Clear</button>
+      </div>
+      <div class="btn-row" style="margin-top:6px;">
+        <button class="btn-sm" id="export-profile-btn">Export JSON</button>
+        <button class="btn-sm" id="import-profile-btn">Import file</button>
+        <input type="file" id="import-file-input" accept=".pdf,.docx,.txt,.json,.csv,.md,application/pdf,application/json" style="display:none;">
+      </div>
+    </div>
+  </div>
+  </div> <!-- Close tab-profile -->
+
+  <!-- Settings -->
+  <div class="tab-content" id="tab-settings">
+    <div class="card">
+      <div class="card-title">Privacy</div>
+      <label><input type="checkbox" id="face-detection" checked> Face detection on Privacy Scan / Run Agent</label>
+      <label><input type="checkbox" id="password-detection" checked> Password redaction</label>
+      <label><input type="checkbox" id="pii-detection" checked> PII masking</label>
+      <p class="hint" style="margin-top:6px;">Browsing does not scan other people's faces. Scan only when you ask.</p>
+      <button class="btn-sm" id="scan-faces-page-btn" style="width:100%; margin-top:6px;">Scan faces on this page</button>
+    </div>
+    <div class="card">
+      <div class="card-title">More</div>
+      <div class="btn-row">
+        <button class="btn-sm" id="open-dashboard-btn" type="button">Open dashboard</button>
+        <button class="btn-sm" id="open-voice-settings-btn" type="button">Open voice page</button>
+      </div>
+      <p class="hint" style="display:block; margin-top:6px;">Dashboard shows saved fields and scan counts from this device. Shortcut: Ctrl/Cmd+Shift+F fills the page.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Secure Cloud (Government / HF)</div>
+    <div class="card" id="cloud-settings-card">
+      <div class="card-title">☁️ Secure Cloud (Hugging Face Endpoint)</div>
+      <p class="hint" style="margin-bottom:8px;">Paste your HF Token below. The endpoint URL is pre-filled. Click <strong>Test &amp; Save</strong> to connect.</p>
+      
+      <label style="font-size:11px;color:var(--text-muted);margin-bottom:2px;display:block;">HF API Token</label>
+      <input type="password" id="vlm-api-key" placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off" style="margin-bottom:8px;">
+      
+      <label style="font-size:11px;color:var(--text-muted);margin-bottom:2px;display:block;">Endpoint URL</label>
+      <input type="url" id="vlm-endpoint" placeholder="https://....endpoints.huggingface.cloud/v1/chat/completions" style="margin-bottom:8px;" value="https://6ab15373b07925cee9d5efa4.endpoints.huggingface.cloud/v1/chat/completions">
+      
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+        <button class="btn-sm" id="test-cloud-btn" type="button" style="flex:1;">🔌 Test &amp; Save</button>
+        <span id="cloud-status-badge" style="font-size:11px;padding:2px 8px;border-radius:10px;background:#1e293b;color:#94a3b8;">Not tested</span>
+      </div>
+      <p class="hint" id="api-key-hint">Token is stored locally on your device only. Never transmitted.</p>
+    </div>
+
+  </div>
+
+  
+
+  <script src="../popup/popup.js" type="module"></script>
+  <script src="sidepanel.js" type="module"></script>
 </body>
 </html>

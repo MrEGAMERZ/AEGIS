@@ -1,0 +1,110 @@
+/* src/content/content.css — AEGIS Live Visual Cloaking & Shield */
+
+#sih26171-overlay-root {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 2147483647;
+  overflow: hidden;
+}
+
+/* Modern Frosted Glass Cloaking Box */
+.aegis-cloak-box {
+  position: fixed;
+  box-sizing: border-box;
+  pointer-events: none;
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  background: rgba(15, 23, 42, 0.88);
+  border-radius: 8px;
+  overflow: visible;
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s ease;
+  animation: aegis-glow-pulse 3s infinite ease-in-out;
+}
+
+.aegis-cloak-face {
+  border-radius: 12px;
+}
+
+/* Subtle Animated Shield Glow */
+@keyframes aegis-glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 12px var(--aegis-glow, rgba(59, 130, 246, 0.4)),
+                inset 0 0 8px rgba(15, 23, 42, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 22px var(--aegis-glow, rgba(59, 130, 246, 0.75)),
+                inset 0 0 14px rgba(15, 23, 42, 0.9);
+  }
+}
+
+/* Type Accent Colors */
+.aegis-cloak-password {
+  --aegis-border: #10b981;
+  --aegis-badge-bg: #059669;
+  --aegis-glow: rgba(16, 185, 129, 0.5);
+  border: 1.5px solid var(--aegis-border);
+}
+
+.aegis-cloak-sensitive {
+  --aegis-border: #3b82f6;
+  --aegis-badge-bg: #2563eb;
+  --aegis-glow: rgba(59, 130, 246, 0.5);
+  border: 1.5px solid var(--aegis-border);
+}
+
+.aegis-cloak-pii {
+  --aegis-border: #8b5cf6;
+  --aegis-badge-bg: #7c3aed;
+  --aegis-glow: rgba(139, 92, 246, 0.5);
+  border: 1.5px solid var(--aegis-border);
+}
+
+.aegis-cloak-face {
+  --aegis-border: #06b6d4;
+  --aegis-badge-bg: #0891b2;
+  --aegis-glow: rgba(6, 182, 212, 0.5);
+  border: 1.5px solid var(--aegis-border);
+}
+
+/* Security Badge: '🔒 AEGIS Shield' */
+.aegis-cloak-badge {
+  position: absolute;
+  top: -11px;
+  left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 14px;
+  letter-spacing: 0.03em;
+  color: #f8fafc;
+  background: var(--aegis-badge-bg, #1e293b);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Print Protection: prevent leaking sensitive data if user prints or saves PDF */
+@media print {
+  #sih26171-overlay-root {
+    display: block !important;
+  }
+  .aegis-cloak-box {
+    background: #000000 !important;
+    border-color: #000000 !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}

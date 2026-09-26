@@ -30,6 +30,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>", "file://*/*"],
+      "css": ["src/content/content.css"],
       "js": [
         "src/content/field-mapper.js",
         "src/content/autofill.js",
@@ -74,6 +75,7 @@
     {
       "resources": [
         "src/offscreen/offscreen.html",
+        "src/offscreen/llm-worker.js",
         "src/voice/voice.html",
         "src/dashboard/dashboard.html",
         "src/inference/inference.worker.js",

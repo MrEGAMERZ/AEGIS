@@ -249,7 +249,30 @@ function scaleToDPR(rect, dpr) {
 
 // ── Sanitize Pipeline ─────────────────────────────────────────────
 
-async function handleSanitize({ screenshot, domScanResults, faceDetection, piiDetection }) {
+async function handleSanitize(payload = {}) {
+  // Support both canonical { screenshot, domScanResults, faceDetection, piiDetection }
+  // and legacy/convenience { dataUrl, fields, includeFaces }
+  const screenshot = payload.screenshot || payload.dataUrl;
+  if (!screenshot) {
+    throw new Error("Missing screenshot in SANITIZE request");
+  }
+
+  let domScanResults = payload.domScanResults;
+  if (!domScanResults && payload.fields) {
+    domScanResults = {
+      fields: payload.fields,
+      fillableFields: payload.fillableFields || [],
+      photos: payload.photos || [],
+      visibleText: payload.visibleText || [],
+      dpr: payload.dpr || 1,
+    };
+  }
+
+  const faceDetection = payload.faceDetection !== undefined
+    ? payload.faceDetection
+    : (payload.includeFaces !== undefined ? payload.includeFaces : true);
+  const piiDetection = payload.piiDetection !== undefined ? payload.piiDetection : true;
+
   // Ensure the inference worker is ready before running any inference.
   // This is a no-op after the first SANITIZE call.
   const init = await ensureWorkerReady();

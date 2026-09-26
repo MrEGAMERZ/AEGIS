@@ -462,3 +462,20 @@ body.dark-mode #chat-input { color: #f1f5f9; }
 .model-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .model-row label { font-size: 11px; color: #64748b; font-weight: 600; margin: 0; flex-shrink: 0; }
 .model-row select { flex: 1; margin: 0; padding: 5px 8px; font-size: 11px; border-radius: 6px; height: 28px; }
+
+/* ── Model switch confirmation chip ─────────────────────────── */
+.model-switch-chip {
+  display: inline-block;
+  align-self: center;
+  margin: 6px auto;
+  padding: 4px 12px;
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  animation: fadeIn 0.2s ease;
+  text-align: center;
+}
+body.dark-mode .model-switch-chip { background: #14532d; color: #86efac; border-color: #166534; }
