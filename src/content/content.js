@@ -645,13 +645,11 @@
     const box = document.createElement("div");
     box.className = `aegis-cloak-box ${config.cssClass || ""}`;
 
-    // Inlined styles guarantee frosted glass & blur execute even if external CSS is delayed
+    // Inlined styles so the shield borders show immediately
     Object.assign(box.style, {
       position: "fixed",
       border: `1.5px solid ${config.border}`,
-      backgroundColor: config.fill || "rgba(15, 23, 42, 0.88)",
-      backdropFilter: "blur(14px)",
-      WebkitBackdropFilter: "blur(14px)",
+      backgroundColor: "transparent",
       boxSizing: "border-box",
       borderRadius: type === "face" ? "12px" : "8px",
       pointerEvents: "none",

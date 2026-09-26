@@ -2,14 +2,12 @@
 
 Public overview and install path: **[README.md](../README.md)** (repo root).
 
-**Teammates / hackathon handoff:** **[TEAMMATE_REFERENCE.md](TEAMMATE_REFERENCE.md)** — one short file for the whole system (product, pipeline, folders, how to run, what is still open).
-
 ## Project Overview
 
 A privacy-preserving browser extension that intercepts screen content before it leaves the device, runs local vision inference to detect and redact sensitive elements (faces, passwords, PII text), and sends only a sanitized version to a local or optional vision model. The product name is **AEGIS** (Greek: a shield — protector, defender).
 
-**Organization:** Indian Space Research Organisation (ISRO)
-**Problem Statement Code:** SIH26171
+**Organization:** Indian Space Research Organisation (ISRO)  
+**Problem Statement Code:** SIH26171  
 **Category:** Software
 
 ---
@@ -26,42 +24,30 @@ A privacy-preserving browser extension that intercepts screen content before it 
 
 ---
 
-## Planning Documents
+## Technical Documentation
 
 | Doc | Purpose | Link |
 |---|---|---|
-| Teammate reference | **Give this to teammates** — short system tour, folder map, run steps, demo-gate leftovers | [TEAMMATE_REFERENCE.md](TEAMMATE_REFERENCE.md) |
-| 01 | Requirements — functional/non-functional reqs, redaction taxonomy, MVP scope | [01_REQUIREMENTS.md](01_REQUIREMENTS.md) |
-| 02 | Architecture — components, data flow, sanitization pipeline, server contract | [02_ARCHITECTURE.md](02_ARCHITECTURE.md) |
-| Profile / Fill Form | PDF → on-device text → optional local AI; Fill Form is local-only | [PROFILE_FILL_ARCHITECTURE.md](PROFILE_FILL_ARCHITECTURE.md) |
-| 03 | Tech Stack & Models — model selection matrix, ADRs, latency budgets | [03_TECH_STACK_MODELS.md](03_TECH_STACK_MODELS.md) |
-| 04 | Evaluation & Test Plan — metrics, ground-truth test pages, instrumentation | [04_EVAL_TEST_PLAN.md](04_EVAL_TEST_PLAN.md) |
-| 05 | Milestones — phased build plan, dependencies, deliverables | [05_MILESTONES.md](05_MILESTONES.md) |
-| 06 | Tech explainer — ONNX / WASM in plain language | [06_TECH_EXPLAINER.md](06_TECH_EXPLAINER.md) |
+| Technical Dossier | **Comprehensive PDF submission for the Jury** | [AEGIS_Technical_Dossier.pdf](AEGIS_Technical_Dossier.pdf) |
+| 01. Requirements | Functional/non-functional reqs, redaction taxonomy, MVP scope | [01_REQUIREMENTS.md](01_REQUIREMENTS.md) |
+| 02. Architecture | Components, data flow, sanitization pipeline, server contract | [02_ARCHITECTURE.md](02_ARCHITECTURE.md) |
+| 03. Tech Stack & Models | Model selection matrix, latency budgets | [03_TECH_STACK_MODELS.md](03_TECH_STACK_MODELS.md) |
+| 06. Tech Explainer | ONNX / WASM in plain language | [06_TECH_EXPLAINER.md](06_TECH_EXPLAINER.md) |
 
-## Research Documents (from analysis phase)
+## Privacy & Architecture Deep Dives
 
 | Doc | Purpose | Link |
 |---|---|---|
-| Deep Structured Analysis | Problem understanding, feasibility, competitor landscape, evaluator lens | [Aegis_Deep_Structured_Analysis.md](Aegis_Deep_Structured_Analysis.md) |
-| Industry review script | **Canonical spoken pitch** — gunshot lines, split seats, live TP08 demo, Q&A | [INDUSTRY_PITCH_SCRIPT.md](INDUSTRY_PITCH_SCRIPT.md) |
+| Document Upload Trust Boundary | Data isolation, never-store enforcement points | [PRIVACY_DOC_UPLOAD.md](PRIVACY_DOC_UPLOAD.md) |
+| Profile / Fill Form Architecture | Client vs server flow: ingest, face scan, Fill Form | [PROFILE_FILL_ARCHITECTURE.md](PROFILE_FILL_ARCHITECTURE.md) |
 
-## Privacy & Security Documents
-
-| Doc | Purpose | Link |
-|---|---|---|
-| Document Upload Trust Boundary | What may leave the device for the PDF/DOCX upload + AI-structured profile feature, never-store enforcement points, verification checklist | [PRIVACY_DOC_UPLOAD.md](PRIVACY_DOC_UPLOAD.md) |
-| Profile, vault, Fill Form | Client vs server table: ingest, face scan, Fill Form. Companion to the trust-boundary doc | [PROFILE_FILL_ARCHITECTURE.md](PROFILE_FILL_ARCHITECTURE.md) |
-
-## Operator, measurement, and backlog
+## Operator & Run Guides
 
 | Doc | Purpose | Link |
 |---|---|---|
-| Live demo card | 10-line install path for **real Chrome**: load `dist/`, name **AEGIS**, TP08 Fill + Privacy Scan | [LIVE_DEMO.md](LIVE_DEMO.md) |
-| Demo runbook | Judge Chrome E2E on TP08 (load `dist/`, scan / Run Agent, recovery codes) | [DEMO_RUNBOOK.md](DEMO_RUNBOOK.md) |
-| VLM server setup | Measured Ollama install, `qwen2.5vl:7b`, cold/warm smoke tests on `:11434` | [SERVER_SETUP.md](SERVER_SETUP.md) |
-| Backend deploy | Operator path: Node gateway `:8000` → Ollama; Chrome 403 if you hit `:11434` directly | [BACKEND_DEPLOY.md](BACKEND_DEPLOY.md) |
-| Extension size | Measured `du` of `dist/` vs repo root, JS/models/pdfjs/icons breakdown (Resource criterion) | [EXTENSION_SIZE.md](EXTENSION_SIZE.md) |
+| Demo Runbook | Judge Chrome E2E on test pages | [DEMO_RUNBOOK.md](DEMO_RUNBOOK.md) |
+| Backend Deploy | Operator path: Node gateway `:8000` to local Ollama | [BACKEND_DEPLOY.md](BACKEND_DEPLOY.md) |
+| VLM Server Setup | Measured Ollama install, `qwen2.5vl:7b` configuration | [SERVER_SETUP.md](SERVER_SETUP.md) |
 
 ---
 
@@ -71,6 +57,5 @@ A privacy-preserving browser extension that intercepts screen content before it 
 - **Face detection:** BlazeFace ONNX (~400KB, sub-ms GPU)
 - **Text PII:** Hybrid regex + DistilBERT NER via Transformers.js WASM
 - **DOM fields:** Programmatic `type="password"` / `autocomplete` attribute detection
-- **Server VLM:** Qwen3-VL-8B-Instruct (Apache-2.0, native GUI grounding)
+- **Server VLM:** Qwen3-VL-8B-Instruct / qwen2.5vl:7b
 - **Runtime:** ONNX Runtime Web — WASM baseline, WebGPU acceleration when available
-- **Build order:** WASM baseline → redaction pipeline → WebGPU opt → server loop → benchmarks → demo

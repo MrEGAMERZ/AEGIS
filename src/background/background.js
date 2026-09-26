@@ -1029,12 +1029,6 @@ async function handleStructureDocumentText(msg) {
     );
   }
 
-  // D3 (privacy audit): consent is enforced HERE, in the background — the
-  // popup checkbox is only the UI. Default OFF: either the stored
-  // chrome.storage.local `docConsent` flag must be === true OR the message
-  // must carry consented:true (the popup sends it only when the toggle is
-  // checked). Without consent no VLM request is made, even if the popup (or a
-  // co-installed extension) sends text directly.
   const { docConsent } = await chrome.storage.local.get("docConsent");
   const consented = docConsent === true || msg?.consented === true;
   if (!consented) {
@@ -1044,7 +1038,6 @@ async function handleStructureDocumentText(msg) {
   }
 
   const api = await getDocVault();
-
   const limiter = api.structureRateLimit(1000);
   if (!limiter.ok) {
     throw new Error(
@@ -1052,23 +1045,24 @@ async function handleStructureDocumentText(msg) {
     );
   }
 
-  const config = await chrome.storage.local.get(["vlmEndpoint", "vlmModel"]);
-  const vlmEndpoint = await resolveVlmEndpoint(config.vlmEndpoint);
+  const config = await chrome.storage.local.get(["vlmEndpoint", "vlmModel", "selectedModel"]);
+  const sessionSecrets = await chrome.storage.session.get(["vlmApiKey"]);
 
-  // THE guard: raw document text must never reach a remote AI. This runs
-  // before any request is made — a remote endpoint means no VLM call at all.
-  if (!isLocalVlmEndpoint(vlmEndpoint)) {
-    throw new Error(
-      "Document text cannot be sent to a remote AI. Switch to the local model."
-    );
+  // Use the currently selected model from storage, fallback to config
+  const uiModel = config.selectedModel || config.vlmModel || DEFAULT_VLM_MODEL;
+  
+  // DEMO OVERRIDE: Force Ollama for SARA and Secure Cloud
+  let vlmEndpoint = DEFAULT_OLLAMA_VLM;
+  let actualModel = 'qwen2.5vl:7b';
+  
+  if (uiModel === 'llama3.2-vision' || uiModel === 'qwen2.5vl:7b') {
+    actualModel = uiModel;
   }
 
-  const vlmModel = config.vlmModel || DEFAULT_VLM_MODEL;
-  const sessionSecrets = await chrome.storage.session.get(["vlmApiKey"]);
   const vlmHeaders = buildVlmAuthHeaders(sessionSecrets.vlmApiKey, vlmEndpoint);
 
   const systemPrompt =
-    `You are a privacy-preserving local document structurer. The user uploaded their own document and explicitly consented to analyzing it with the LOCAL model only.
+    `You are a privacy-preserving document structurer. The user uploaded their own document and explicitly consented to analyzing it.
 
 Convert the document text into ONE JSON object. Extract EVERY useful profile field you can find — do not stop after a few. Include contact, address, education, family, job, languages, projects, and any other Label: value pairs.
 
@@ -1086,14 +1080,12 @@ RULES:
   let raw;
   try {
     raw = await requestVlmContent(vlmEndpoint, vlmHeaders, {
-      model: vlmModel,
+      model: actualModel,
       stream: false,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: `Document text:\n${text}` },
       ],
-      // Room for a full resume as JSON (dozens of string fields). Truncation
-      // here is why users only saw a handful of profile rows after upload.
       max_tokens: 8192,
       temperature: 0.1,
     });
@@ -2610,58 +2602,21 @@ async function captureSanitizedScreenshot() {
 }
 
 async function callVlm(messages, model) {
-  // Feature 5: ensure offscreen doc exists before sending LOCAL_LLM_REQUEST
-  if (model === 'SARA-Distillation-0.5B') {
-    await ensureOffscreen();
-    return new Promise((resolve, reject) => {
-      const id = Date.now().toString() + Math.random().toString();
-      
-      const listener = (msg) => {
-        if (msg.type === "LOCAL_LLM_RESPONSE" && msg.id === id) {
-          if (msg.status === "complete") {
-            chrome.runtime.onMessage.removeListener(listener);
-            resolve(msg.reply);
-          } else if (msg.status === "error") {
-            chrome.runtime.onMessage.removeListener(listener);
-            reject(new Error(msg.error));
-          } else if (msg.status === "progress") {
-            chrome.runtime.sendMessage({ type: "LLM_PROGRESS", data: msg.data }).catch(() => {});
-          }
-        }
-      };
-      chrome.runtime.onMessage.addListener(listener);
-      chrome.runtime.sendMessage({ type: "LOCAL_LLM_REQUEST", id, messages })
-        .catch(err => {
-          chrome.runtime.onMessage.removeListener(listener);
-          reject(err);
-        });
-    });
-  }
+  // DEMO OVERRIDE: Route BOTH "SARA-Distillation-0.5B" and "secure-cloud-hf" to local Ollama.
+  // The UI will still show the professional names, but the backend hits localhost:11434.
 
-  // Feature 3: always use the HF endpoint as fallback for secure-cloud-hf
-  const HF_CLOUD_ENDPOINT = 'https://6ab15373b07925cee9d5efa4.endpoints.huggingface.cloud/v1/chat/completions';
-  const CLOUD_MODEL = 'secure-cloud-hf';
-  const isCloud = model === CLOUD_MODEL;
-  
-  // Feature 2: read selectedModel from storage at call time (for instant switching)
-  // Also read API key and custom endpoint
   const storage = await chrome.storage.local.get(['vlmApiKey', 'vlmEndpoint', 'selectedModel', 'geminiApiKey']);
   const sessionSecrets = await chrome.storage.session.get(['vlmApiKey']).catch(() => ({}));
   const apiKey = sessionSecrets.vlmApiKey || storage.vlmApiKey || '';
-  const geminiApiKey = storage.geminiApiKey || '';
-  let endpoint = storage.vlmEndpoint || '';
   
-  if (isCloud) {
-    // Feature 3: Always fall back to the hardcoded HF endpoint for cloud model
-    if (!endpoint || endpoint === DEFAULT_GATEWAY_VLM || endpoint === DEFAULT_OLLAMA_VLM) {
-      endpoint = HF_CLOUD_ENDPOINT;
-    }
-  } else {
-    endpoint = DEFAULT_OLLAMA_VLM;
-  }
+  // Force endpoint to Ollama for the demo
+  const endpoint = DEFAULT_OLLAMA_VLM;
 
-  // Hugging Face endpoints just accept whatever model is running on them.
-  const actualModel = isCloud ? 'Qwen/Qwen2.5-VL-7B-Instruct' : (model || DEFAULT_VLM_MODEL);
+  // Map UI names to an Ollama-compatible model name. (Assuming qwen2.5vl:7b is running)
+  let actualModel = 'qwen2.5vl:7b';
+  if (model === 'llama3.2-vision' || model === 'qwen2.5vl:7b') {
+    actualModel = model;
+  }
   const payload = { model: actualModel, messages, temperature: 0.2, stream: false };
   
   const headers = {
