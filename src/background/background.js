@@ -6,7 +6,7 @@ const DEFAULT_OLLAMA_VLM = "http://localhost:11434/v1/chat/completions";
 const DEFAULT_GATEWAY_VLM = "http://localhost:8000/v1/chat/completions";
 const DEFAULT_GATEWAY_HEALTH = "http://localhost:8000/health";
 const DEFAULT_VLM_MODEL = "SARA-Distillation-0.5B";
-const VLM_FETCH_TIMEOUT_MS = 120000;
+const VLM_FETCH_TIMEOUT_MS = 45000;
 
 // Module-level map for HITL action approvals — keyed by actionId string.
 // handleChatRequest registers a pending approval here; the message router above resolves it.
@@ -15,6 +15,24 @@ const globalPendingApprovals = new Map();
 // Action history stack for undo (last 5 executed actions + their tab states)
 const actionHistory = [];
 const MAX_HISTORY = 5;
+
+// Cached config to avoid repeated chrome.storage.local reads on every VLM call.
+// Refreshed on storage change events.
+let _cachedVlmConfig = null;
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.vlmApiKey || changes.vlmEndpoint || changes.selectedModel || changes.agentMode) {
+    _cachedVlmConfig = null; // invalidate cache
+  }
+});
+async function getVlmConfig() {
+  if (_cachedVlmConfig) return _cachedVlmConfig;
+  const [local, session] = await Promise.all([
+    chrome.storage.local.get(['vlmApiKey', 'vlmEndpoint', 'selectedModel', 'agentMode']),
+    chrome.storage.session.get(['vlmApiKey']).catch(() => ({}))
+  ]);
+  _cachedVlmConfig = { ...local, sessionApiKey: session.vlmApiKey || '' };
+  return _cachedVlmConfig;
+}
 
 // Audit log for compliance — stored in chrome.storage.local under 'aegisAuditLog'
 async function appendAuditLog(entry) {
@@ -1208,8 +1226,8 @@ RULES:
         { role: "system", content: systemPrompt },
         { role: "user", content: `Document text:\n${text}` },
       ],
-      max_tokens: 8192,
-      temperature: 0.1,
+      max_tokens: 2048,
+      temperature: 0,
     });
   } catch (err) {
     const vlmMs = Date.now() - t0;
@@ -2731,32 +2749,18 @@ async function captureSanitizedScreenshot() {
 }
 
 async function callVlm(messages, model) {
-  // DEMO OVERRIDE: Route BOTH "SARA-Distillation-0.5B" and "secure-cloud-hf" to local Ollama.
-  // The UI will still show the professional names, but the backend hits localhost:11434.
-
-  const storage = await chrome.storage.local.get(['vlmApiKey', 'vlmEndpoint', 'selectedModel', 'geminiApiKey']);
-  const sessionSecrets = await chrome.storage.session.get(['vlmApiKey']).catch(() => ({}));
-  const apiKey = sessionSecrets.vlmApiKey || storage.vlmApiKey || '';
-  
-  // Force endpoint to Ollama for the demo
+  const cfg = await getVlmConfig();
+  const apiKey = cfg.sessionApiKey || cfg.vlmApiKey || '';
   const endpoint = DEFAULT_OLLAMA_VLM;
 
-  // Map UI names to an Ollama-compatible model name. (Assuming qwen2.5vl:7b is running)
   let actualModel = 'qwen2.5vl:7b';
-  if (model === 'llama3.2-vision' || model === 'qwen2.5vl:7b') {
-    actualModel = model;
-  }
-  const payload = { model: actualModel, messages, temperature: 0.2, stream: false };
-  
-  const headers = {
-    'Content-Type': 'application/json',
-    'HTTP-Referer': 'https://aegis.local',
-    'X-Title': 'AEGIS'
-  };
-  // Feature 3: Send auth header only if API key is available, omit gracefully if not
-  if (apiKey) {
-    headers.Authorization = `Bearer ${apiKey}`;
-  }
+  if (model === 'llama3.2-vision' || model === 'qwen2.5vl:7b') actualModel = model;
+
+  // temperature:0 = deterministic JSON actions = faster decode, no sampling overhead
+  const payload = { model: actualModel, messages, temperature: 0, stream: false };
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
   const t0 = Date.now();
   try {
@@ -2764,7 +2768,7 @@ async function callVlm(messages, model) {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(90000)
+      signal: AbortSignal.timeout(45000)
     });
     if (!res.ok) {
       const err = await res.text().catch(() => '');
@@ -2773,14 +2777,13 @@ async function callVlm(messages, model) {
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content;
     if (typeof content === 'string') {
-      // Feature 3: timing log on successful cloud response
-      console.log(`[AEGIS] Cloud VLM responded in ${Date.now() - t0}ms`);
+      console.log(`[AEGIS SARA] responded in ${Date.now() - t0}ms`);
       return content;
     }
   } catch (e) {
-    throw new Error(`Could not reach AI. Details: ${e.message}`);
+    throw new Error(`SARA unreachable: ${e.message}`);
   }
-  throw new Error('Empty response from AI.');
+  throw new Error('Empty response from SARA.');
 }
 
 
@@ -2825,35 +2828,20 @@ async function handleChatRequest(msg) {
   // (evaluated later, after 'latest' is defined)
   const INJECTION_KEYWORDS = /\b(write\s*(this\s*)?(to|into)\s*(the\s*)?(ide|editor)|type\s*(this\s*)?(into|in)\s*(the\s*)?(editor|field)|inject\s*(this\s*)?(into|in)\s*(the\s*)?(page|field|editor)|fill\s*(this\s*)?(into|in)\s*(the\s*)?(field|editor|form)|put\s*(it\s*)?in\s*(the\s*)?(editor|ide|field))\b/i;
 
-  const SYSTEM_PROMPT = `You are AEGIS — a private, secure AI agent for government employees and developers.
-You see a SANITIZED screenshot (faces and personal data already hidden on-device before reaching you).
-You can perform browser actions, write code into on-screen code editors, or answer questions.
+  const SYSTEM_PROMPT = `You are AEGIS, a secure browser AI. The screenshot you see has faces and PII already hidden on-device before reaching you.
 
-FOR BROWSER ACTIONS & TASKS — respond with ONE JSON action block:
-- Write code into online editor (Programiz, LeetCode, CodeMirror, Ace, IDE, textarea):
-\`\`\`json
-{"action":"write_code","code":"/* full code here */"}
-\`\`\`
-- Click button/element (e.g. Run button, Submit, Tab):
-\`\`\`json
-{"action":"click","text":"Run"} or {"action":"click","selector":"button.run"} or {"action":"click","x":320,"y":450}
-\`\`\`
-- Type text into field: {"action":"type","selector":"#field","value":"text"}
-- Press key: {"action":"key_press","key":"Enter"}
-- Scroll: {"action":"scroll","direction":"down"}
+FOR BROWSER ACTIONS — respond with exactly ONE JSON block:
+- Click: {"action":"click","x":N,"y":N} or {"action":"click","selector":"#id"}
+- Type: {"action":"type","selector":"#id","value":"text"}
+- Fill form: {"action":"fill_many","fields":[{"selector":"#id","value":"v"}]}
 - Navigate: {"action":"navigate","url":"https://..."}
-- Fill form: {"action":"fill_many","fields":[{"selector":"#name","value":"John"}]}
-- Done: {"action":"done","summary":"Task complete."}
+- Scroll: {"action":"scroll","direction":"down"}
+- Press key: {"action":"key_press","key":"Enter"}
+- Done: {"action":"done","summary":"what you did"}
+- Write code to editor: {"action":"write_code","code":"..."}
 
-FOR CODING REQUESTS:
-When asked to write or implement code (e.g. "Write insertion sort code in C"), generate the code!
-If there is a code editor or compiler on screen (such as Programiz, CodeMirror, Ace), output the "write_code" action so the code is directly placed into the editor!
-Example:
-\`\`\`json
-{"action":"write_code","code":"#include <stdio.h>\\n\\nvoid insertionSort(int arr[], int n) {\\n    int i, key, j;\\n    for (i = 1; i < n; i++) {\\n        key = arr[i];\\n        j = i - 1;\\n        while (j >= 0 && arr[j] > key) {\\n            arr[j + 1] = arr[j];\\n            j = j - 1;\\n        }\\n        arr[j + 1] = key;\\n    }\\n}\\n\\nint main() {\\n    int arr[] = {12, 11, 13, 5, 6};\\n    int n = sizeof(arr) / sizeof(arr[0]);\\n    insertionSort(arr, n);\\n    for (int i = 0; i < n; i++) printf(\\"%d \\", arr[i]);\\n    printf(\\"\\\\n\\");\\n    return 0;\\n}"}
-\`\`\`
-
-FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
+FOR QUESTIONS — reply in plain text. No JSON.
+Coordinates must match the screenshot pixel space exactly.`;
 
   const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
 
@@ -3112,7 +3100,7 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
     }
 
     // Wait for page to settle
-    await new Promise(r => setTimeout(r, 900));
+    await new Promise(r => setTimeout(r, 350));
 
     // Capture new sanitized screenshot
     const nextSnap = await captureSanitizedScreenshot().catch(() => null);
