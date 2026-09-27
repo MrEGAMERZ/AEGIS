@@ -29,6 +29,9 @@ const chatStatusText  = document.getElementById('chat-status-text');
 const welcomeMsg      = document.getElementById('welcome-msg');
 const modelSelect     = document.getElementById('model-select');
 
+// ── HITL Approval State ────────────────────────────────────
+let pendingActionCard = null; // The currently displayed approval card element
+
 // Settings Input Bindings
 const vlmApiKeyInput   = document.getElementById('vlm-api-key');
 const vlmEndpointInput = document.getElementById('vlm-endpoint');
@@ -467,6 +470,86 @@ function renderMessage(role, text, imageUrl, animate = true) {
   return wrap;
 }
 
+// ── Human-in-the-Loop Approval Card ──────────────────────
+function describeAction(action) {
+  if (!action) return 'Unknown action';
+  switch (action.action) {
+    case 'click':
+      if (action.selector) return `🖱️ Click  →  ${action.selector}`;
+      if (action.text)     return `🖱️ Click  "${action.text}"`;
+      return `🖱️ Click at (${action.x}, ${action.y})`;
+    case 'type':
+      return `⌨️ Type "${String(action.value || '').slice(0, 60)}" into ${action.selector}`;
+    case 'fill_many': {
+      const n = Array.isArray(action.fields) ? action.fields.length : '?';
+      return `📋 Fill ${n} field(s) with profile data`;
+    }
+    case 'navigate':
+      return `🌐 Navigate to ${action.url}`;
+    case 'scroll':
+      return `↕️ Scroll ${action.direction}`;
+    case 'key_press':
+      return `⌨️ Press key [${action.key}]`;
+    case 'hover':
+      return `👆 Hover over ${action.selector}`;
+    case 'extract_text':
+      return `📄 Extract text from ${action.selector || 'page'}`;
+    case 'clear':
+      return `✖️ Clear field ${action.selector}`;
+    case 'focus':
+      return `🎯 Focus on ${action.selector}`;
+    case 'wait':
+      return `⏳ Wait ${action.ms || 1000}ms`;
+    case 'write_code':
+      return `💻 Write code (${String(action.code || '').length} chars) to editor`;
+    default:
+      return `⚙️ ${action.action}`;
+  }
+}
+
+function renderApprovalCard(actionId, action) {
+  // Remove any existing card
+  if (pendingActionCard) {
+    pendingActionCard.remove();
+    pendingActionCard = null;
+  }
+
+  const card = document.createElement('div');
+  card.className = 'hitl-approval-card';
+  card.dataset.actionId = actionId;
+
+  const desc = describeAction(action);
+
+  card.innerHTML = `
+    <div class="hitl-header">
+      <span class="hitl-icon">🔐</span>
+      <span class="hitl-title">Action requires your approval</span>
+    </div>
+    <div class="hitl-action-desc">${desc}</div>
+    <div class="hitl-actions">
+      <button class="hitl-btn hitl-deny"  data-id="${actionId}">✕ Deny</button>
+      <button class="hitl-btn hitl-allow" data-id="${actionId}">✓ Allow</button>
+    </div>
+  `;
+
+  card.querySelector('.hitl-allow').addEventListener('click', () => {
+    card.remove();
+    pendingActionCard = null;
+    chrome.runtime.sendMessage({ type: 'APPROVE_ACTION', actionId });
+  });
+
+  card.querySelector('.hitl-deny').addEventListener('click', () => {
+    card.remove();
+    pendingActionCard = null;
+    chrome.runtime.sendMessage({ type: 'REJECT_ACTION', actionId, reason: 'User denied' });
+  });
+
+  chatContainer.appendChild(card);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+  pendingActionCard = card;
+  return card;
+}
+
 // ── Quick Commands (no VLM needed) ────────────────────────
 const FILL_PATTERNS     = /\bfill\s*(the\s*)?(form|fields?|page|all|it)\b|\bauto.?fill\b/i;
 const SCAN_PATTERNS     = /\b(privacy\s*scan|scan\s*page|check\s*(privacy|risks?)|run\s*scan)\b/i;
@@ -843,4 +926,12 @@ if (btnMic) {
     }
   });
 }
+// ── Listen for HITL approval requests from the agent loop ─
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === 'PENDING_ACTION') {
+    renderApprovalCard(msg.actionId, msg.action);
+    return false;
+  }
+});
+
 chrome.runtime.onMessage.addListener(msg => { if (msg.type === 'LLM_PROGRESS') { chatStatus.style.display = 'block'; chatStatusText.textContent = `Loading Local Model (${msg.data.file}): ${Math.round(msg.data.progress)}%`; } });

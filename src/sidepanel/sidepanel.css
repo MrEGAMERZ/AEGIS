@@ -479,3 +479,73 @@ body.dark-mode #chat-input { color: #f1f5f9; }
   text-align: center;
 }
 body.dark-mode .model-switch-chip { background: #14532d; color: #86efac; border-color: #166534; }
+
+/* ── HITL Action Approval Card ──────────────────────────── */
+.hitl-approval-card {
+  margin: 10px 0;
+  border: 1.5px solid #f59e0b;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #1c1308 0%, #1e1a0a 100%);
+  overflow: hidden;
+  animation: hitlSlideIn 0.25s ease;
+}
+body:not(.dark-mode) .hitl-approval-card {
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+  border-color: #d97706;
+}
+@keyframes hitlSlideIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.hitl-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #f59e0b;
+}
+body:not(.dark-mode) .hitl-header { color: #b45309; }
+.hitl-icon { font-size: 14px; }
+.hitl-action-desc {
+  padding: 4px 12px 10px;
+  font-size: 13px;
+  color: #fde68a;
+  font-weight: 500;
+  line-height: 1.4;
+}
+body:not(.dark-mode) .hitl-action-desc { color: #78350f; }
+.hitl-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+.hitl-btn {
+  flex: 1;
+  padding: 7px 0;
+  border: none;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.hitl-btn:hover  { opacity: 0.85; transform: scale(0.98); }
+.hitl-btn:active { transform: scale(0.95); }
+.hitl-allow {
+  background: #16a34a;
+  color: #fff;
+}
+.hitl-deny {
+  background: #1e293b;
+  color: #94a3b8;
+  border: 1px solid #334155;
+}
+body:not(.dark-mode) .hitl-deny {
+  background: #f1f5f9;
+  color: #475569;
+  border-color: #cbd5e1;
+}

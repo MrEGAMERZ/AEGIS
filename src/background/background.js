@@ -8,6 +8,10 @@ const DEFAULT_GATEWAY_HEALTH = "http://localhost:8000/health";
 const DEFAULT_VLM_MODEL = "SARA-Distillation-0.5B";
 const VLM_FETCH_TIMEOUT_MS = 120000;
 
+// Module-level map for HITL action approvals — keyed by actionId string.
+// handleChatRequest registers a pending approval here; the message router above resolves it.
+const globalPendingApprovals = new Map();
+
 // ── Local document vault module (lazy) ────────────────────────────
 // doc-vault.js owns vault storage, snippet retrieval, structured-output
 // validation, and the vault provenance predicate. It attaches
@@ -415,6 +419,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         })
       );
     return true;
+  }
+
+  if (msg.type === 'APPROVE_ACTION') {
+    // Find the handleChatRequest call that's waiting — we use a shared module-level map
+    const handler = globalPendingApprovals.get(msg.actionId);
+    if (handler) {
+      globalPendingApprovals.delete(msg.actionId);
+      handler.resolve({ approved: true });
+    }
+    return false;
+  }
+
+  if (msg.type === 'REJECT_ACTION') {
+    const handler = globalPendingApprovals.get(msg.actionId);
+    if (handler) {
+      globalPendingApprovals.delete(msg.actionId);
+      handler.resolve({ approved: false, reason: msg.reason || 'User denied' });
+    }
+    return false;
   }
 
   if (msg.type === "EXECUTE_WRITE_CODE") {
@@ -2812,6 +2835,35 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
     return { reply: cleanReply, actionExecuted: null, sanitizedImage: firstSanitizedImage };
   }
 
+  // ── Human-in-the-Loop approval system ────────────────────────────
+  // Each action is sent to the sidepanel for approval before execution.
+  // resolveMap stores {resolve, reject} keyed by a unique actionId.
+  // Background sends PENDING_ACTION; sidepanel replies with APPROVE_ACTION or REJECT_ACTION.
+  const pendingApprovals = new Map();
+
+  function waitForApproval(actionId, actionObj) {
+    return new Promise((resolve, reject) => {
+      pendingApprovals.set(actionId, { resolve, reject });
+      // Broadcast the pending action to the sidepanel
+      chrome.runtime.sendMessage({
+        type: 'PENDING_ACTION',
+        actionId,
+        action: actionObj,
+      }).catch(() => {
+        // sidepanel might not be open — auto-approve silently
+        pendingApprovals.delete(actionId);
+        resolve({ approved: true, autoApproved: true });
+      });
+      // Timeout after 60s → auto-deny to prevent hanging forever
+      setTimeout(() => {
+        if (pendingApprovals.has(actionId)) {
+          pendingApprovals.delete(actionId);
+          reject(new Error('Approval timed out after 60s — action cancelled.'));
+        }
+      }, 60000);
+    });
+  }
+
   // ── AGENT LOOP ───────────────────────────────────────────────────
   const MAX_STEPS = 15;
   const stepLog = [];
@@ -2838,15 +2890,51 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
     }
     stepLog.push(stepLabel);
 
-    // Execute
+    // ── Human-in-the-Loop: pause and ask user to approve before every action ──
     let execResult = { error: 'not executed' };
     if (action.action === 'error') {
       execResult = { error: action.error };
+    } else if (action.action === 'done') {
+      // 'done' doesn't need approval — it's just a summary
+      execResult = { ok: true };
     } else {
+      const actionId = `action_${Date.now()}_${step}`;
+      let approval;
       try {
-        execResult = await handleExecuteAction(action, activeTab?.id);
-      } catch (e) {
-        execResult = { error: e.message };
+        approval = await (() => {
+          return new Promise((resolve, reject) => {
+            globalPendingApprovals.set(actionId, { resolve, reject });
+            chrome.runtime.sendMessage({
+              type: 'PENDING_ACTION',
+              actionId,
+              action,
+            }).catch(() => {
+              globalPendingApprovals.delete(actionId);
+              resolve({ approved: true, autoApproved: true });
+            });
+            setTimeout(() => {
+              if (globalPendingApprovals.has(actionId)) {
+                globalPendingApprovals.delete(actionId);
+                resolve({ approved: false, reason: 'Approval timed out' });
+              }
+            }, 60000);
+          });
+        })();
+      } catch (approvalErr) {
+        approval = { approved: false, reason: approvalErr.message };
+      }
+
+      if (!approval.approved) {
+        const skipMsg = approval.autoApproved ? 'auto-approved' : `skipped: ${approval.reason || 'User denied'}`;
+        stepLog.push(`[${step + 1}] ${action.action} → ${skipMsg}`);
+        // Continue loop — don't execute, just let VLM know on the next step
+        execResult = { skipped: true, reason: approval.reason || 'User denied' };
+      } else {
+        try {
+          execResult = await handleExecuteAction(action, activeTab?.id);
+        } catch (e) {
+          execResult = { error: e.message };
+        }
       }
     }
 
@@ -2861,11 +2949,13 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
     // Capture new sanitized screenshot
     const nextSnap = await captureSanitizedScreenshot().catch(() => null);
 
-    const resultNote = execResult?.error
-      ? `Action failed: ${execResult.error}`
-      : execResult?.text
-        ? `Extracted: ${execResult.text.slice(0, 300)}`
-        : `Action succeeded.`;
+    const resultNote = execResult?.skipped
+      ? `Action skipped by user. Tell the user you skipped the action and ask what they want to do instead.`
+      : execResult?.error
+        ? `Action failed: ${execResult.error}`
+        : execResult?.text
+          ? `Extracted: ${execResult.text.slice(0, 300)}`
+          : `Action succeeded.`;
 
     messages.push({ role: 'assistant', content: rawReply });
 

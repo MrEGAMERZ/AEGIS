@@ -1,0 +1,2 @@
+[2026-09-27T04:25:19.668Z] INFO AEGIS backend listening {"host":"127.0.0.1","port":8000,"mock":false,"upstream":"http://localhost:11434/v1","model":"qwen2.5vl:7b"}
+[2026-09-27T04:25:19.673Z] WARN Make sure the VLM runtime is up (e.g. `ollama serve` and the model is pulled)
