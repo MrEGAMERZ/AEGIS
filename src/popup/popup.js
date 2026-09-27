@@ -53,8 +53,9 @@ function withStuckHint(work, msg) {
 
 // ── Status helpers ────────────────────────────────────────────────
 function setStatus(message, type = "active") {
-  statusEl.textContent = message;
+  statusEl.textContent = type === "error" ? friendlyError(message) : message;
   statusEl.className = `status ${type}`;
+}`;
 }
 function clearStatus() { statusEl.className = "status"; statusEl.textContent = ""; }
 
@@ -826,37 +827,9 @@ document.getElementById("import-file-input")?.addEventListener("change", async (
 });
 
 // ── Error Formatting ──────────────────────────────────────────────
-function formatAgentError(code, message) {
-  const t = message || "";
-  if (code === "NO_CONTENT_SCRIPT") return `[${code}] ${t}`;
-  if (code === "FACE_REDACTION_REQUIRED") {
-    return `[${code}] Face redaction did not complete — unredacted faces cannot leave the device. ${t}`;
-  }
-  if (code === "NER_REDACTION_REQUIRED") {
-    return `[${code}] NER redaction did not complete — unredacted PII cannot leave the device. ${t}`;
-  }
-  if (code === "TIMEOUT" || code === "INIT_FAILED") return `[${code}] On-device model init failed. ${t} Reload extension.`;
-  if (code === "VLM_BAD_RESPONSE") return `[${code}] VLM did not return a usable action. ${t}`;
-  if (code === "BAD_JSON") return `[${code}] Non-JSON response. ${t}`;
-  if (code === "STRUCTURE_REMOTE_REJECTED") {
-    return `[${code}] ${t} The analyzer only runs against the local model — switch the VLM endpoint back to http://localhost:8000.`;
-  }
-  if (code === "STRUCTURE_EMPTY_TEXT") return `[${code}] ${t}`;
-  if (code === "STRUCTURE_TOO_LARGE") return `[${code}] ${t}`;
-  if (code === "STRUCTURE_RATE_LIMITED") return `[${code}] ${t}`;
-  if (code === "STRUCTURE_CONSENT_REQUIRED") {
-    return "[consent] Check 'Structure with local AI' and try again.";
-  }
-  if (code === "SCAN_ABORTED") return "Scan stopped.";
-  return `[${code}] ${t}`;
-}
+function formatAgentError(code, message) { return friendlyError(message || code); }
 
-function formatRuntimeDisconnect(err) {
-  const msg = String(err?.message || err || "");
-  if (msg.includes("Receiving end does not exist") || msg.includes("Could not establish connection"))
-    return "[NO_CONTENT_SCRIPT] Refresh this tab, then try again.";
-  return `Error: ${msg}`;
-}
+function formatRuntimeDisconnect(err) { return friendlyError(err?.message || err); }
 
 // ── Agent Loop ────────────────────────────────────────────────────
 async function persistProfileFromTextarea() {
@@ -1610,3 +1583,20 @@ document.getElementById("privacy-decline-btn")?.addEventListener("click", () => 
 });
 
 checkPrivacyConsent();
+
+
+function friendlyError(raw) {
+  if (!raw) return 'Something went wrong. Please try again.';
+  const s = String(raw);
+  if (s.includes('UNSCANNABLE_TAB')) return '⚠️ AEGIS cannot scan this page (Chrome settings or PDF). Please navigate to a regular webpage.';
+  if (s.includes('SCAN_ABORTED')) return 'Scan was cancelled.';
+  if (s.includes('SARA unreachable') || s.includes('Could not reach AI')) return '⚠️ SARA is offline. Make sure Ollama is running: open Terminal and run `ollama serve`.';
+  if (s.includes('VLM queue timeout')) return '⚠️ SARA is busy. Please wait a moment and try again.';
+  if (s.includes('No active tab')) return '⚠️ No active tab found. Click on a webpage first.';
+  if (s.includes('PASSWORD_REQUIRED') || s.includes('Password entry timed out')) return '⚠️ PDF password entry timed out. Please try uploading the document again.';
+  if (s.includes('STRUCTURE_EMPTY_TEXT')) return '⚠️ Document appears empty. Please check the file and try again.';
+  if (s.includes('STRUCTURE_TOO_LARGE')) return '⚠️ Document is too large. Please try a shorter document.';
+  if (s.includes('Extension context invalidated')) return '⚠️ Extension was updated. Please reload the page.';
+  return '⚠️ ' + s.replace(/^Error:s*/i, '').slice(0, 120);
+}
+

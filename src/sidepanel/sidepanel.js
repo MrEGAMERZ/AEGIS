@@ -659,11 +659,11 @@ async function runFillCommand() {
   setStatus('Filling form with your profile…', true);
   try {
     const res = await chrome.runtime.sendMessage({ type: 'FILL_MATCHING_FIELDS' });
-    if (res?.error) return `❌ Could not fill: ${res.error}`;
+    if (res?.error) return friendlyError(res.error);
     const n = res?.filled || 0;
     return `✅ Filled ${n} field${n === 1 ? '' : 's'} using your saved profile. Passwords and sensitive fields were kept private.`;
   } catch (e) {
-    return `❌ Fill failed: ${e.message}`;
+    return friendlyError(e.message);
   }
 }
 
@@ -674,7 +674,7 @@ async function runScanCommand() {
     const img = await chrome.runtime.sendMessage({ type: 'GET_LAST_SANITIZED_IMAGE' });
     return { text: '🔒 Privacy scan complete. The sanitized view shows what any AI is allowed to see.', image: img };
   } catch (e) {
-    return { text: `❌ Scan failed: ${e.message}` };
+    return { text: friendlyError(e.message) };
   }
 }
 
@@ -1061,3 +1061,20 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 chrome.runtime.onMessage.addListener(msg => { if (msg.type === 'LLM_PROGRESS') { chatStatus.style.display = 'block'; chatStatusText.textContent = `Loading Local Model (${msg.data.file}): ${Math.round(msg.data.progress)}%`; } });
+
+
+function friendlyError(raw) {
+  if (!raw) return 'Something went wrong. Please try again.';
+  const s = String(raw);
+  if (s.includes('UNSCANNABLE_TAB')) return '⚠️ AEGIS cannot scan this page (Chrome settings or PDF). Please navigate to a regular webpage.';
+  if (s.includes('SCAN_ABORTED')) return 'Scan was cancelled.';
+  if (s.includes('SARA unreachable') || s.includes('Could not reach AI')) return '⚠️ SARA is offline. Make sure Ollama is running: open Terminal and run `ollama serve`.';
+  if (s.includes('VLM queue timeout')) return '⚠️ SARA is busy. Please wait a moment and try again.';
+  if (s.includes('No active tab')) return '⚠️ No active tab found. Click on a webpage first.';
+  if (s.includes('PASSWORD_REQUIRED') || s.includes('Password entry timed out')) return '⚠️ PDF password entry timed out. Please try uploading the document again.';
+  if (s.includes('STRUCTURE_EMPTY_TEXT')) return '⚠️ Document appears empty. Please check the file and try again.';
+  if (s.includes('STRUCTURE_TOO_LARGE')) return '⚠️ Document is too large. Please try a shorter document.';
+  if (s.includes('Extension context invalidated')) return '⚠️ Extension was updated. Please reload the page.';
+  return '⚠️ ' + s.replace(/^Error:s*/i, '').slice(0, 120);
+}
+
