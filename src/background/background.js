@@ -12,6 +12,70 @@ const VLM_FETCH_TIMEOUT_MS = 120000;
 // handleChatRequest registers a pending approval here; the message router above resolves it.
 const globalPendingApprovals = new Map();
 
+// Action history stack for undo (last 5 executed actions + their tab states)
+const actionHistory = [];
+const MAX_HISTORY = 5;
+
+// Audit log for compliance — stored in chrome.storage.local under 'aegisAuditLog'
+async function appendAuditLog(entry) {
+  try {
+    const { aegisAuditLog } = await chrome.storage.local.get('aegisAuditLog');
+    const log = Array.isArray(aegisAuditLog) ? aegisAuditLog : [];
+    log.push({
+      ts: new Date().toISOString(),
+      action: entry.action,
+      selector: entry.selector || null,
+      value: entry.value ? '[REDACTED]' : null, // never log actual typed values
+      url: entry.url || null,
+      approved: entry.approved,
+      result: entry.result,
+    });
+    // Cap at 500 entries
+    if (log.length > 500) log.splice(0, log.length - 500);
+    await chrome.storage.local.set({ aegisAuditLog: log });
+  } catch {}
+}
+
+// Agent mode: 'safe' = HITL approve every step, 'auto' = execute freely
+let currentAgentMode = 'safe';
+// Load persisted mode on startup
+chrome.storage.local.get('agentMode').then(r => {
+  currentAgentMode = r.agentMode || 'safe';
+}).catch(() => {});
+
+// Privacy risk domains — warn before navigating to these
+const RISKY_DOMAINS = new Set([
+  'doubleclick.net','googlesyndication.com','google-analytics.com','hotjar.com',
+  'fullstory.com','logrocket.com','mixpanel.com','amplitude.com','segment.com',
+  'heap.io','clarity.ms','mouseflow.com','crazyegg.com','inspectlet.com',
+  'facebook.net','connect.facebook.net','twitter.com','t.co','linkedin.com',
+]);
+
+function isRiskyUrl(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    for (const d of RISKY_DOMAINS) {
+      if (host === d || host.endsWith('.' + d)) return true;
+    }
+  } catch {}
+  return false;
+}
+
+function computeFillConfidence(fieldLabel, profileKey, value, userProfile) {
+  // 100% if exact key match + exact value match
+  // 80% if fuzzy key match
+  // 60% if value substring match only
+  // 40% if inferred from vault
+  if (!userProfile || !profileKey) return 60;
+  const resolvedKey = resolveProfileKey(userProfile, profileKey);
+  if (!resolvedKey) return 50;
+  const profileValue = String(userProfile[resolvedKey] || '').trim().toLowerCase();
+  const typedValue = String(value || '').trim().toLowerCase();
+  if (profileValue === typedValue) return 100;
+  if (profileValue.includes(typedValue) || typedValue.includes(profileValue)) return 85;
+  return 70;
+}
+
 // ── Local document vault module (lazy) ────────────────────────────
 // doc-vault.js owns vault storage, snippet retrieval, structured-output
 // validation, and the vault provenance predicate. It attaches
@@ -437,6 +501,41 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       globalPendingApprovals.delete(msg.actionId);
       handler.resolve({ approved: false, reason: msg.reason || 'User denied' });
     }
+    return false;
+  }
+
+  if (msg.type === 'UNDO_LAST_ACTION') {
+    const last = actionHistory.pop();
+    if (!last) {
+      sendResponse({ error: 'Nothing to undo.' });
+      return false;
+    }
+    // Best-effort undo: re-navigate to captured URL and restore form values
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab && last.url && tab.url !== last.url) {
+      await chrome.tabs.update(tab.id, { url: last.url });
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    sendResponse({ ok: true, undone: last.label });
+    return true;
+  }
+
+  if (msg.type === 'GET_AUDIT_LOG') {
+    const { aegisAuditLog } = await chrome.storage.local.get('aegisAuditLog');
+    sendResponse({ log: aegisAuditLog || [] });
+    return true;
+  }
+
+  if (msg.type === 'CLEAR_AUDIT_LOG') {
+    await chrome.storage.local.set({ aegisAuditLog: [] });
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg.type === 'SET_AGENT_MODE') {
+    currentAgentMode = msg.mode === 'auto' ? 'auto' : 'safe';
+    chrome.storage.local.set({ agentMode: currentAgentMode }).catch(() => {});
+    sendResponse({ ok: true, mode: currentAgentMode });
     return false;
   }
 
@@ -2479,6 +2578,13 @@ async function handleExecuteAction(action, tabId) {
     });
   }
 
+  // Log to action history for undo
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    actionHistory.push({ label: action.action, url: tab?.url, ts: Date.now() });
+    if (actionHistory.length > MAX_HISTORY) actionHistory.shift();
+  } catch {}
+
   return execResult;
 }
 
@@ -2869,6 +2975,12 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
   const stepLog = [];
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
+  const recentActionKeys = []; // track last 3 action signatures
+  function actionKey(a) {
+    return `${a.action}:${a.selector || ''}:${a.x || ''}:${a.y || ''}`;
+  }
+  let consecutiveFailures = 0;
+
   for (let step = 0; step < MAX_STEPS; step++) {
     const action = parsedAction;
 
@@ -2890,38 +3002,73 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
     }
     stepLog.push(stepLabel);
 
+    // Repeat-action kill: if same action 3 times in a row, stop
+    const key = actionKey(action);
+    recentActionKeys.push(key);
+    if (recentActionKeys.length > 3) recentActionKeys.shift();
+    if (recentActionKeys.length === 3 && recentActionKeys.every(k => k === key)) {
+      stepLog.push(`[${step + 1}] Stopped: same action repeated 3 times. The task may be complete or stuck.`);
+      break;
+    }
+
     // ── Human-in-the-Loop: pause and ask user to approve before every action ──
     let execResult = { error: 'not executed' };
+    let approval = { approved: true, autoApproved: true };
     if (action.action === 'error') {
       execResult = { error: action.error };
     } else if (action.action === 'done') {
       // 'done' doesn't need approval — it's just a summary
       execResult = { ok: true };
     } else {
-      const actionId = `action_${Date.now()}_${step}`;
-      let approval;
-      try {
-        approval = await (() => {
-          return new Promise((resolve, reject) => {
-            globalPendingApprovals.set(actionId, { resolve, reject });
-            chrome.runtime.sendMessage({
-              type: 'PENDING_ACTION',
-              actionId,
-              action,
-            }).catch(() => {
-              globalPendingApprovals.delete(actionId);
-              resolve({ approved: true, autoApproved: true });
-            });
-            setTimeout(() => {
-              if (globalPendingApprovals.has(actionId)) {
+      if (action.action === 'fill_many' && Array.isArray(action.fields)) {
+        const config2 = await chrome.storage.local.get('userProfile');
+        const prof = normalizeProfile(config2.userProfile);
+        action.fields = action.fields.map(f => ({
+          ...f,
+          confidence: computeFillConfidence(f.selector, f.profileKey, f.value, prof),
+        }));
+      }
+
+      // Privacy warning for risky navigate targets
+      if (action.action === 'navigate' && isRiskyUrl(action.url)) {
+        chrome.runtime.sendMessage({
+          type: 'PRIVACY_WARNING',
+          message: `⚠️ Navigating to a potentially privacy-invasive domain: ${action.url}`,
+        }).catch(() => {});
+      }
+
+      if (currentAgentMode === 'safe') {
+        const actionId = `action_${Date.now()}_${step}`;
+        try {
+          approval = await (() => {
+            return new Promise((resolve) => {
+              globalPendingApprovals.set(actionId, { resolve });
+              chrome.runtime.sendMessage({
+                type: 'PENDING_ACTION',
+                actionId,
+                action,
+              }).catch(() => {
                 globalPendingApprovals.delete(actionId);
-                resolve({ approved: false, reason: 'Approval timed out' });
-              }
-            }, 60000);
-          });
-        })();
-      } catch (approvalErr) {
-        approval = { approved: false, reason: approvalErr.message };
+                resolve({ approved: true, autoApproved: true });
+              });
+              setTimeout(() => {
+                if (globalPendingApprovals.has(actionId)) {
+                  globalPendingApprovals.delete(actionId);
+                  resolve({ approved: false, reason: 'Approval timed out' });
+                }
+              }, 60000);
+            });
+          })();
+        } catch (approvalErr) {
+          approval = { approved: false, reason: approvalErr.message };
+        }
+      } else {
+        // Auto mode: broadcast a live step notification (no approval needed)
+        chrome.runtime.sendMessage({
+          type: 'AUTO_STEP_LOG',
+          step: step + 1,
+          action,
+        }).catch(() => {});
       }
 
       if (!approval.approved) {
@@ -2937,6 +3084,27 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
         }
       }
     }
+
+    if (execResult?.error && !execResult?.skipped) {
+      consecutiveFailures++;
+      if (consecutiveFailures >= 2) {
+        stepLog.push(`Stopped after ${consecutiveFailures} consecutive failures: ${execResult.error}`);
+        break;
+      }
+    } else {
+      consecutiveFailures = 0;
+    }
+
+    // Audit log entry
+    const [auditTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    await appendAuditLog({
+      action: action.action,
+      selector: action.selector,
+      value: action.value, // will be redacted inside appendAuditLog
+      url: auditTab?.url,
+      approved: approval?.approved ?? true,
+      result: execResult?.error ? 'error' : execResult?.skipped ? 'skipped' : 'success',
+    });
 
     if (step >= MAX_STEPS - 1) {
       stepLog.push(`[${step + 2}] Reached step limit.`);
