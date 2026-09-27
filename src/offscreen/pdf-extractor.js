@@ -41,9 +41,12 @@ export async function extractPdfText(bytes, options = {}) {
 
   // Copy: pdf.js may transfer the buffer to its worker; never mutate caller's.
   const data = new Uint8Array(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+  const password = typeof options === 'string' ? options : (options && options.password ? options.password : null);
+  const actualOptions = typeof options === 'object' && options !== null ? options : {};
 
   const loadingTask = pdfjsLib.getDocument({
     data,
+    password,
     // CSP is 'self' + 'wasm-unsafe-eval' — eval is NOT granted: keep pdf.js
     // from reaching for new Function. Text extraction does not need it.
     isEvalSupported: false,
@@ -75,6 +78,9 @@ export async function extractPdfText(bytes, options = {}) {
     }
     return out.join("\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   } catch (err) {
+    if (err && err.name === "PasswordException") {
+      throw err; // throw instead of returning { isPasswordProtected: true } so document-extract.js catch block works as instructed
+    }
     throw new Error(`PDF_PARSE_FAILED: ${(err && err.message) || err}`);
   } finally {
     // pdf.js v6 drops PDFDocumentProxy.destroy() — the loading task owns

@@ -483,6 +483,10 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
       setScanProgress(msg.stage);
       if (msg.label) setStatus(msg.label, "active");
     }
+    if (msg.type === "PDF_PASSWORD_REQUIRED") {
+      const pwd = prompt("PDF is password protected. Enter password:");
+      chrome.runtime.sendMessage({ type: "PDF_PASSWORD_RESPONSE", password: pwd || "" }).catch(() => {});
+    }
   });
 }
 

@@ -40,7 +40,38 @@ export async function extractDocumentText(filePayload, options = {}) {
   switch (format) {
     case "pdf": {
       const { extractPdfText } = await import("./pdf-extractor.js");
-      text = await extractPdfText(bytes, options);
+      
+      async function extractWithPasswordFallback(arrayBuffer) {
+        // First attempt — no password
+        try {
+          return await extractPdfText(arrayBuffer, null);
+        } catch (err) {
+          const isPasswordErr = err.name === 'PasswordException' ||
+            (err.message && err.message.toLowerCase().includes('password'));
+          if (!isPasswordErr) throw err;
+        }
+        
+        // Password required — ask user
+        chrome.runtime.sendMessage({ type: 'PDF_PASSWORD_REQUIRED' }).catch(() => {});
+        
+        // Wait for password response (30s timeout)
+        const password = await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('Password entry timed out')), 30000);
+          const handler = (msg) => {
+            if (msg.type === 'PDF_PASSWORD_RESPONSE') {
+              clearTimeout(timer);
+              chrome.runtime.onMessage.removeListener(handler);
+              resolve(msg.password);
+            }
+          };
+          chrome.runtime.onMessage.addListener(handler);
+        });
+        
+        // Retry with user password
+        return await extractPdfText(arrayBuffer, password);
+      }
+
+      text = await extractWithPasswordFallback(bytes);
       if (text.replace(/\s/g, '').length < 50) {
         isScannedFallback = true;
       }
