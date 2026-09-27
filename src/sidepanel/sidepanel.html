@@ -544,6 +544,9 @@ body.dark-mode .mic-btn.active { color: #f87171; }
           <path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
         </svg>
       </button>
+      <button id="btn-fill-form" class="toolbar-btn" title="Auto-fill current page with your profile">
+        ⚡ Fill
+      </button>
       <div class="privacy-budget" id="privacy-budget" title="Privacy stats for this session">
         <span>🚫 <span id="pb-fields">0</span> fields</span>
         <span>👤 <span id="pb-faces">0</span> faces</span>
@@ -582,6 +585,9 @@ body.dark-mode .mic-btn.active { color: #f87171; }
     </div>
 
     <div class="chat-input-area">
+      <div id="drop-zone-hint" class="drop-zone-hint" title="Drop a PDF to extract profile">
+        📄 Drop PDF here to auto-fill
+      </div>
       <div class="chat-input-row">
         <textarea id="chat-input" placeholder="Message AEGIS…" rows="1"></textarea>
         
