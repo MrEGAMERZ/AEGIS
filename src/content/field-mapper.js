@@ -229,12 +229,37 @@ function getLabelText(el) {
       .join(" ");
   }
 
+  // Fields that should NEVER be redacted (allowlist)
+  // These patterns match labels/names of non-PII business fields
+  const SAFE_PATTERNS = [
+    /\b(revenue|gross|net|profit|loss|margin|growth|rate|percent|%)\b/i,
+    /\b(q1|q2|q3|q4|quarter|annual|monthly|weekly|ytd|mtd)\b/i,
+    /\b(units|count|total|sum|avg|average|mean|median)\b/i,
+    /\b(chart|graph|metric|kpi|dashboard|analytics|report)\b/i,
+    /\b(date|time|timestamp|created|updated|modified)\b/i,
+    /\b(status|state|stage|category|type|label|tag)\b/i,
+  ];
+
+  function isSafeField(text) {
+    if (!text) return false;
+    return SAFE_PATTERNS.some(p => p.test(text));
+  }
+
   function classifyField(el) {
     const idText = fieldText(el, false) + " " + getLabelText(el);
     const text = fieldText(el) + " " + getLabelText(el);
     const val = el.value || "";
     const placeholder = el.placeholder || "";
     
+    // Allowlist check — these are never sensitive even if they match a pattern
+    const combinedText = [el.name, el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label')].filter(Boolean).join(' ');
+    if (isSafeField(combinedText)) return { key: null, reason: 'allowlist_safe' };
+
+    // Read-only metric fields are never PII
+    if (el.readOnly && el.type === 'number') return { key: null, reason: 'readonly_number' };
+    // Small-range number inputs are quantity fields, not PII
+    if (el.type === 'number' && el.max && parseInt(el.max) < 10000) return { key: null, reason: 'small_number' };
+
     // Card number luhn check for value/placeholder
     const cardPattern = /(?:\d[ -]*?){13,19}/;
     if (cardPattern.test(val) && luhnCheck(val)) {
