@@ -36,10 +36,14 @@ export async function extractDocumentText(filePayload, options = {}) {
   if (bytes.length === 0) throw new Error("DOC_EXTRACT_EMPTY: the file is empty");
 
   let text;
+  let isScannedFallback = false;
   switch (format) {
     case "pdf": {
       const { extractPdfText } = await import("./pdf-extractor.js");
       text = await extractPdfText(bytes, options);
+      if (text.replace(/\s/g, '').length < 50) {
+        isScannedFallback = true;
+      }
       break;
     }
     case "docx": {
@@ -53,7 +57,13 @@ export async function extractDocumentText(filePayload, options = {}) {
     }
   }
 
-  return { text: String(text || ""), format };
+  const result = { text: String(text || ""), format };
+  if (isScannedFallback) {
+    result.isScanned = true;
+    result.confidence = 0;
+    result.needsOcr = true;
+  }
+  return result;
 }
 
 export function detectFormat(fileName, mimeType) {

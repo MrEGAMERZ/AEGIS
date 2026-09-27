@@ -603,6 +603,14 @@ async function renderProfileSwitcher() {
   if (hint) hint.textContent = current;
 }
 
+// Aadhaar display masking per UIDAI regulations
+function maskAadhaar(value) {
+  if (!value) return value;
+  const digits = String(value).replace(/\D/g, '');
+  if (digits.length === 12) return 'XXXX XXXX ' + digits.slice(8);
+  return value; // not an Aadhaar — return as-is
+}
+
 async function renderProfile() {
   await renderProfileSwitcher();
   const profile = await getProfile();
@@ -612,8 +620,23 @@ async function renderProfile() {
   if (entries.length === 0) { profileList.innerHTML = '<div class="p-empty">No details yet in this profile. Speak, drop a PDF, or add a field.</div>'; }
   for (const [key, val] of entries) {
     const row = document.createElement("div"); row.className = "p-row";
-    const input = document.createElement("input"); input.type = "text"; input.value = typeof val === "object" ? val.value : val; input.placeholder = labelFor(key);
-    input.addEventListener("change", async () => { const p = await getProfile(); const v = input.value.trim(); if (!v) delete p[key]; else p[key] = v; await saveProfileData(p); renderProfile(); });
+    const input = document.createElement("input"); input.type = "text";
+    let displayVal = typeof val === "object" ? val.value : val;
+    if (/^aadhaar(_?number)?$/i.test(key)) {
+      displayVal = maskAadhaar(displayVal);
+    }
+    input.value = displayVal;
+    input.placeholder = labelFor(key);
+    input.addEventListener("change", async () => { 
+      const p = await getProfile(); 
+      let v = input.value.trim(); 
+      if (/^aadhaar(_?number)?$/i.test(key) && v.includes("XXXX")) {
+        v = typeof val === "object" ? val.value : val;
+      }
+      if (!v) delete p[key]; else p[key] = v; 
+      await saveProfileData(p); 
+      renderProfile(); 
+    });
     const del = document.createElement("button"); del.className = "p-del"; del.textContent = "X"; del.title = "Delete";
     del.addEventListener("click", async () => { const p = await getProfile(); delete p[key]; await saveProfileData(p); renderProfile(); });
     row.appendChild(input); row.appendChild(del); profileList.appendChild(row);
@@ -1199,6 +1222,11 @@ async function handleUploadedFile(file) {
 
     if (!res || res.error) {
       setStatus(`Could not extract text from ${file.name}: ${(res && res.error) || "no response"}`, "error");
+      return;
+    }
+
+    if (res.isScanned) {
+      setStatus('Scanned PDF detected — please upload a digital e-Aadhaar or text-selectable PDF for accurate extraction.', "error");
       return;
     }
 

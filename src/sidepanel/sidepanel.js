@@ -678,12 +678,26 @@ async function runScanCommand() {
   }
 }
 
+// Aadhaar display masking per UIDAI regulations
+function maskAadhaar(value) {
+  if (!value) return value;
+  const digits = String(value).replace(/\D/g, '');
+  if (digits.length === 12) return 'XXXX XXXX ' + digits.slice(8);
+  return value; // not an Aadhaar — return as-is
+}
+
 async function runProfileCommand() {
   const data = await chrome.storage.local.get('userProfile');
   const profile = data.userProfile || {};
   const fields = Object.entries(profile).filter(([,v]) => v);
   if (!fields.length) return '❌ No profile saved yet. Go to the Profile tab to add your details.';
-  const lines = fields.map(([k, v]) => `• ${k}: ${String(v).slice(0, 40)}`).join('\n');
+  const lines = fields.map(([k, v]) => {
+    let displayVal = String(v).slice(0, 40);
+    if (/^aadhaar(_?number)?$/i.test(k)) {
+      displayVal = maskAadhaar(v);
+    }
+    return `• ${k}: ${displayVal}`;
+  }).join('\n');
   return `👤 Your saved profile (${fields.length} fields):\n${lines}`;
 }
 
