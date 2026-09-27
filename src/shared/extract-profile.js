@@ -9,7 +9,7 @@ export const PROFILE_KEYS = [
   "bloodGroup", "occupation", "jobTitle", "organization", "annualIncome",
   "skills", "languages", "website", "github", "projectDescription", "cgpa",
   "semester", "department",
-];
+, "mrn", "insuranceId", "diagnosis", "salary", "bankAccount", "ifscCode"];
 
 export const KEY_LABELS = {
   fullName: "Full Name",
@@ -51,7 +51,25 @@ export const KEY_LABELS = {
   department: "Department",
 };
 
-const NEVER_STORE_KEY = /aadhaar|uidai|pan\b|cvv|cvc|passport|upi|ssn|bank.?account|credit.?card|debit.?card|licen[cs]e|driving|dl\b|voter|elector|account.?no|account.?number|card.?number|ifsc|iban|swift/i;
+
+function luhnCheck(num) {
+  const digits = String(num).replace(/\D/g, '');
+  if (digits.length < 13 || digits.length > 19) return false;
+  let sum = 0;
+  let isEven = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = parseInt(digits[i], 10);
+    if (isEven) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+    isEven = !isEven;
+  }
+  return sum % 10 === 0;
+}
+
+const NEVER_STORE_KEY = /aadhaar|uidai|pan\b|cvv|cvc|passport|upi|ssn|credit\.?card|debit\.?card|licen[cs]e|driving|dl\b|voter|elector|card\.?number|iban|swift|api\.?key|access\.?token/i;
 const AADHAAR_RE = /\b[2-9]\d{3}\s?\d{4}\s?\d{4}\b/;
 const PAN_RE = /\b[A-Z]{5}[0-9]{4}[A-Z]\b/;
 
@@ -289,6 +307,31 @@ export function extractProfileFromText(text) {
 
   const incomeMatch = text.match(/(?:Income|Salary)[\s:]*(\d{5,10})/i);
   if (incomeMatch && !extracted.annualIncome) extracted.annualIncome = incomeMatch[1];
+  
+  const mrnMatch = text.match(/(?:MRN|Medical Record Number)[\s:]*([A-Za-z0-9-]{5,20})/i);
+  if (mrnMatch && !extracted.mrn) extracted.mrn = mrnMatch[1];
+
+  const insuranceMatch = text.match(/(?:Insurance)[\s:]*([A-Za-z0-9-]{5,20})/i);
+  if (insuranceMatch && !extracted.insuranceId) extracted.insuranceId = insuranceMatch[1];
+
+  const diagnosisMatch = text.match(/(?:Diagnosis)[\s:]*([A-Za-z0-9\s-]{3,40})/i);
+  if (diagnosisMatch && !extracted.diagnosis) extracted.diagnosis = diagnosisMatch[1].trim();
+
+  const salaryMatch = text.match(/(?:Salary|Annual Compensation)[\s:]*([\d,\.]+)/i);
+  if (salaryMatch && !extracted.salary) extracted.salary = salaryMatch[1];
+
+  const bankAccountMatch = text.match(/(?:Bank Account|Account Number)[\s:]*([\d-]{9,18})/i);
+  if (bankAccountMatch && !extracted.bankAccount) {
+    if (luhnCheck(bankAccountMatch[1])) {
+      extracted.bankAccount = bankAccountMatch[1];
+    }
+  }
+
+  const ifscMatch = text.match(/(?:IFSC)[\s:]*([A-Z]{4}0[A-Z0-9]{6})/i);
+  if (ifscMatch && !extracted.ifscCode) extracted.ifscCode = ifscMatch[1];
+
+  // API key / access token skipping is handled by NEVER_STORE_KEY matching the label.
+
 
   // Spoken Hindi / Hinglish. Chrome hi-IN often returns Devanagari, not Latin.
   applySpokenIndicCues(extracted, text);
