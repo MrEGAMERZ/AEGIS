@@ -2757,7 +2757,9 @@ async function callVlm(messages, model) {
   if (model === 'llama3.2-vision' || model === 'qwen2.5vl:7b') actualModel = model;
 
   // temperature:0 = deterministic JSON actions = faster decode, no sampling overhead
-  const payload = { model: actualModel, messages, temperature: 0, stream: false };
+  // keep_alive:-1 tells Ollama to NEVER unload the model from VRAM,
+  // eliminating the 5-6s cold start on every first request.
+  const payload = { model: actualModel, messages, temperature: 0, stream: false, keep_alive: -1 };
 
   const headers = { 'Content-Type': 'application/json' };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
