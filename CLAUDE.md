@@ -1,7 +1,4 @@
-# CLAUDE.md — AEGIS Project Guidelines & Context
-
-AEGIS (SIH26171) is a privacy-preserving Chrome MV3 extension for lightweight browser agents.
-It redacts faces, passwords, and sensitive PII on-device before forwarding sanitized frames to a local or cloud VLM.
+# CLAUDE.md
 
 ## Skill routing
 
