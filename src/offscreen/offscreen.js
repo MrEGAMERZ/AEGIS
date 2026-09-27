@@ -367,6 +367,21 @@ async function handleSanitize(payload = {}) {
     const detected = await detectTextPII((domScanResults && domScanResults.visibleText) || []);
     for (const pii of detected) {
       piiDetections.push(pii);
+
+      // If NER entity has no bbox, try to find coordinates from visibleText
+      if (!pii.bbox && pii.text && domScanResults?.visibleText) {
+        const match = domScanResults.visibleText.find(vt =>
+          vt.text && vt.text.includes(pii.text)
+        );
+        if (match) {
+          if (match.x !== undefined) {
+            pii.bbox = { x: match.x, y: match.y, width: match.width, height: match.height };
+          } else if (match.rect) {
+            pii.bbox = match.rect;
+          }
+        }
+      }
+
       if (pii.bbox) {
         const scaled = scaleToDPR(pii.bbox, dpr);
         const painted = applyBlackMask(ctx, scaled.x, scaled.y, scaled.width, scaled.height);

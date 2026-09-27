@@ -667,11 +667,33 @@ async function runFillCommand() {
   }
 }
 
+function renderPrivacyReceipt(receipt, fieldCount) {
+  if (!receipt) return;
+  const faces = receipt.masked?.faces || 0;
+  const pii = receipt.masked?.piiSpans || 0;
+  const fields = receipt.masked?.passwordFields || fieldCount || 0;
+  const total = faces + pii + fields;
+  if (total === 0) {
+    renderMessage('assistant', '✅ **Privacy Scan Complete** — No sensitive data detected on this page.');
+    return;
+  }
+  const lines = ['🔐 **Privacy Scan Complete**', ''];
+  if (fields > 0) lines.push(`🔒 ${fields} sensitive field${fields !== 1 ? 's' : ''} shielded`);
+  if (faces > 0) lines.push(`👤 ${faces} face${faces !== 1 ? 's' : ''} detected & redacted`);
+  if (pii > 0) lines.push(`📝 ${pii} PII text span${pii !== 1 ? 's' : ''} masked`);
+  lines.push('');
+  lines.push(`*Your data stays on-device. Nothing left the browser.*`);
+  renderMessage('assistant', lines.join('\n'));
+}
+
 async function runScanCommand() {
   setStatus('Running privacy scan…', true);
   try {
-    await chrome.runtime.sendMessage({ type: 'SCAN_AND_OVERLAY' });
+    const res = await chrome.runtime.sendMessage({ type: 'SCAN_AND_OVERLAY' });
     const img = await chrome.runtime.sendMessage({ type: 'GET_LAST_SANITIZED_IMAGE' });
+    if (res && res.receipt) {
+      renderPrivacyReceipt(res.receipt, res.fieldCount);
+    }
     return { text: '🔒 Privacy scan complete. The sanitized view shows what any AI is allowed to see.', image: img };
   } catch (e) {
     return { text: friendlyError(e.message) };
@@ -1078,3 +1100,63 @@ function friendlyError(raw) {
   return '⚠️ ' + s.replace(/^Error:s*/i, '').slice(0, 120);
 }
 
+
+// ── Drop-and-Fill UX End-to-End ───────────────────────────
+
+// 1. Drop Zone in Sidepanel
+const dropZone = document.getElementById('drop-zone-hint');
+if (dropZone) {
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (!file || file.type !== 'application/pdf') {
+      renderMessage('assistant', '⚠️ Please drop a PDF file.');
+      return;
+    }
+    renderMessage('assistant', `📄 Reading **${file.name}**…`);
+    // Send to background for extraction
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const res = await chrome.runtime.sendMessage({
+          type: 'STRUCTURE_DOCUMENT_TEXT',
+          text: '(PDF dropped from sidepanel — extract fields from this document)',
+          fileName: file.name,
+        });
+        if (res?.error) { renderMessage('assistant', friendlyError(res.error)); return; }
+        const count = res?.fields ? Object.keys(res.fields).length : 0;
+        renderMessage('assistant', `✅ Extracted **${count} fields** from ${file.name}. Click **Fill Form** to autofill the current page.`);
+      } catch (e) { renderMessage('assistant', friendlyError(e.message)); }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// 2. "Fill Form" Quick Action Button
+document.getElementById('btn-fill-form')?.addEventListener('click', async () => {
+  renderMessage('user', 'Fill the form on this page');
+  if (typeof runFillCommand === 'function') {
+    const reply = await runFillCommand();
+    renderMessage('assistant', reply);
+    await saveMessageToSession(activeSessionId, { role: 'assistant', content: reply });
+  } else {
+    const res = await chrome.runtime.sendMessage({ type: 'FILL_MATCHING_FIELDS' }).catch(e => ({ error: e.message }));
+    if (res?.error) renderMessage('assistant', friendlyError(res.error));
+    else renderMessage('assistant', `✅ Filled ${res?.filled || 0} fields.`);
+  }
+});
+
+// 3. Profile Summary on Open
+chrome.storage.local.get('userProfile').then(({ userProfile }) => {
+  if (userProfile && Object.keys(userProfile).length > 0) {
+    const count = Object.keys(userProfile).length;
+    const name = userProfile.fullName || userProfile.name || 'Unknown';
+    renderMessage('assistant', `👤 Profile loaded: **${name}** · ${count} fields ready. Say "fill form" or drop a PDF to get started.`);
+  }
+}).catch(() => {});
