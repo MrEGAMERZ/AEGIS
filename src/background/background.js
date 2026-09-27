@@ -8,9 +8,36 @@ const DEFAULT_GATEWAY_HEALTH = "http://localhost:8000/health";
 const DEFAULT_VLM_MODEL = "SARA-Distillation-0.5B";
 const VLM_FETCH_TIMEOUT_MS = 45000;
 
+// VLM rate limiter — only 1 in-flight request at a time to prevent Ollama crashes
+let _vlmInFlight = false;
+const _vlmQueue = [];
+
+async function callVlmGated(messages, model) {
+  if (_vlmInFlight) {
+    // Queue this request — wait for the current one to finish (max 60s)
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('VLM queue timeout')), 60000);
+      _vlmQueue.push(() => { clearTimeout(timer); resolve(); });
+    });
+  }
+  _vlmInFlight = true;
+  try {
+    return await callVlm(messages, model);
+  } finally {
+    _vlmInFlight = false;
+    const next = _vlmQueue.shift();
+    if (next) next();
+  }
+}
+
 // Module-level map for HITL action approvals — keyed by actionId string.
 // handleChatRequest registers a pending approval here; the message router above resolves it.
 const globalPendingApprovals = new Map();
+
+// Per-domain session memory (in-memory only, cleared on SW restart)
+// Maps hostname → last N message pairs [{role, content}]
+const domainSessionMemory = new Map();
+const SESSION_MEMORY_TURNS = 6; // keep last 3 turns (6 messages)
 
 // Action history stack for undo (last 5 executed actions + their tab states)
 const actionHistory = [];
@@ -259,6 +286,7 @@ function isMissingReceiver(err) {
 
 function isInjectableTabUrl(url) {
   if (!url || typeof url !== "string") return false;
+  if (url.toLowerCase().endsWith('.pdf')) return false;
   try {
     const u = new URL(url);
     const p = u.protocol.toLowerCase();
@@ -986,6 +1014,10 @@ async function performLocalRedaction(tab, config, scanEpochAtStart) {
   // Stage: capture
   emitProgress("capture", "Capturing viewport…");
   const t1 = Date.now();
+  // Guard: skip capture on non-injectable URLs
+  if (!isInjectableTabUrl(tab?.url)) {
+    throw new Error('UNSCANNABLE_TAB: Cannot scan chrome://, extensions, or PDF viewer tabs. Please navigate to a regular webpage.');
+  }
   const screenshotDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
   assertScanNotAborted(scanEpochAtStart);
   const tCapture = Date.now() - t1;
@@ -2703,6 +2735,10 @@ async function captureSanitizedScreenshot() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return null;
   try {
+    // Guard: skip capture on non-injectable URLs
+    if (!isInjectableTabUrl(tab?.url)) {
+      throw new Error('UNSCANNABLE_TAB: Cannot scan chrome://, extensions, or PDF viewer tabs. Please navigate to a regular webpage.');
+    }
     const rawDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
     await ensureOffscreen();
     const config = await chrome.storage.local.get([
@@ -2826,6 +2862,15 @@ function stripActionBlock(text) {
 async function handleChatRequest(msg) {
   const { history, attachScreenshot } = msg;
 
+  // Load domain memory and prepend to history
+  const [memTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const memDomain = memTab?.url ? (() => { try { return new URL(memTab.url).hostname; } catch { return null; } })() : null;
+  const domainHistory = memDomain ? (domainSessionMemory.get(memDomain) || []) : [];
+  // Prepend domain memory as earlier turns (don't duplicate current history)
+  const fullHistory = domainHistory.length > 0
+    ? [...domainHistory, ...history]
+    : history;
+
   // Feature 2: Read model from storage at call time for instant switching.
   // msg.model is still used as fallback for the current request.
   let model = msg.model || 'SARA-Distillation-0.5B';
@@ -2856,12 +2901,12 @@ Coordinates must match the screenshot pixel space exactly.`;
   const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
 
   // Add prior history (text only for older turns)
-  for (let i = 0; i < history.length - 1; i++) {
-    messages.push({ role: history[i].role, content: history[i].content });
+  for (let i = 0; i < fullHistory.length - 1; i++) {
+    messages.push({ role: fullHistory[i].role, content: fullHistory[i].content });
   }
 
   // Latest user message with screenshot
-  const latest = history[history.length - 1];
+  const latest = fullHistory[fullHistory.length - 1];
   // Feature 1: now 'latest' is available — evaluate injection intent
   const userWantsInjection = INJECTION_KEYWORDS.test(latest?.content || '');
   let firstSanitizedImage = null;
@@ -2888,7 +2933,7 @@ Coordinates must match the screenshot pixel space exactly.`;
   }
 
   // First VLM call
-  let rawReply = await callVlm(messages, model);
+  let rawReply = await callVlmGated(messages, model);
   let parsedAction = parseActionFromReply(rawReply);
 
   const userWantsCode = /\b(code|program|script|function|algorithm|sort|write|implement|c\b|python\b|cpp\b|java\b|js\b|html\b|sql\b)/i.test(latest?.content || "");
@@ -3133,7 +3178,7 @@ Coordinates must match the screenshot pixel space exactly.`;
     }
     messages.push({ role: 'user', content: nextContent });
 
-    rawReply = await callVlm(messages, model);
+    rawReply = await callVlmGated(messages, model);
     parsedAction = resolveAction(rawReply);
 
     if (!parsedAction) {
