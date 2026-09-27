@@ -29,6 +29,21 @@ const chatStatusText  = document.getElementById('chat-status-text');
 const welcomeMsg      = document.getElementById('welcome-msg');
 const modelSelect     = document.getElementById('model-select');
 
+// ── Privacy Budget (session-level PII stats) ──
+let privacyBudget = { fields: 0, faces: 0, pii: 0 };
+
+function updatePrivacyBudget(delta) {
+  privacyBudget.fields += delta.fields || 0;
+  privacyBudget.faces  += delta.faces  || 0;
+  privacyBudget.pii    += delta.pii    || 0;
+  const f = document.getElementById('pb-fields');
+  const fa = document.getElementById('pb-faces');
+  const p = document.getElementById('pb-pii');
+  if (f)  f.textContent  = privacyBudget.fields;
+  if (fa) fa.textContent = privacyBudget.faces;
+  if (p)  p.textContent  = privacyBudget.pii;
+}
+
 // ── HITL Approval State ────────────────────────────────────
 let pendingActionCard = null; // The currently displayed approval card element
 
@@ -151,6 +166,37 @@ if (modelSelect) {
   });
 }
 
+// ── Agent Mode Toggle (Safe = HITL, Auto = no approval needed) ──
+const btnAgentMode = document.getElementById('btn-agent-mode');
+let agentMode = 'safe'; // 'safe' | 'auto'
+
+chrome.storage.local.get('agentMode').then(r => {
+  agentMode = r.agentMode || 'safe';
+  updateModeBtnUI();
+});
+
+function updateModeBtnUI() {
+  if (!btnAgentMode) return;
+  if (agentMode === 'safe') {
+    btnAgentMode.textContent = '🔒 Safe Mode';
+    btnAgentMode.className = 'mode-toggle safe';
+  } else {
+    btnAgentMode.textContent = '⚡ Auto Mode';
+    btnAgentMode.className = 'mode-toggle auto';
+  }
+}
+
+btnAgentMode?.addEventListener('click', async () => {
+  agentMode = agentMode === 'safe' ? 'auto' : 'safe';
+  await chrome.storage.local.set({ agentMode });
+  updateModeBtnUI();
+  // Notify background of mode change
+  chrome.runtime.sendMessage({ type: 'SET_AGENT_MODE', mode: agentMode }).catch(() => {});
+  // Show a brief status
+  const label = agentMode === 'safe' ? '🔒 Safe Mode — approving every step' : '⚡ Auto Mode — agent runs freely';
+  setStatus(label, false);
+  setTimeout(() => setStatus('', false), 2500);
+});
 
 const SESSION_STORAGE_KEY = 'aegisChatSessions';
 const ACTIVE_SESSION_KEY  = 'aegisActiveChatId';
@@ -507,6 +553,19 @@ function describeAction(action) {
   }
 }
 
+function renderPlanCard(steps) {
+  const card = document.createElement('div');
+  card.className = 'plan-card';
+  const list = steps.map((s, i) => `<li>${i + 1}. ${s}</li>`).join('');
+  card.innerHTML = `
+    <div class="plan-header">📋 Agent Plan</div>
+    <ol class="plan-list">${list}</ol>
+    <div class="plan-note">Each step will ask for your approval before running.</div>
+  `;
+  chatContainer.appendChild(card);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
 function renderApprovalCard(actionId, action) {
   // Remove any existing card
   if (pendingActionCard) {
@@ -520,12 +579,25 @@ function renderApprovalCard(actionId, action) {
 
   const desc = describeAction(action);
 
+  let actionHtml = `<div class="hitl-action-desc">${desc}</div>`;
+  if (action && action.action === 'type') {
+    actionHtml = `
+      <div class="hitl-action-desc">⌨️ Type into ${action.selector}:</div>
+      <input class="hitl-edit-input" id="hitl-edit-${actionId}" value="${action.value || ''}" />
+    `;
+  } else if (action && action.action === 'navigate') {
+    actionHtml = `
+      <div class="hitl-action-desc">🌐 Navigate to:</div>
+      <input class="hitl-edit-input" id="hitl-edit-${actionId}" value="${action.url || ''}" />
+    `;
+  }
+
   card.innerHTML = `
     <div class="hitl-header">
       <span class="hitl-icon">🔐</span>
       <span class="hitl-title">Action requires your approval</span>
     </div>
-    <div class="hitl-action-desc">${desc}</div>
+    ${actionHtml}
     <div class="hitl-actions">
       <button class="hitl-btn hitl-deny"  data-id="${actionId}">✕ Deny</button>
       <button class="hitl-btn hitl-allow" data-id="${actionId}">✓ Allow</button>
@@ -533,9 +605,11 @@ function renderApprovalCard(actionId, action) {
   `;
 
   card.querySelector('.hitl-allow').addEventListener('click', () => {
+    const editInput = card.querySelector('.hitl-edit-input');
+    const finalValue = editInput ? editInput.value : (action.action === 'type' ? action.value : action.url);
     card.remove();
     pendingActionCard = null;
-    chrome.runtime.sendMessage({ type: 'APPROVE_ACTION', actionId });
+    chrome.runtime.sendMessage({ type: 'APPROVE_ACTION', actionId, editedValue: finalValue });
   });
 
   card.querySelector('.hitl-deny').addEventListener('click', () => {
@@ -547,6 +621,32 @@ function renderApprovalCard(actionId, action) {
   chatContainer.appendChild(card);
   chatContainer.scrollTop = chatContainer.scrollHeight;
   pendingActionCard = card;
+
+  // Add voice approval listener (auto-activates for 10s)
+  if (typeof SpeechRecognition !== 'undefined' || typeof webkitSpeechRecognition !== 'undefined') {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const voiceApproval = new SR();
+    voiceApproval.lang = 'en-US';
+    voiceApproval.maxAlternatives = 1;
+    voiceApproval.onresult = (event) => {
+      const transcript = (event.results[0][0].transcript || '').toLowerCase().trim();
+      if (/\b(allow|yes|approve|proceed|ok|okay|go|confirm)\b/.test(transcript)) {
+        card.querySelector('.hitl-allow')?.click();
+      } else if (/\b(deny|no|stop|cancel|reject|block)\b/.test(transcript)) {
+        card.querySelector('.hitl-deny')?.click();
+      }
+    };
+    voiceApproval.onerror = () => {}; // fail silently
+    try { voiceApproval.start(); } catch(e) {}
+    // auto-stop after 10s
+    setTimeout(() => { try { voiceApproval.stop(); } catch(e) {} }, 10000);
+    // Show mic indicator on card
+    const micBadge = document.createElement('div');
+    micBadge.className = 'hitl-mic-badge';
+    micBadge.textContent = '🎤 Listening for "Allow" or "Deny"…';
+    card.querySelector('.hitl-actions').before(micBadge);
+  }
+
   return card;
 }
 
@@ -930,6 +1030,18 @@ if (btnMic) {
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'PENDING_ACTION') {
     renderApprovalCard(msg.actionId, msg.action);
+    return false;
+  }
+  if (msg.type === 'PRIVACY_RECEIPT_UPDATE') {
+    updatePrivacyBudget({
+      fields: msg.maskedFields || 0,
+      faces:  msg.faces || 0,
+      pii:    msg.nerSpans || 0,
+    });
+    return false;
+  }
+  if (msg.type === 'AGENT_PLAN') {
+    renderPlanCard(msg.steps);
     return false;
   }
 });

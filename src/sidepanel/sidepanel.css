@@ -549,3 +549,94 @@ body:not(.dark-mode) .hitl-deny {
   color: #475569;
   border-color: #cbd5e1;
 }
+
+.hitl-edit-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 4px 0 10px;
+  padding: 6px 10px;
+  border: 1.5px solid #f59e0b;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #fde68a;
+  font-size: 12px;
+  font-family: monospace;
+  outline: none;
+}
+body:not(.dark-mode) .hitl-edit-input {
+  background: #fffbeb;
+  color: #78350f;
+}
+
+.mode-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 2px;
+}
+.mode-row label { font-size: 11px; color: #64748b; min-width: 72px; }
+.mode-toggle {
+  flex: 1;
+  padding: 5px 10px;
+  border-radius: 20px;
+  border: none;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.mode-toggle.safe { background: #1e3a5f; color: #60a5fa; }
+.mode-toggle.auto { background: #1a3320; color: #4ade80; }
+body:not(.dark-mode) .mode-toggle.safe { background: #dbeafe; color: #1d4ed8; }
+body:not(.dark-mode) .mode-toggle.auto { background: #dcfce7; color: #15803d; }
+
+.privacy-budget {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+  color: #64748b;
+  align-items: center;
+  margin-left: auto;
+  padding-right: 2px;
+  white-space: nowrap;
+}
+.privacy-budget span { color: #22c55e; font-weight: 600; }
+
+.plan-card {
+  margin: 10px 0;
+  border: 1.5px solid #3b82f6;
+  border-radius: 12px;
+  background: #0c1829;
+  padding: 12px;
+  animation: hitlSlideIn 0.25s ease;
+}
+body:not(.dark-mode) .plan-card { background: #eff6ff; border-color: #2563eb; }
+.plan-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: #60a5fa;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+body:not(.dark-mode) .plan-header { color: #1d4ed8; }
+.plan-list {
+  margin: 0 0 8px 16px;
+  padding: 0;
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.8;
+}
+body:not(.dark-mode) .plan-list { color: #475569; }
+.plan-note {
+  font-size: 10px;
+  color: #475569;
+  font-style: italic;
+}
+
+.hitl-mic-badge {
+  font-size: 10px;
+  color: #94a3b8;
+  padding: 0 12px 8px;
+  font-style: italic;
+}

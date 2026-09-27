@@ -544,6 +544,11 @@ body.dark-mode .mic-btn.active { color: #f87171; }
           <path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
         </svg>
       </button>
+      <div class="privacy-budget" id="privacy-budget" title="Privacy stats for this session">
+        <span>🚫 <span id="pb-fields">0</span> fields</span>
+        <span>👤 <span id="pb-faces">0</span> faces</span>
+        <span>🛡️ <span id="pb-pii">0</span> PII</span>
+      </div>
     </div>
 
     <div class="sessions-panel" id="sessions-panel" hidden>
@@ -608,6 +613,12 @@ body.dark-mode .mic-btn.active { color: #f87171; }
           <option value="SARA-Distillation-0.5B">SARA-0.5B · Local 🔒</option>
           <option value="qwen2.5vl:7b" selected>Secure Cloud ☁️</option>
         </select>
+      </div>
+      <div class="mode-row">
+        <label>Agent Mode</label>
+        <button id="btn-agent-mode" class="mode-toggle safe" title="Switch between Safe (approve every step) and Auto (agent runs freely)">
+          🔒 Safe Mode
+        </button>
       </div>
     </div>
   </div>
