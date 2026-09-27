@@ -131,6 +131,7 @@
     { key: "branch", patterns: [/branch/i, /department/i, /specialization|specialisation/i, /\bstream\b/i] },
     { key: "occupation", patterns: [/occupation/i, /profession/i, /designation/i, /job\s*title/i] },
     { key: "annualIncome", patterns: [/income/i, /salary/i] },
+    { key: "sensitiveCode", sensitive: true, patterns: [/\b(otp|one.?time.?pass(word|code)?|verification.?code|passcode|pin.?code|portal.?pin|confirm.?pin)\b/i] },
   ];
 
   // ── CSS selector builder (moved here so both mapper and consumers share it)
@@ -238,6 +239,10 @@ function getLabelText(el) {
     /\b(chart|graph|metric|kpi|dashboard|analytics|report)\b/i,
     /\b(date|time|timestamp|created|updated|modified)\b/i,
     /\b(status|state|stage|category|type|label|tag)\b/i,
+    // Shipping/billing address fields are NOT sensitive standalone
+    // (they become sensitive only combined with a person's name, which NER handles)
+    /\b(ship(ping)?|billing|deliver(y|to))\b/i,
+    /\b(street|avenue|road|city|state|zip|postal)\b/i, // only if no PAN/Aadhaar context
   ];
 
   function isSafeField(text) {
@@ -246,6 +251,15 @@ function getLabelText(el) {
   }
 
   function classifyField(el) {
+    // Only classify actual input elements — skip labels, headers, divs, spans
+    const SCANNABLE_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON']);
+    if (!SCANNABLE_TAGS.has(el.tagName)) return null;
+
+    // Password fields — always sensitive, highest priority
+    if (el.type === 'password') {
+      return { key: 'password', sensitive: true, reason: 'password_type' };
+    }
+
     const idText = fieldText(el, false) + " " + getLabelText(el);
     const text = fieldText(el) + " " + getLabelText(el);
     const val = el.value || "";
@@ -254,6 +268,12 @@ function getLabelText(el) {
     // Allowlist check — these are never sensitive even if they match a pattern
     const combinedText = [el.name, el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label')].filter(Boolean).join(' ');
     if (isSafeField(combinedText)) return { key: null, reason: 'allowlist_safe' };
+
+    const acAttr = (el.getAttribute('autocomplete') || '').toLowerCase();
+    if (acAttr.startsWith('shipping-') || acAttr.startsWith('billing-')) {
+      // Shipping/billing address components are not PII in isolation
+      if (!acAttr.includes('cc-') && !acAttr.includes('bday')) return null;
+    }
 
     // Read-only metric fields are never PII
     if (el.readOnly && el.type === 'number') return { key: null, reason: 'readonly_number' };
@@ -267,6 +287,13 @@ function getLabelText(el) {
     }
     if (cardPattern.test(placeholder) && luhnCheck(placeholder)) {
         return { key: "never_store", reason: "luhn_valid_card_placeholder" };
+    }
+
+    if (/\b(card.?(holder|name|owner)|cc.?name|cardholder)\b/i.test(text)) {
+      return { key: 'cardholderName', sensitive: true, reason: 'cardholder_name_pattern' };
+    }
+    if (/\b(exp(iry|ir(ation|es)?|.?date)?|cc.?exp|card.*expir|valid.?thru|valid.?until)\b/i.test(text)) {
+      return { key: 'cardExpiry', sensitive: true, reason: 'card_expiry_pattern' };
     }
 
     // 1. Never-store identifiers win over everything (compliance rule)
@@ -286,7 +313,9 @@ function getLabelText(el) {
     for (const rule of KEYWORD_RULES) {
       for (const pattern of rule.patterns) {
         if (pattern.test(text)) {
-          return { key: rule.key, reason: `keyword: ${pattern}` };
+          const result = { key: rule.key, reason: `keyword: ${pattern}` };
+          if (rule.sensitive) result.sensitive = true;
+          return result;
         }
       }
     }
