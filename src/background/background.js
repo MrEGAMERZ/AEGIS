@@ -3192,6 +3192,18 @@ Coordinates must match the screenshot pixel space exactly.`;
   }
 
   const reply = stepLog.join('\n');
+
+  // Save this turn to domain session memory
+  if (memDomain && history.length > 0) {
+    const existing = domainSessionMemory.get(memDomain) || [];
+    const latest = history[history.length - 1];
+    existing.push({ role: 'user', content: typeof latest.content === 'string' ? latest.content : '[screenshot turn]' });
+    existing.push({ role: 'assistant', content: reply.slice(0, 500) }); // cap to 500 chars
+    // Keep only last SESSION_MEMORY_TURNS messages
+    if (existing.length > SESSION_MEMORY_TURNS) existing.splice(0, existing.length - SESSION_MEMORY_TURNS);
+    domainSessionMemory.set(memDomain, existing);
+  }
+
   return {
     reply: reply || 'Task completed.',
     actionExecuted: stepLog.length > 0 ? `${stepLog.filter(s => s.startsWith('[')).length} steps` : null,

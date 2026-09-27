@@ -70,4 +70,38 @@ async function renderDashboard() {
 
 document.getElementById("refresh-btn")?.addEventListener("click", renderDashboard);
 
+document.getElementById('btn-export-audit')?.addEventListener('click', async () => {
+  const { aegisAuditLog = [] } = await chrome.storage.local.get('aegisAuditLog');
+  const blob = new Blob([JSON.stringify(aegisAuditLog, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `aegis-audit-log-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById('btn-export-csv')?.addEventListener('click', async () => {
+  const { aegisAuditLog = [] } = await chrome.storage.local.get('aegisAuditLog');
+  const header = ['timestamp','action','selector','url','approved','result'].join(',');
+  const rows = aegisAuditLog.map(e =>
+    [e.ts, e.action, e.selector || '', e.url || '', e.approved, e.result].map(v =>
+      JSON.stringify(v ?? '').replace(/^"(.*)"$/, '$1')
+    ).join(',')
+  );
+  const csv = [header, ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `aegis-audit-log-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+chrome.storage.local.get('aegisAuditLog').then(({ aegisAuditLog = [] }) => {
+  const el = document.getElementById('audit-count');
+  if (el) el.textContent = `${aegisAuditLog.length} entries`;
+});
+
 renderDashboard();

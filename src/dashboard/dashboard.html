@@ -84,7 +84,17 @@
   </div>
 
   <div class="section">
-    <div class="section-title">Recent Activity Log</div>
+    <div class="section-title">
+      <div>Recent Activity Log <span id="audit-count" style="margin-left:8px; font-size:12px; font-weight:normal;">0 entries</span></div>
+      <div>
+        <button id="btn-export-audit" class="export-btn">
+          ⬇ Export Audit Log (JSON)
+        </button>
+        <button id="btn-export-csv" class="export-btn secondary">
+          ⬇ Export as CSV
+        </button>
+      </div>
+    </div>
     <table>
       <thead>
         <tr><th>Domain / URL</th><th>Action</th><th>Fields</th><th>Timestamp</th></tr>
