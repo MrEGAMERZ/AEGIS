@@ -237,6 +237,8 @@ async function ensureOffscreen() {
     justification:
       "Inference and mask rendering require Canvas/DOM access; WORKERS reason required to spawn inference Web Worker inside offscreen document",
   });
+  // Brief wait for the offscreen document to initialize its worker
+  await new Promise(r => setTimeout(r, 300));
 }
 
 function warmOnDeviceModelsBestEffort() {
@@ -1162,11 +1164,23 @@ async function handleScanAndOverlay(msg) {
     config.faceDetection = true;
   }
 
-  const { domScanResults, sanitizeResponse, receipt } = await performLocalRedaction(
-    tab,
-    config,
-    epoch
-  );
+  let redactionResult;
+  try {
+    redactionResult = await performLocalRedaction(tab, config, epoch);
+  } catch (err) {
+    if (err && String(err.message).includes('SCAN_ABORTED')) throw err; // re-throw aborts
+    // For all other errors: return partial result so UI shows error state cleanly
+    console.error('[AEGIS] Scan failed:', err.message);
+    return {
+      fieldCount: 0,
+      dpr: 1,
+      url: tab.url,
+      sanitizedImage: null,
+      receipt: null,
+      error: err.message,
+    };
+  }
+  const { domScanResults, sanitizeResponse, receipt } = redactionResult;
   assertScanNotAborted(epoch);
 
   await persistLastScanArtifacts(receipt, scanPreviewDataUrl(sanitizeResponse));
@@ -3220,3 +3234,9 @@ chrome.action.onClicked.addListener((tab) => {
 
 // Enable opening the side panel on action click
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
+
+// Re-warm inference models when the service worker restarts
+// This covers both fresh install and SW kill/restart by Chrome
+self.addEventListener('activate', () => {
+  warmOnDeviceModelsBestEffort();
+});
