@@ -51,27 +51,30 @@
 
   <div class="grid">
     <div class="stat-card" style="border-color:#bfdbfe; background:#eff6ff;">
-      <div class="stat-lbl" style="color:#1d4ed8;">Profile Fields</div>
-      <div id="stat-time-saved" class="stat-val" style="color:#1d4ed8;">0</div>
+      <div class="stat-lbl" style="color:#1d4ed8;">Risk Score</div>
+      <div id="stat-risk-score" class="stat-val" style="color:#1d4ed8; font-size: 14px; margin-top: 10px;">Loading...</div>
     </div>
     <div class="stat-card">
-      <div class="stat-lbl">Scans Run</div>
-      <div id="stat-forms" class="stat-val">0</div>
+      <div class="stat-lbl">Total Scans Run</div>
+      <div id="stat-scans" class="stat-val">0</div>
     </div>
     <div class="stat-card">
-      <div class="stat-lbl">PII Masked</div>
-      <div id="stat-pii" class="stat-val">0</div>
+      <div class="stat-lbl">Total Fields Protected</div>
+      <div id="stat-fields" class="stat-val">0</div>
     </div>
     <div class="stat-card">
-      <div class="stat-lbl">Faces Detected</div>
+      <div class="stat-lbl">Total Faces Detected</div>
       <div id="stat-faces" class="stat-val">0</div>
     </div>
   </div>
 
   <div class="section">
     <div class="section-title">
-      <span>Active Profile</span>
-      <span class="badge" id="active-profile-badge">Profile: Personal</span>
+      <span>Active Profile <span id="profile-stats-summary" style="font-weight:normal; font-size:13px; color:#64748b; margin-left:8px;"></span></span>
+      <div>
+        <button id="btn-clear-profile" class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px; margin-right: 8px;">Clear Profile</button>
+        <span class="badge" id="active-profile-badge">Profile: Personal</span>
+      </div>
     </div>
     <table>
       <thead>
@@ -85,22 +88,22 @@
 
   <div class="section">
     <div class="section-title">
-      <div>Recent Activity Log <span id="audit-count" style="margin-left:8px; font-size:12px; font-weight:normal;">0 entries</span></div>
+      <div>Scan History <span id="audit-count" style="margin-left:8px; font-size:12px; font-weight:normal;">0 entries</span></div>
       <div>
-        <button id="btn-export-audit" class="export-btn">
+        <button id="btn-export-audit" class="export-btn btn btn-secondary" style="padding: 4px 8px; font-size: 11px;">
           ⬇ Export Audit Log (JSON)
         </button>
-        <button id="btn-export-csv" class="export-btn secondary">
+        <button id="btn-export-csv" class="export-btn btn btn-secondary" style="padding: 4px 8px; font-size: 11px;">
           ⬇ Export as CSV
         </button>
       </div>
     </div>
     <table>
       <thead>
-        <tr><th>Domain / URL</th><th>Action</th><th>Fields</th><th>Timestamp</th></tr>
+        <tr><th>Domain / URL</th><th>Fields Redacted</th><th>Faces Detected</th><th>Timestamp</th></tr>
       </thead>
       <tbody id="audit-table-body">
-        <tr><td colspan="4">No audit logs yet. Run a scan or fill to start tracking.</td></tr>
+        <tr><td colspan="4">No scans yet &mdash; click the extension icon and run a privacy scan.</td></tr>
       </tbody>
     </table>
   </div>
