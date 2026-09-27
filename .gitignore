@@ -49,7 +49,6 @@ graphify-out/
 .graphifyignore
 engineers/
 AGENTS.md
-CLAUDE.md
 opencode.json
 
 # Local E2E artifacts
