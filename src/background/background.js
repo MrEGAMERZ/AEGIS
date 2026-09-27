@@ -523,30 +523,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'UNDO_LAST_ACTION') {
-    const last = actionHistory.pop();
-    if (!last) {
-      sendResponse({ error: 'Nothing to undo.' });
-      return false;
-    }
-    // Best-effort undo: re-navigate to captured URL and restore form values
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab && last.url && tab.url !== last.url) {
-      await chrome.tabs.update(tab.id, { url: last.url });
-      await new Promise(r => setTimeout(r, 1500));
-    }
-    sendResponse({ ok: true, undone: last.label });
+    (async () => {
+      const last = actionHistory.pop();
+      if (!last) { sendResponse({ error: 'Nothing to undo.' }); return; }
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab && last.url && tab.url !== last.url) {
+          await chrome.tabs.update(tab.id, { url: last.url });
+          await new Promise(r => setTimeout(r, 1500));
+        }
+        sendResponse({ ok: true, undone: last.label });
+      } catch (e) { sendResponse({ error: e.message }); }
+    })();
     return true;
   }
 
   if (msg.type === 'GET_AUDIT_LOG') {
-    const { aegisAuditLog } = await chrome.storage.local.get('aegisAuditLog');
-    sendResponse({ log: aegisAuditLog || [] });
+    (async () => {
+      try {
+        const { aegisAuditLog } = await chrome.storage.local.get('aegisAuditLog');
+        sendResponse({ log: aegisAuditLog || [] });
+      } catch (e) { sendResponse({ log: [] }); }
+    })();
     return true;
   }
 
   if (msg.type === 'CLEAR_AUDIT_LOG') {
-    await chrome.storage.local.set({ aegisAuditLog: [] });
-    sendResponse({ ok: true });
+    (async () => {
+      try {
+        await chrome.storage.local.set({ aegisAuditLog: [] });
+        sendResponse({ ok: true });
+      } catch (e) { sendResponse({ error: e.message }); }
+    })();
     return true;
   }
 
