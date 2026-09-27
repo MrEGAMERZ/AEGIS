@@ -242,9 +242,14 @@ export function extractProfileFromText(text) {
         if (!val || NEVER_STORE_KEY.test(rawKey) || isNeverStoreValue(val)) continue;
         const known = resolveProfileKeyFromLabel(rawKey) ||
           (PROFILE_KEYS.includes(rawKey) ? rawKey : null);
-        if (known) extracted[known] = val;
-        else if (KEY_LABELS[rawKey]) extracted[rawKey] = val;
-        else extracted[cleanLabel(rawKey) || rawKey] = val;
+        if (known) {
+          if (!extracted[known]) extracted[known] = val;
+        } else if (KEY_LABELS[rawKey]) {
+          if (!extracted[rawKey]) extracted[rawKey] = val;
+        } else {
+          const k = cleanLabel(rawKey) || rawKey;
+          if (!extracted[k]) extracted[k] = val;
+        }
       }
       if (Object.keys(extracted).length > 0) return stripNeverStore(extracted);
     }
@@ -253,43 +258,52 @@ export function extractProfileFromText(text) {
   }
 
   const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-  if (emailMatch) extracted.email = emailMatch[0];
+  if (emailMatch && !extracted.email) extracted.email = emailMatch[0];
 
   const phoneMatch = text.match(/(?:\+91[\s-]?)?[6-9]\d{9}/);
-  if (phoneMatch) extracted.phone = phoneMatch[0].replace(/\D/g, "").slice(-10);
+  if (phoneMatch && !extracted.phone) extracted.phone = phoneMatch[0].replace(/\D/g, "").slice(-10);
 
   const dobMatch = text.match(/(?:DOB|Date of Birth|Birth\s*Date)[\s:]*(\d{2}[-/.]\d{2}[-/.]\d{4}|\d{4}[-/.]\d{2}[-/.]\d{2})/i);
-  if (dobMatch) extracted.dob = dobMatch[1];
+  if (dobMatch && !extracted.dob) extracted.dob = dobMatch[1];
 
   const nameMatch = text.match(/(?:Full\s*Name|Name|Mera\s*naam|My\s*name\s*is)[\s:]*([A-Za-z\s]{3,35})/i);
-  if (nameMatch) {
+  if (nameMatch && !extracted.fullName) {
     const rawName = nameMatch[1].replace(/hai|is|and|email|phone|city/gi, "").trim();
     if (rawName.length >= 3) extracted.fullName = rawName;
   }
 
   const cityMatch = text.match(/(?:City|Location|Rehta\s*hoon|Raho)[\s:]*([A-Za-z\s]{3,20})/i);
-  if (cityMatch) {
+  if (cityMatch && !extracted.city) {
     const rawCity = cityMatch[1].replace(/hai|in|is/gi, "").trim();
     if (rawCity) extracted.city = rawCity;
   }
 
   const stateMatch = text.match(/(?:State)[\s:]*([A-Za-z\s]{3,20})/i);
-  if (stateMatch) extracted.state = stateMatch[1].trim();
+  if (stateMatch && !extracted.state) extracted.state = stateMatch[1].trim();
 
   const pinMatch = text.match(/(?:PIN|Pincode|Zip)[\s:]*(\d{6})/i);
-  if (pinMatch) extracted.pincode = pinMatch[1];
+  if (pinMatch && !extracted.pincode) extracted.pincode = pinMatch[1];
 
   const collegeMatch = text.match(/(?:College|University|Institution)[\s:]*([A-Za-z\s]{3,40})/i);
-  if (collegeMatch) extracted.college = collegeMatch[1].trim();
+  if (collegeMatch && !extracted.college) extracted.college = collegeMatch[1].trim();
 
   const incomeMatch = text.match(/(?:Income|Salary)[\s:]*(\d{5,10})/i);
-  if (incomeMatch) extracted.annualIncome = incomeMatch[1];
+  if (incomeMatch && !extracted.annualIncome) extracted.annualIncome = incomeMatch[1];
 
   // Spoken Hindi / Hinglish. Chrome hi-IN often returns Devanagari, not Latin.
   applySpokenIndicCues(extracted, text);
 
   // Generic Label: value lines — the main path for rich PDFs / markdown packs.
-  Object.assign(extracted, extractLabeledFieldsFromText(text));
+  const labeled = extractLabeledFieldsFromText(text);
+  for (const [k, v] of Object.entries(labeled)) {
+    if (!extracted[k]) extracted[k] = v;
+  }
+
+  for (const key of Object.keys(extracted)) {
+    if (typeof extracted[key] === 'string' && extracted[key].length > 200) {
+      extracted[key] = extracted[key].slice(0, 197) + '...';
+    }
+  }
 
   return stripNeverStore(extracted);
 }

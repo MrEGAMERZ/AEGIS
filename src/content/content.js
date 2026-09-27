@@ -900,6 +900,59 @@
       ts: Date.now() };
   }
 
+  const CAPTURE_SHIELDS = [];
+
+  function isolateSensitiveForCapture(fields) {
+    // Add real solid DOM overlays over sensitive fields during capture
+    const list = Array.isArray(fields) ? fields : [];
+    for (const f of list) {
+      try {
+        const el = f.selector ? document.querySelector(f.selector) : null;
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1) continue;
+        const shield = document.createElement('div');
+        shield.style.cssText = `
+          position: fixed;
+          left: ${rect.left}px; top: ${rect.top}px;
+          width: ${rect.width}px; height: ${rect.height}px;
+          background: #000;
+          z-index: 2147483646;
+          pointer-events: none;
+        `;
+        shield.className = 'aegis-capture-shield';
+        document.body.appendChild(shield);
+        CAPTURE_SHIELDS.push(shield);
+      } catch {}
+    }
+  }
+
+  function removeCapturShields() {
+    while (CAPTURE_SHIELDS.length) {
+      try { CAPTURE_SHIELDS.pop().remove(); } catch {}
+    }
+  }
+
+  function flashClickIndicator(x, y) {
+    const dot = document.createElement('div');
+    dot.style.cssText = `
+      position: fixed; left: ${x - 5}px; top: ${y - 5}px;
+      width: 10px; height: 10px; border-radius: 50%;
+      background: rgba(34, 197, 94, 0.8); border: 2px solid #16a34a;
+      pointer-events: none; z-index: 2147483647;
+      animation: aegis-click-pulse 0.6s ease forwards;
+    `;
+    // Add keyframes if not already added
+    if (!document.getElementById('aegis-click-anim')) {
+      const style = document.createElement('style');
+      style.id = 'aegis-click-anim';
+      style.textContent = '@keyframes aegis-click-pulse { 0%{transform:scale(1);opacity:1} 100%{transform:scale(3);opacity:0} }';
+      document.head.appendChild(style);
+    }
+    document.body.appendChild(dot);
+    setTimeout(() => dot.remove(), 650);
+  }
+
   // ── Message Listener ────────────────────────────────────────────
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -943,6 +996,17 @@
       return false;
     }
 
+    if (msg.type === 'ISOLATE_FOR_CAPTURE') {
+      isolateSensitiveForCapture(msg.fields || []);
+      sendResponse({ ok: true });
+      return false;
+    }
+    if (msg.type === 'REMOVE_CAPTURE_SHIELDS') {
+      removeCapturShields();
+      sendResponse({ ok: true });
+      return false;
+    }
+
     if (msg.type === "REFRESH_IDLE_OVERLAY") {
       scheduleSensitiveRescan();
       sendResponse({ ok: true });
@@ -961,7 +1025,14 @@
     }
 
     if (msg.type === "EXECUTE_CLICK") {
-      sendResponse(executeClick(msg.x, msg.y, msg.selector, msg.text));
+      let normX = msg.x;
+      let normY = msg.y;
+      if (msg.imageWidth && msg.imageHeight) {
+        normX = (msg.x / msg.imageWidth) * window.innerWidth;
+        normY = (msg.y / msg.imageHeight) * window.innerHeight;
+      }
+      flashClickIndicator(normX, normY);
+      sendResponse(executeClick(normX, normY, msg.selector, msg.text));
       return false;
     }
 
