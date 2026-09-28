@@ -646,6 +646,14 @@ async function renderProfile() {
     del.addEventListener("click", async () => { const p = await getProfile(); delete p[key]; await saveProfileData(p); renderProfile(); });
     row.appendChild(input); row.appendChild(del); profileList.appendChild(row);
   }
+  updateFieldCount();
+}
+
+async function updateFieldCount() {
+  const profile = await getProfile();
+  const count = Object.values(profile).filter(v => v && String(v).trim()).length;
+  const el = document.getElementById('profile-field-count');
+  if (el) el.textContent = `${count} fields`;
 }
 
 let profileNameMode = "new";
