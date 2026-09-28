@@ -799,6 +799,41 @@
     }
   }
 
+  
+  // ── Anti-AI HTML Defense ────────────────────────────────────────
+  function applyHTMLDefense(fields) {
+    for (const f of fields) {
+      try {
+        const el = document.querySelector(f.selector);
+        if (!el) continue;
+        if (el.tagName === 'INPUT' && el.type !== 'password') {
+          el.setAttribute('data-original-type', el.type);
+          el.type = 'password';
+        }
+        el.style.userSelect = 'none';
+        el.setAttribute('autocomplete', 'off');
+        el.setAttribute('data-aegis-shield', 'active');
+        el.addEventListener('copy', preventCopy);
+      } catch {}
+    }
+  }
+
+  function preventCopy(e) {
+    e.preventDefault();
+    e.clipboardData.setData('text/plain', '[REDACTED BY AEGIS]');
+  }
+
+  function removeHTMLDefense() {
+    document.querySelectorAll('[data-aegis-shield="active"]').forEach(el => {
+      if (el.hasAttribute('data-original-type')) {
+        el.type = el.getAttribute('data-original-type');
+      }
+      el.style.userSelect = '';
+      el.removeAttribute('data-aegis-shield');
+      el.removeEventListener('copy', preventCopy);
+    });
+  }
+
   async function showRedactionOverlay(fields, faces, dpr, options) {
     const active = await isLiveShieldActive();
     if (!active) {
@@ -807,12 +842,14 @@
     }
     const includeFaces = options ? options.includeFaces !== false : true;
     renderFieldOverlays(fields);
+    applyHTMLDefense(fields);
     if (includeFaces) {
       renderFaceOverlays(faces, dpr);
     }
   }
 
   function clearRedactionOverlay() {
+    removeHTMLDefense();
     overlayAnchors = [];
     faceLiveAnchors = [];
     fieldDocAnchors = [];
