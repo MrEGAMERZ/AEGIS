@@ -229,16 +229,42 @@ async function hasOffscreenDocument() {
   return contexts.length > 0;
 }
 
+let _offscreenCreating = null; // serialization lock
 async function ensureOffscreen() {
   if (await hasOffscreenDocument()) return;
-  await chrome.offscreen.createDocument({
-    url: OFFSCREEN_URL,
-    reasons: ["DOM_PARSER", "WORKERS"],
-    justification:
-      "Inference and mask rendering require Canvas/DOM access; WORKERS reason required to spawn inference Web Worker inside offscreen document",
-  });
-  // Brief wait for the offscreen document to initialize its worker
-  await new Promise(r => setTimeout(r, 300));
+  // If another call is already creating it, wait for that
+  if (_offscreenCreating) return _offscreenCreating;
+  _offscreenCreating = (async () => {
+    try {
+      // Double-check after acquiring lock
+      if (await hasOffscreenDocument()) return;
+      await chrome.offscreen.createDocument({
+        url: OFFSCREEN_URL,
+        reasons: ['DOM_PARSER', 'WORKERS'],
+        justification: 'Inference and mask rendering require Canvas/DOM access; WORKERS reason required to spawn inference Web Worker inside offscreen document',
+      });
+      // Brief wait for the offscreen document to initialize its worker
+      await new Promise(r => setTimeout(r, 300));
+    } finally {
+      _offscreenCreating = null;
+    }
+  })();
+  return _offscreenCreating;
+}
+
+async function sendToOffscreen(payload) {
+  await ensureOffscreen();
+  try {
+    return await chrome.runtime.sendMessage(payload);
+  } catch (e) {
+    if (e.message && e.message.includes('Could not establish connection')) {
+      // Offscreen document not ready yet — wait and retry once
+      await new Promise(r => setTimeout(r, 500));
+      await ensureOffscreen();
+      return await chrome.runtime.sendMessage(payload);
+    }
+    throw e;
+  }
 }
 
 function warmOnDeviceModelsBestEffort() {
@@ -257,8 +283,7 @@ async function handleExtractDocumentText(filePayload) {
   if (!filePayload || typeof filePayload.arrayBufferBase64 !== "string") {
     throw new Error("DOC_EXTRACT_NO_FILE: expected { name, size, mimeType, arrayBufferBase64 }");
   }
-  await ensureOffscreen();
-  const response = await chrome.runtime.sendMessage({
+  const response = await sendToOffscreen({
     type: "EXTRACT_DOCUMENT_TEXT",
     file: filePayload,
   });
@@ -777,8 +802,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "WARM_MODELS") {
     (async () => {
       try {
-        await ensureOffscreen();
-        const warm = await chrome.runtime.sendMessage({ type: "WARM_WORKER" });
+        const warm = await sendToOffscreen({ type: "WARM_WORKER" });
         sendResponse(warm || { ok: true });
       } catch (err) {
         sendResponse({ ok: false, error: err.message });
@@ -1043,10 +1067,9 @@ async function performLocalRedaction(tab, config, scanEpochAtStart) {
 
   // Stage: inference + mask (this is the long WASM / NER step)
   emitProgress("detect", "Running face + PII detection…");
-  await ensureOffscreen();
   assertScanNotAborted(scanEpochAtStart);
   const t3 = Date.now();
-  const sanitizeResponse = await chrome.runtime.sendMessage({
+  const sanitizeResponse = await sendToOffscreen({
     type: "SANITIZE",
     screenshot: screenshotDataUrl,
     domScanResults,
@@ -2754,7 +2777,6 @@ async function captureSanitizedScreenshot() {
       throw new Error('UNSCANNABLE_TAB: Cannot scan chrome://, extensions, or PDF viewer tabs. Please navigate to a regular webpage.');
     }
     const rawDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-    await ensureOffscreen();
     const config = await chrome.storage.local.get([
       "faceDetection",
       "piiDetection",
@@ -2772,7 +2794,7 @@ async function captureSanitizedScreenshot() {
       );
     }
 
-    const sanitizeResponse = await chrome.runtime.sendMessage({
+    const sanitizeResponse = await sendToOffscreen({
       type: 'SANITIZE',
       screenshot: rawDataUrl,
       domScanResults: domScan,
