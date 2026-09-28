@@ -160,6 +160,39 @@ function cleanValue(raw) {
     .trim();
 }
 
+const d = [
+  [0,1,2,3,4,5,6,7,8,9],
+  [1,2,3,4,0,6,7,8,9,5],
+  [2,3,4,0,1,7,8,9,5,6],
+  [3,4,0,1,2,8,9,5,6,7],
+  [4,0,1,2,3,9,5,6,7,8],
+  [5,9,8,7,6,0,4,3,2,1],
+  [6,5,9,8,7,1,0,4,3,2],
+  [7,6,5,9,8,2,1,0,4,3],
+  [8,7,6,5,9,3,2,1,0,4],
+  [9,8,7,6,5,4,3,2,1,0]
+];
+const p = [
+  [0,1,2,3,4,5,6,7,8,9],
+  [1,5,7,6,2,8,3,0,9,4],
+  [5,8,0,3,7,9,6,1,4,2],
+  [8,9,1,6,0,4,3,5,2,7],
+  [9,4,5,3,1,2,6,8,7,0],
+  [4,2,8,6,5,7,3,9,0,1],
+  [2,7,9,3,8,0,6,4,1,5],
+  [7,0,4,6,9,1,3,2,5,8]
+];
+
+export function verhoeffCheck(num) {
+  const digits = String(num).replace(/\D/g, '').split('').reverse().map(Number);
+  if (digits.length !== 12) return false;
+  let c = 0;
+  for (let i = 0; i < digits.length; i++) {
+    c = d[c][p[i % 8][digits[i]]];
+  }
+  return c === 0;
+}
+
 /** Map a document label to a PROFILE_KEYS entry, or null if unknown. */
 export function resolveProfileKeyFromLabel(label) {
   const cleaned = cleanLabel(label);
@@ -187,7 +220,7 @@ export function resolveProfileKeyFromLabel(label) {
  * Known labels map to PROFILE_KEYS; others keep a readable Title Case key
  * so the profile table can show them.
  */
-export function extractLabeledFieldsFromText(text) {
+export function extractLabeledFieldsFromText(text, options = {}) {
   const extracted = {};
   if (!text || typeof text !== "string") return extracted;
 
@@ -207,7 +240,11 @@ export function extractLabeledFieldsFromText(text) {
     const label = cleanLabel(m[1]);
     const val = cleanValue(m[2]);
     if (!label || !val || val.length > 2000) continue;
-    if (SKIP_LABELS.test(label) || NEVER_STORE_KEY.test(label) || isNeverStoreValue(val)) continue;
+    
+    if (!options.kycPassThrough) {
+      if (SKIP_LABELS.test(label) || NEVER_STORE_KEY.test(label) || isNeverStoreValue(val)) continue;
+    }
+
     // Skip URLs used as labels / obvious noise.
     if (/^https?:\/\//i.test(label)) continue;
     if (/^(use|suggested|fields marked|identity numbers)/i.test(label)) continue;
@@ -247,7 +284,7 @@ function applySpokenIndicCues(extracted, text) {
   }
 }
 
-export function extractProfileFromText(text) {
+export function extractProfileFromText(text, options = {}) {
   const extracted = {};
   if (!text || typeof text !== "string") return extracted;
 
@@ -257,7 +294,7 @@ export function extractProfileFromText(text) {
       for (const [rawKey, rawVal] of Object.entries(json)) {
         if (rawVal == null) continue;
         const val = String(rawVal).trim();
-        if (!val || NEVER_STORE_KEY.test(rawKey) || isNeverStoreValue(val)) continue;
+        if (!val || (!options.kycPassThrough && (NEVER_STORE_KEY.test(rawKey) || isNeverStoreValue(val)))) continue;
         const known = resolveProfileKeyFromLabel(rawKey) ||
           (PROFILE_KEYS.includes(rawKey) ? rawKey : null);
         if (known) {
@@ -269,10 +306,23 @@ export function extractProfileFromText(text) {
           if (!extracted[k]) extracted[k] = val;
         }
       }
-      if (Object.keys(extracted).length > 0) return stripNeverStore(extracted);
+      if (Object.keys(extracted).length > 0) return options.kycPassThrough ? extracted : stripNeverStore(extracted);
     }
   } catch {
     // not JSON
+  }
+
+  const aadhaarMatch = text.match(AADHAAR_RE);
+  if (aadhaarMatch) {
+    const aadhaarStr = aadhaarMatch[0].replace(/\s/g, '');
+    if (verhoeffCheck(aadhaarStr)) {
+      extracted.aadhaar = aadhaarStr;
+    }
+  }
+
+  const panMatch = text.match(PAN_RE);
+  if (panMatch) {
+    extracted.pan = panMatch[0];
   }
 
   const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
@@ -337,7 +387,7 @@ export function extractProfileFromText(text) {
   applySpokenIndicCues(extracted, text);
 
   // Generic Label: value lines — the main path for rich PDFs / markdown packs.
-  const labeled = extractLabeledFieldsFromText(text);
+  const labeled = extractLabeledFieldsFromText(text, options);
   for (const [k, v] of Object.entries(labeled)) {
     if (!extracted[k]) extracted[k] = v;
   }
@@ -348,7 +398,7 @@ export function extractProfileFromText(text) {
     }
   }
 
-  return stripNeverStore(extracted);
+  return options.kycPassThrough ? extracted : stripNeverStore(extracted);
 }
 
 function stripNeverStore(extracted) {

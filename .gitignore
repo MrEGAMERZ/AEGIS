@@ -49,6 +49,7 @@ graphify-out/
 .graphifyignore
 engineers/
 AGENTS.md
+CLAUDE.md
 opencode.json
 
 # Local E2E artifacts
@@ -65,3 +66,14 @@ src/vendor/*.bak*
 trash/
 sara_workspace/
 src/vendor/models/SARA_ONNX_WEB/
+
+# Scratch and deleted files
+deleted/
+*.js
+!src/**/*.js
+!server/**/*.js
+!scripts/**/*.js
+!eval/**/*.js
+!package.json
+server/server.log
+

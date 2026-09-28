@@ -59,3 +59,8 @@ A privacy-preserving browser extension that intercepts screen content before it 
 - **DOM fields:** Programmatic `type="password"` / `autocomplete` attribute detection
 - **Server VLM:** Qwen3-VL-8B-Instruct / qwen2.5vl:7b
 - **Runtime:** ONNX Runtime Web — WASM baseline, WebGPU acceleration when available
+
+## Known Issues / Backlog
+| Doc | Purpose | Link |
+|---|---|---|
+| Known Issues | Tracks bugs, WASM cold starts, and architecture constraints | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) |
