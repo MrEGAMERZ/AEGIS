@@ -220,29 +220,33 @@ async function callUpstream(payload) {
   const headers = { "Content-Type": "application/json" };
   if (CONFIG.upstreamApiKey) headers.Authorization = `Bearer ${CONFIG.upstreamApiKey}`;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CONFIG.requestTimeoutMs);
-  const started = Date.now();
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => "");
-      throw new Error(`Upstream ${res.status}: ${errBody.slice(0, 500)}`);
+  let attempt = 0;
+  while (attempt < 2) {
+    attempt++;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CONFIG.requestTimeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => "");
+        throw new Error(`Upstream ${res.status}: ${errBody.slice(0, 500)}`);
+      }
+      return await res.json();
+    } catch (e) {
+      clearTimeout(timer);
+      if (attempt >= 2 || e.name === 'AbortError') throw e;
+      console.warn(`[WARN] Upstream call failed (${e.message}), retrying in 500ms...`);
+      await new Promise(r => setTimeout(r, 500));
     }
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-    log("INFO", "upstream call finished", { latencyMs: Date.now() - started });
   }
 }
 
-// ── Mock VLM (for testing the pipeline without a model installed) ───
 function mockCompletion(payload) {
   const lastMsg = payload.messages?.[payload.messages.length - 1];
   const textPart = Array.isArray(lastMsg?.content)
