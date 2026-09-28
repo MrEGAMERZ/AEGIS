@@ -1078,7 +1078,7 @@
   // Never runs BlazeFace — face CV is Privacy Scan / Run Agent only.
   // Ignores mutations inside our own overlay so we cannot loop.
 
-  const RESCAN_DEBOUNCE_MS = 400;
+  const RESCAN_DEBOUNCE_MS = 200;
   let rescanTimer = null;
 
   function scheduleSensitiveRescan() {
@@ -1124,12 +1124,15 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["type", "autocomplete", "name", "id", "aria-label", "placeholder"],
+      attributeFilter: ["type", "autocomplete", "name", "id", "aria-label", "placeholder", "class", "style", "hidden"],
     });
   }
 
   // Initial live shield scan on page load
   scheduleSensitiveRescan();
+  // Safety re-scans for pages that inject fields with delays (e.g. accordions, lazy-loaded forms)
+  setTimeout(() => scheduleSensitiveRescan(), 2000);
+  setTimeout(() => scheduleSensitiveRescan(), 4000);
 
   console.log("[SIH26171] Content script loaded, DPR:", window.devicePixelRatio);
 })();
