@@ -18,9 +18,13 @@ import {
 // ── Tab Navigation ────────────────────────────────────────────────
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+    document.querySelectorAll(".tab").forEach((t) => {
+      t.classList.remove("active");
+      t.setAttribute("aria-selected", "false");
+    });
     document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
     tab.classList.add("active");
+    tab.setAttribute("aria-selected", "true");
     const target = document.getElementById(`tab-${tab.dataset.tab}`);
     if (target) target.classList.add("active");
   });
@@ -49,8 +53,9 @@ function withStuckHint(work, msg) {
 
 // ── Status helpers ────────────────────────────────────────────────
 function setStatus(message, type = "active") {
-  statusEl.textContent = message;
+  statusEl.textContent = type === "error" ? friendlyError(message) : message;
   statusEl.className = `status ${type}`;
+}`;
 }
 function clearStatus() { statusEl.className = "status"; statusEl.textContent = ""; }
 
@@ -297,11 +302,16 @@ async function loadConfig() {
     type: "GET_CONFIG",
     keys: ["vlmEndpoint", "vlmModel", "faceDetection", "passwordDetection", "piiDetection", "userProfile"],
   });
-  document.getElementById("vlm-endpoint").value = config.vlmEndpoint || "http://localhost:8000/v1/chat/completions";
-  document.getElementById("vlm-model").value = config.vlmModel || "SARA-Distillation-0.5B";
-  document.getElementById("face-detection").checked = config.faceDetection !== false;
-  document.getElementById("password-detection").checked = config.passwordDetection !== false;
-  document.getElementById("pii-detection").checked = config.piiDetection !== false;
+  const endpointEl = document.getElementById("vlm-endpoint");
+  if (endpointEl) endpointEl.value = config.vlmEndpoint || "http://localhost:8000/v1/chat/completions";
+  const modelEl = document.getElementById("vlm-model");
+  if (modelEl) modelEl.value = config.vlmModel || "SARA-Distillation-0.5B";
+  const faceEl = document.getElementById("face-detection");
+  if (faceEl) faceEl.checked = config.faceDetection !== false;
+  const passEl = document.getElementById("password-detection");
+  if (passEl) passEl.checked = config.passwordDetection !== false;
+  const piiEl = document.getElementById("pii-detection");
+  if (piiEl) piiEl.checked = config.piiDetection !== false;
   // Profile fields render from aegisProfiles / userProfile via renderProfile().
   await loadApiKeyStatus();
   await syncGatewayEndpoint();
@@ -373,6 +383,65 @@ function setupConfigListeners() {
   });
 }
 
+// ── Live Shield / Anti-AI Cloak Toggle ────────────────────────────
+const liveShieldToggle = document.getElementById("live-shield-toggle");
+const liveShieldCard   = document.getElementById("live-shield-card");
+const liveShieldBadge  = document.getElementById("live-shield-status-badge");
+const liveShieldDesc   = document.getElementById("live-shield-desc");
+
+async function broadcastLiveShield(enabled) {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    for (const tab of tabs) {
+      if (tab.id) {
+        chrome.tabs.sendMessage(tab.id, {
+          type: "TOGGLE_LIVE_SHIELD",
+          enabled: Boolean(enabled),
+        }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn("[AEGIS] Failed to broadcast live shield state:", err);
+  }
+}
+
+function updateLiveShieldUI(enabled) {
+  if (liveShieldToggle) liveShieldToggle.checked = enabled;
+  if (liveShieldCard) {
+    liveShieldCard.classList.toggle("active", enabled);
+    liveShieldCard.classList.toggle("inactive", !enabled);
+  }
+  if (liveShieldBadge) {
+    liveShieldBadge.textContent = enabled ? "Cloaked" : "Disabled";
+  }
+  if (liveShieldDesc) {
+    liveShieldDesc.textContent = enabled
+      ? "Real-time PII & input cloaking against external AI screen capture"
+      : "Live protection paused — raw inputs exposed to screen capture";
+  }
+}
+
+async function initLiveShield() {
+  try {
+    const stored = await chrome.storage.local.get("liveShieldEnabled");
+    const enabled = stored.liveShieldEnabled !== undefined ? Boolean(stored.liveShieldEnabled) : true;
+    updateLiveShieldUI(enabled);
+  } catch {
+    updateLiveShieldUI(true);
+  }
+}
+
+liveShieldToggle?.addEventListener("change", async (e) => {
+  const enabled = e.target.checked;
+  updateLiveShieldUI(enabled);
+  await chrome.storage.local.set({ liveShieldEnabled: enabled });
+  await broadcastLiveShield(enabled);
+  setStatus(
+    enabled ? "Live Shield active: Screen cloaked from external AIs." : "Live Shield paused: Inputs visible.",
+    enabled ? "success" : "warn"
+  );
+});
+
 // ── Model Status ──────────────────────────────────────────────────
 function updateModelStatus(status, type) {
   if (!modelStatus) return;
@@ -414,6 +483,10 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
     if (msg.type === "SCAN_PROGRESS" && msg.stage) {
       setScanProgress(msg.stage);
       if (msg.label) setStatus(msg.label, "active");
+    }
+    if (msg.type === "PDF_PASSWORD_REQUIRED") {
+      const pwd = prompt("PDF is password protected. Enter password:");
+      chrome.runtime.sendMessage({ type: "PDF_PASSWORD_RESPONSE", password: pwd || "" }).catch(() => {});
     }
   });
 }
@@ -535,6 +608,14 @@ async function renderProfileSwitcher() {
   if (hint) hint.textContent = current;
 }
 
+// Aadhaar display masking per UIDAI regulations
+function maskAadhaar(value) {
+  if (!value) return value;
+  const digits = String(value).replace(/\D/g, '');
+  if (digits.length === 12) return 'XXXX XXXX ' + digits.slice(8);
+  return value; // not an Aadhaar — return as-is
+}
+
 async function renderProfile() {
   await renderProfileSwitcher();
   const profile = await getProfile();
@@ -544,12 +625,35 @@ async function renderProfile() {
   if (entries.length === 0) { profileList.innerHTML = '<div class="p-empty">No details yet in this profile. Speak, drop a PDF, or add a field.</div>'; }
   for (const [key, val] of entries) {
     const row = document.createElement("div"); row.className = "p-row";
-    const input = document.createElement("input"); input.type = "text"; input.value = typeof val === "object" ? val.value : val; input.placeholder = labelFor(key);
-    input.addEventListener("change", async () => { const p = await getProfile(); const v = input.value.trim(); if (!v) delete p[key]; else p[key] = v; await saveProfileData(p); renderProfile(); });
+    const input = document.createElement("input"); input.type = "text";
+    let displayVal = typeof val === "object" ? val.value : val;
+    if (/^aadhaar(_?number)?$/i.test(key)) {
+      displayVal = maskAadhaar(displayVal);
+    }
+    input.value = displayVal;
+    input.placeholder = labelFor(key);
+    input.addEventListener("change", async () => { 
+      const p = await getProfile(); 
+      let v = input.value.trim(); 
+      if (/^aadhaar(_?number)?$/i.test(key) && v.includes("XXXX")) {
+        v = typeof val === "object" ? val.value : val;
+      }
+      if (!v) delete p[key]; else p[key] = v; 
+      await saveProfileData(p); 
+      renderProfile(); 
+    });
     const del = document.createElement("button"); del.className = "p-del"; del.textContent = "X"; del.title = "Delete";
     del.addEventListener("click", async () => { const p = await getProfile(); delete p[key]; await saveProfileData(p); renderProfile(); });
     row.appendChild(input); row.appendChild(del); profileList.appendChild(row);
   }
+  updateFieldCount();
+}
+
+async function updateFieldCount() {
+  const profile = await getProfile();
+  const count = Object.values(profile).filter(v => v && String(v).trim()).length;
+  const el = document.getElementById('profile-field-count');
+  if (el) el.textContent = `${count} fields`;
 }
 
 let profileNameMode = "new";
@@ -731,37 +835,9 @@ document.getElementById("import-file-input")?.addEventListener("change", async (
 });
 
 // ── Error Formatting ──────────────────────────────────────────────
-function formatAgentError(code, message) {
-  const t = message || "";
-  if (code === "NO_CONTENT_SCRIPT") return `[${code}] ${t}`;
-  if (code === "FACE_REDACTION_REQUIRED") {
-    return `[${code}] Face redaction did not complete — unredacted faces cannot leave the device. ${t}`;
-  }
-  if (code === "NER_REDACTION_REQUIRED") {
-    return `[${code}] NER redaction did not complete — unredacted PII cannot leave the device. ${t}`;
-  }
-  if (code === "TIMEOUT" || code === "INIT_FAILED") return `[${code}] On-device model init failed. ${t} Reload extension.`;
-  if (code === "VLM_BAD_RESPONSE") return `[${code}] VLM did not return a usable action. ${t}`;
-  if (code === "BAD_JSON") return `[${code}] Non-JSON response. ${t}`;
-  if (code === "STRUCTURE_REMOTE_REJECTED") {
-    return `[${code}] ${t} The analyzer only runs against the local model — switch the VLM endpoint back to http://localhost:8000.`;
-  }
-  if (code === "STRUCTURE_EMPTY_TEXT") return `[${code}] ${t}`;
-  if (code === "STRUCTURE_TOO_LARGE") return `[${code}] ${t}`;
-  if (code === "STRUCTURE_RATE_LIMITED") return `[${code}] ${t}`;
-  if (code === "STRUCTURE_CONSENT_REQUIRED") {
-    return "[consent] Check 'Structure with local AI' and try again.";
-  }
-  if (code === "SCAN_ABORTED") return "Scan stopped.";
-  return `[${code}] ${t}`;
-}
+function formatAgentError(code, message) { return friendlyError(message || code); }
 
-function formatRuntimeDisconnect(err) {
-  const msg = String(err?.message || err || "");
-  if (msg.includes("Receiving end does not exist") || msg.includes("Could not establish connection"))
-    return "[NO_CONTENT_SCRIPT] Refresh this tab, then try again.";
-  return `Error: ${msg}`;
-}
+function formatRuntimeDisconnect(err) { return friendlyError(err?.message || err); }
 
 // ── Agent Loop ────────────────────────────────────────────────────
 async function persistProfileFromTextarea() {
@@ -1134,6 +1210,11 @@ async function handleUploadedFile(file) {
       return;
     }
 
+    if (res.isScanned) {
+      setStatus('Scanned PDF detected — please upload a digital e-Aadhaar or text-selectable PDF for accurate extraction.', "error");
+      return;
+    }
+
     const text = String(res.text || "");
     showDocPreview(text, { format: res.format || format, name: file.name, size: file.size });
 
@@ -1479,6 +1560,7 @@ renderProfile();
 renderVaultList();
 warmOnDeviceModels();
 loadRiskScore();
+initLiveShield();
 
 // ── Privacy Consent ───────────────────────────────────────────────
 async function checkPrivacyConsent() {
@@ -1486,13 +1568,14 @@ async function checkPrivacyConsent() {
   const consentBox = document.getElementById("privacy-consent-box");
   const mainContent = document.getElementById("profile-main-content");
   
-  if (consentBox && mainContent) {
+  if (mainContent) {
+    mainContent.style.display = "block";
+  }
+  if (consentBox) {
     if (localDataConsent === true) {
       consentBox.style.display = "none";
-      mainContent.style.display = "block";
     } else {
       consentBox.style.display = "block";
-      mainContent.style.display = "none";
     }
   }
 }
@@ -1503,7 +1586,25 @@ document.getElementById("privacy-accept-btn")?.addEventListener("click", async (
 });
 
 document.getElementById("privacy-decline-btn")?.addEventListener("click", () => {
-  document.querySelector('.tab[data-tab="chat"]')?.click();
+  const consentBox = document.getElementById("privacy-consent-box");
+  if (consentBox) consentBox.style.display = "none";
 });
 
 checkPrivacyConsent();
+
+
+function friendlyError(raw) {
+  if (!raw) return 'Something went wrong. Please try again.';
+  const s = String(raw);
+  if (s.includes('UNSCANNABLE_TAB')) return '⚠️ AEGIS cannot scan this page (Chrome settings or PDF). Please navigate to a regular webpage.';
+  if (s.includes('SCAN_ABORTED')) return 'Scan was cancelled.';
+  if (s.includes('SARA unreachable') || s.includes('Could not reach AI')) return '⚠️ SARA is offline. Make sure Ollama is running: open Terminal and run `ollama serve`.';
+  if (s.includes('VLM queue timeout')) return '⚠️ SARA is busy. Please wait a moment and try again.';
+  if (s.includes('No active tab')) return '⚠️ No active tab found. Click on a webpage first.';
+  if (s.includes('PASSWORD_REQUIRED') || s.includes('Password entry timed out')) return '⚠️ PDF password entry timed out. Please try uploading the document again.';
+  if (s.includes('STRUCTURE_EMPTY_TEXT')) return '⚠️ Document appears empty. Please check the file and try again.';
+  if (s.includes('STRUCTURE_TOO_LARGE')) return '⚠️ Document is too large. Please try a shorter document.';
+  if (s.includes('Extension context invalidated')) return '⚠️ Extension was updated. Please reload the page.';
+  return '⚠️ ' + s.replace(/^Error:s*/i, '').slice(0, 120);
+}
+

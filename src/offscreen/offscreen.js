@@ -109,6 +109,15 @@ function getWorker() {
       try { inferenceWorker.terminate(); } catch { /* already dead */ }
       inferenceWorker = null;
     };
+    
+    // -- Local SARA (WebGPU) Worker --
+    if (!self.llmWorker) {
+      self.llmWorker = new Worker(chrome.runtime.getURL("src/offscreen/llm-worker.js"), { type: "module" });
+      self.llmWorker.onmessage = (event) => {
+        // Forward WebGPU LLM replies back to background/sidepanel
+        chrome.runtime.sendMessage({ type: "LOCAL_LLM_RESPONSE", ...event.data });
+      };
+    }
     inferenceWorker.onmessageerror = () => {
       const err = new Error("Inference worker message deserialize failed");
       rejectAllPending(err);
@@ -197,6 +206,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+  
+  if (msg.type === "LOCAL_LLM_REQUEST") {
+    if (self.llmWorker) {
+      self.llmWorker.postMessage({ id: msg.id, type: "GENERATE", messages: msg.messages });
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
 
   if (msg.type === "EXTRACT_DOCUMENT_TEXT") {
     // On-device document → text. The heavy parsers (pdf.js / pako) are
@@ -232,7 +249,30 @@ function scaleToDPR(rect, dpr) {
 
 // ── Sanitize Pipeline ─────────────────────────────────────────────
 
-async function handleSanitize({ screenshot, domScanResults, faceDetection, piiDetection }) {
+async function handleSanitize(payload = {}) {
+  // Support both canonical { screenshot, domScanResults, faceDetection, piiDetection }
+  // and legacy/convenience { dataUrl, fields, includeFaces }
+  const screenshot = payload.screenshot || payload.dataUrl;
+  if (!screenshot) {
+    throw new Error("Missing screenshot in SANITIZE request");
+  }
+
+  let domScanResults = payload.domScanResults;
+  if (!domScanResults && payload.fields) {
+    domScanResults = {
+      fields: payload.fields,
+      fillableFields: payload.fillableFields || [],
+      photos: payload.photos || [],
+      visibleText: payload.visibleText || [],
+      dpr: payload.dpr || 1,
+    };
+  }
+
+  const faceDetection = payload.faceDetection !== undefined
+    ? payload.faceDetection
+    : (payload.includeFaces !== undefined ? payload.includeFaces : true);
+  const piiDetection = payload.piiDetection !== undefined ? payload.piiDetection : true;
+
   // Ensure the inference worker is ready before running any inference.
   // This is a no-op after the first SANITIZE call.
   const init = await ensureWorkerReady();
@@ -327,6 +367,21 @@ async function handleSanitize({ screenshot, domScanResults, faceDetection, piiDe
     const detected = await detectTextPII((domScanResults && domScanResults.visibleText) || []);
     for (const pii of detected) {
       piiDetections.push(pii);
+
+      // If NER entity has no bbox, try to find coordinates from visibleText
+      if (!pii.bbox && pii.text && domScanResults?.visibleText) {
+        const match = domScanResults.visibleText.find(vt =>
+          vt.text && vt.text.includes(pii.text)
+        );
+        if (match) {
+          if (match.x !== undefined) {
+            pii.bbox = { x: match.x, y: match.y, width: match.width, height: match.height };
+          } else if (match.rect) {
+            pii.bbox = match.rect;
+          }
+        }
+      }
+
       if (pii.bbox) {
         const scaled = scaleToDPR(pii.bbox, dpr);
         const painted = applyBlackMask(ctx, scaled.x, scaled.y, scaled.width, scaled.height);

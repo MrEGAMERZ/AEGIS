@@ -7,6 +7,6 @@
     "test": "sh -c 'for f in eval/harness/*.test.js; do node \"$f\" || exit 1; done'"
   },
   "devDependencies": {
-    "adm-zip": "^0.5.16"
+    "adm-zip": "^0.6.1"
   }
 }

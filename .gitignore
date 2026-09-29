@@ -63,3 +63,17 @@ src/vendor/*.bak*
 # Editors
 .vscode/
 .idea/
+trash/
+sara_workspace/
+src/vendor/models/SARA_ONNX_WEB/
+
+# Scratch and deleted files
+deleted/
+*.js
+!src/**/*.js
+!server/**/*.js
+!scripts/**/*.js
+!eval/**/*.js
+!package.json
+server/server.log
+

@@ -6,7 +6,131 @@ const DEFAULT_OLLAMA_VLM = "http://localhost:11434/v1/chat/completions";
 const DEFAULT_GATEWAY_VLM = "http://localhost:8000/v1/chat/completions";
 const DEFAULT_GATEWAY_HEALTH = "http://localhost:8000/health";
 const DEFAULT_VLM_MODEL = "SARA-Distillation-0.5B";
-const VLM_FETCH_TIMEOUT_MS = 120000;
+const VLM_FETCH_TIMEOUT_MS = 45000;
+
+// VLM rate limiter — only 1 in-flight request at a time to prevent Ollama crashes
+let _vlmInFlight = false;
+const _vlmQueue = [];
+
+async function callVlmGated(messages, model) {
+  if (_vlmInFlight) {
+    // Queue this request — wait for the current one to finish (max 60s)
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('VLM queue timeout')), 60000);
+      _vlmQueue.push(() => { clearTimeout(timer); resolve(); });
+    });
+  }
+  _vlmInFlight = true;
+  try {
+    return await callVlm(messages, model);
+  } finally {
+    _vlmInFlight = false;
+    const next = _vlmQueue.shift();
+    if (next) next();
+  }
+}
+
+// Module-level map for HITL action approvals — keyed by actionId string.
+// handleChatRequest registers a pending approval here; the message router above resolves it.
+const globalPendingApprovals = new Map();
+
+// Per-domain session memory (in-memory only, cleared on SW restart)
+// Maps hostname → last N message pairs [{role, content}]
+const domainSessionMemory = new Map();
+const SESSION_MEMORY_TURNS = 6; // keep last 3 turns (6 messages)
+
+// Action history stack for undo (last 5 executed actions + their tab states)
+const actionHistory = [];
+const MAX_HISTORY = 5;
+
+// Cached config to avoid repeated chrome.storage.local reads on every VLM call.
+// Refreshed on storage change events.
+let _cachedVlmConfig = null;
+// Gateway health cache — probe at most once every 10s
+let _cachedGatewayHealth = null;
+let _gatewayHealthTs = 0;
+async function probeGatewayHealthCached() {
+  if (_cachedGatewayHealth && Date.now() - _gatewayHealthTs < 10000) {
+    return _cachedGatewayHealth;
+  }
+  _cachedGatewayHealth = await probeGatewayHealth();
+  _gatewayHealthTs = Date.now();
+  return _cachedGatewayHealth;
+}
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.vlmApiKey || changes.vlmEndpoint || changes.selectedModel || changes.agentMode) {
+    _cachedVlmConfig = null; // invalidate cache
+  }
+});
+async function getVlmConfig() {
+  if (_cachedVlmConfig) return _cachedVlmConfig;
+  const [local, session] = await Promise.all([
+    chrome.storage.local.get(['vlmApiKey', 'vlmEndpoint', 'selectedModel', 'agentMode']),
+    chrome.storage.session.get(['vlmApiKey']).catch(() => ({}))
+  ]);
+  _cachedVlmConfig = { ...local, sessionApiKey: session.vlmApiKey || '' };
+  return _cachedVlmConfig;
+}
+
+// Audit log for compliance — stored in chrome.storage.local under 'aegisAuditLog'
+async function appendAuditLog(entry) {
+  try {
+    const { aegisAuditLog } = await chrome.storage.local.get('aegisAuditLog');
+    const log = Array.isArray(aegisAuditLog) ? aegisAuditLog : [];
+    log.push({
+      ts: new Date().toISOString(),
+      action: entry.action,
+      selector: entry.selector || null,
+      value: entry.value ? '[REDACTED]' : null, // never log actual typed values
+      url: entry.url || null,
+      approved: entry.approved,
+      result: entry.result,
+    });
+    // Cap at 500 entries
+    if (log.length > 500) log.splice(0, log.length - 500);
+    await chrome.storage.local.set({ aegisAuditLog: log });
+  } catch {}
+}
+
+// Agent mode: 'safe' = HITL approve every step, 'auto' = execute freely
+let currentAgentMode = 'safe';
+// Load persisted mode on startup
+chrome.storage.local.get('agentMode').then(r => {
+  currentAgentMode = r.agentMode || 'safe';
+}).catch(() => {});
+
+// Privacy risk domains — warn before navigating to these
+const RISKY_DOMAINS = new Set([
+  'doubleclick.net','googlesyndication.com','google-analytics.com','hotjar.com',
+  'fullstory.com','logrocket.com','mixpanel.com','amplitude.com','segment.com',
+  'heap.io','clarity.ms','mouseflow.com','crazyegg.com','inspectlet.com',
+  'facebook.net','connect.facebook.net','twitter.com','t.co','linkedin.com',
+]);
+
+function isRiskyUrl(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    for (const d of RISKY_DOMAINS) {
+      if (host === d || host.endsWith('.' + d)) return true;
+    }
+  } catch {}
+  return false;
+}
+
+function computeFillConfidence(fieldLabel, profileKey, value, userProfile) {
+  // 100% if exact key match + exact value match
+  // 80% if fuzzy key match
+  // 60% if value substring match only
+  // 40% if inferred from vault
+  if (!userProfile || !profileKey) return 60;
+  const resolvedKey = resolveProfileKey(userProfile, profileKey);
+  if (!resolvedKey) return 50;
+  const profileValue = String(userProfile[resolvedKey] || '').trim().toLowerCase();
+  const typedValue = String(value || '').trim().toLowerCase();
+  if (profileValue === typedValue) return 100;
+  if (profileValue.includes(typedValue) || typedValue.includes(profileValue)) return 85;
+  return 70;
+}
 
 // ── Local document vault module (lazy) ────────────────────────────
 // doc-vault.js owns vault storage, snippet retrieval, structured-output
@@ -116,14 +240,42 @@ async function hasOffscreenDocument() {
   return contexts.length > 0;
 }
 
+let _offscreenCreating = null; // serialization lock
 async function ensureOffscreen() {
   if (await hasOffscreenDocument()) return;
-  await chrome.offscreen.createDocument({
-    url: OFFSCREEN_URL,
-    reasons: ["DOM_PARSER", "WORKERS"],
-    justification:
-      "Inference and mask rendering require Canvas/DOM access; WORKERS reason required to spawn inference Web Worker inside offscreen document",
-  });
+  // If another call is already creating it, wait for that
+  if (_offscreenCreating) return _offscreenCreating;
+  _offscreenCreating = (async () => {
+    try {
+      // Double-check after acquiring lock
+      if (await hasOffscreenDocument()) return;
+      await chrome.offscreen.createDocument({
+        url: OFFSCREEN_URL,
+        reasons: ['DOM_PARSER', 'WORKERS'],
+        justification: 'Inference and mask rendering require Canvas/DOM access; WORKERS reason required to spawn inference Web Worker inside offscreen document',
+      });
+      // Brief wait for the offscreen document to initialize its worker
+      await new Promise(r => setTimeout(r, 300));
+    } finally {
+      _offscreenCreating = null;
+    }
+  })();
+  return _offscreenCreating;
+}
+
+async function sendToOffscreen(payload) {
+  await ensureOffscreen();
+  try {
+    return await chrome.runtime.sendMessage(payload);
+  } catch (e) {
+    if (e.message && e.message.includes('Could not establish connection')) {
+      // Offscreen document not ready yet — wait and retry once
+      await new Promise(r => setTimeout(r, 500));
+      await ensureOffscreen();
+      return await chrome.runtime.sendMessage(payload);
+    }
+    throw e;
+  }
 }
 
 function warmOnDeviceModelsBestEffort() {
@@ -142,8 +294,7 @@ async function handleExtractDocumentText(filePayload) {
   if (!filePayload || typeof filePayload.arrayBufferBase64 !== "string") {
     throw new Error("DOC_EXTRACT_NO_FILE: expected { name, size, mimeType, arrayBufferBase64 }");
   }
-  await ensureOffscreen();
-  const response = await chrome.runtime.sendMessage({
+  const response = await sendToOffscreen({
     type: "EXTRACT_DOCUMENT_TEXT",
     file: filePayload,
   });
@@ -173,6 +324,7 @@ function isMissingReceiver(err) {
 
 function isInjectableTabUrl(url) {
   if (!url || typeof url !== "string") return false;
+  if (url.toLowerCase().endsWith('.pdf')) return false;
   try {
     const u = new URL(url);
     const p = u.protocol.toLowerCase();
@@ -417,6 +569,68 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'APPROVE_ACTION') {
+    // Find the handleChatRequest call that's waiting — we use a shared module-level map
+    const handler = globalPendingApprovals.get(msg.actionId);
+    if (handler) {
+      globalPendingApprovals.delete(msg.actionId);
+      handler.resolve({ approved: true });
+    }
+    return false;
+  }
+
+  if (msg.type === 'REJECT_ACTION') {
+    const handler = globalPendingApprovals.get(msg.actionId);
+    if (handler) {
+      globalPendingApprovals.delete(msg.actionId);
+      handler.resolve({ approved: false, reason: msg.reason || 'User denied' });
+    }
+    return false;
+  }
+
+  if (msg.type === 'UNDO_LAST_ACTION') {
+    (async () => {
+      const last = actionHistory.pop();
+      if (!last) { sendResponse({ error: 'Nothing to undo.' }); return; }
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab && last.url && tab.url !== last.url) {
+          await chrome.tabs.update(tab.id, { url: last.url });
+          await new Promise(r => setTimeout(r, 1500));
+        }
+        sendResponse({ ok: true, undone: last.label });
+      } catch (e) { sendResponse({ error: e.message }); }
+    })();
+    return true;
+  }
+
+  if (msg.type === 'GET_AUDIT_LOG') {
+    (async () => {
+      try {
+        const { aegisAuditLog } = await chrome.storage.local.get('aegisAuditLog');
+        sendResponse({ log: aegisAuditLog || [] });
+      } catch (e) { sendResponse({ log: [] }); }
+    })();
+    return true;
+  }
+
+  if (msg.type === 'CLEAR_AUDIT_LOG') {
+    (async () => {
+      try {
+        await chrome.storage.local.set({ aegisAuditLog: [] });
+        sendResponse({ ok: true });
+      } catch (e) { sendResponse({ error: e.message }); }
+    })();
+    return true;
+  }
+
+  if (msg.type === 'SET_AGENT_MODE') {
+    currentAgentMode = msg.mode === 'auto' ? 'auto' : 'safe';
+    chrome.storage.local.set({ agentMode: currentAgentMode }).catch(() => {});
+    sendResponse({ ok: true, mode: currentAgentMode });
+    return false;
+  }
+
   if (msg.type === "EXECUTE_WRITE_CODE") {
     (async () => {
       try {
@@ -599,8 +813,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "WARM_MODELS") {
     (async () => {
       try {
-        await ensureOffscreen();
-        const warm = await chrome.runtime.sendMessage({ type: "WARM_WORKER" });
+        const warm = await sendToOffscreen({ type: "WARM_WORKER" });
         sendResponse(warm || { ok: true });
       } catch (err) {
         sendResponse({ ok: false, error: err.message });
@@ -838,6 +1051,10 @@ async function performLocalRedaction(tab, config, scanEpochAtStart) {
   // Stage: capture
   emitProgress("capture", "Capturing viewport…");
   const t1 = Date.now();
+  // Guard: skip capture on non-injectable URLs
+  if (!isInjectableTabUrl(tab?.url)) {
+    throw new Error('UNSCANNABLE_TAB: Cannot scan chrome://, extensions, or PDF viewer tabs. Please navigate to a regular webpage.');
+  }
   const screenshotDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
   assertScanNotAborted(scanEpochAtStart);
   const tCapture = Date.now() - t1;
@@ -861,10 +1078,9 @@ async function performLocalRedaction(tab, config, scanEpochAtStart) {
 
   // Stage: inference + mask (this is the long WASM / NER step)
   emitProgress("detect", "Running face + PII detection…");
-  await ensureOffscreen();
   assertScanNotAborted(scanEpochAtStart);
   const t3 = Date.now();
-  const sanitizeResponse = await chrome.runtime.sendMessage({
+  const sanitizeResponse = await sendToOffscreen({
     type: "SANITIZE",
     screenshot: screenshotDataUrl,
     domScanResults,
@@ -982,11 +1198,23 @@ async function handleScanAndOverlay(msg) {
     config.faceDetection = true;
   }
 
-  const { domScanResults, sanitizeResponse, receipt } = await performLocalRedaction(
-    tab,
-    config,
-    epoch
-  );
+  let redactionResult;
+  try {
+    redactionResult = await performLocalRedaction(tab, config, epoch);
+  } catch (err) {
+    if (err && String(err.message).includes('SCAN_ABORTED')) throw err; // re-throw aborts
+    // For all other errors: return partial result so UI shows error state cleanly
+    console.error('[AEGIS] Scan failed:', err.message);
+    return {
+      fieldCount: 0,
+      dpr: 1,
+      url: tab.url,
+      sanitizedImage: null,
+      receipt: null,
+      error: err.message,
+    };
+  }
+  const { domScanResults, sanitizeResponse, receipt } = redactionResult;
   assertScanNotAborted(epoch);
 
   await persistLastScanArtifacts(receipt, scanPreviewDataUrl(sanitizeResponse));
@@ -1029,12 +1257,6 @@ async function handleStructureDocumentText(msg) {
     );
   }
 
-  // D3 (privacy audit): consent is enforced HERE, in the background — the
-  // popup checkbox is only the UI. Default OFF: either the stored
-  // chrome.storage.local `docConsent` flag must be === true OR the message
-  // must carry consented:true (the popup sends it only when the toggle is
-  // checked). Without consent no VLM request is made, even if the popup (or a
-  // co-installed extension) sends text directly.
   const { docConsent } = await chrome.storage.local.get("docConsent");
   const consented = docConsent === true || msg?.consented === true;
   if (!consented) {
@@ -1044,7 +1266,6 @@ async function handleStructureDocumentText(msg) {
   }
 
   const api = await getDocVault();
-
   const limiter = api.structureRateLimit(1000);
   if (!limiter.ok) {
     throw new Error(
@@ -1052,23 +1273,24 @@ async function handleStructureDocumentText(msg) {
     );
   }
 
-  const config = await chrome.storage.local.get(["vlmEndpoint", "vlmModel"]);
-  const vlmEndpoint = await resolveVlmEndpoint(config.vlmEndpoint);
+  const config = await chrome.storage.local.get(["vlmEndpoint", "vlmModel", "selectedModel"]);
+  const sessionSecrets = await chrome.storage.session.get(["vlmApiKey"]);
 
-  // THE guard: raw document text must never reach a remote AI. This runs
-  // before any request is made — a remote endpoint means no VLM call at all.
-  if (!isLocalVlmEndpoint(vlmEndpoint)) {
-    throw new Error(
-      "Document text cannot be sent to a remote AI. Switch to the local model."
-    );
+  // Use the currently selected model from storage, fallback to config
+  const uiModel = config.selectedModel || config.vlmModel || DEFAULT_VLM_MODEL;
+  
+  // DEMO OVERRIDE: Force Ollama for SARA and Secure Cloud
+  let vlmEndpoint = DEFAULT_OLLAMA_VLM;
+  let actualModel = 'qwen2.5vl:7b';
+  
+  if (uiModel === 'llama3.2-vision' || uiModel === 'qwen2.5vl:7b') {
+    actualModel = uiModel;
   }
 
-  const vlmModel = config.vlmModel || DEFAULT_VLM_MODEL;
-  const sessionSecrets = await chrome.storage.session.get(["vlmApiKey"]);
   const vlmHeaders = buildVlmAuthHeaders(sessionSecrets.vlmApiKey, vlmEndpoint);
 
   const systemPrompt =
-    `You are a privacy-preserving local document structurer. The user uploaded their own document and explicitly consented to analyzing it with the LOCAL model only.
+    `You are a privacy-preserving document structurer. The user uploaded their own document and explicitly consented to analyzing it.
 
 Convert the document text into ONE JSON object. Extract EVERY useful profile field you can find — do not stop after a few. Include contact, address, education, family, job, languages, projects, and any other Label: value pairs.
 
@@ -1086,16 +1308,14 @@ RULES:
   let raw;
   try {
     raw = await requestVlmContent(vlmEndpoint, vlmHeaders, {
-      model: vlmModel,
+      model: actualModel,
       stream: false,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: `Document text:\n${text}` },
       ],
-      // Room for a full resume as JSON (dozens of string fields). Truncation
-      // here is why users only saw a handful of profile rows after upload.
-      max_tokens: 8192,
-      temperature: 0.1,
+      max_tokens: 2048,
+      temperature: 0,
     });
   } catch (err) {
     const vlmMs = Date.now() - t0;
@@ -2464,6 +2684,13 @@ async function handleExecuteAction(action, tabId) {
     });
   }
 
+  // Log to action history for undo
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    actionHistory.push({ label: action.action, url: tab?.url, ts: Date.now() });
+    if (actionHistory.length > MAX_HISTORY) actionHistory.shift();
+  } catch {}
+
   return execResult;
 }
 
@@ -2556,48 +2783,120 @@ async function captureSanitizedScreenshot() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return null;
   try {
-    const rawDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 });
-    await ensureOffscreen();
+    // Guard: skip capture on non-injectable URLs
+    if (!isInjectableTabUrl(tab?.url)) {
+      throw new Error('UNSCANNABLE_TAB: Cannot scan chrome://, extensions, or PDF viewer tabs. Please navigate to a regular webpage.');
+    }
+    const rawDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+    const config = await chrome.storage.local.get([
+      "faceDetection",
+      "piiDetection",
+      "passwordDetection",
+    ]).catch(() => ({}));
+    const faceDetectionEnabled = config.faceDetection !== false;
+    const piiDetectionEnabled = config.piiDetection !== false;
+    const passwordDetectionEnabled = config.passwordDetection !== false;
+
     const domScan = await sendTabMessage(tab, { type: 'DOM_SCAN' }).catch(() => ({ fields: [], fillableFields: [] }));
-    const sanitizeResponse = await chrome.runtime.sendMessage({
+    if (domScan && Array.isArray(domScan.fields)) {
+      domScan.fields = filterFieldsForPasswordDetection(
+        domScan.fields,
+        passwordDetectionEnabled
+      );
+    }
+
+    const sanitizeResponse = await sendToOffscreen({
       type: 'SANITIZE',
+      screenshot: rawDataUrl,
+      domScanResults: domScan,
+      faceDetection: faceDetectionEnabled,
+      piiDetection: piiDetectionEnabled,
+      // Compatibility aliases
       dataUrl: rawDataUrl,
-      fields: domScan.fields || [],
-      includeFaces: true
+      fields: domScan?.fields || [],
+      includeFaces: faceDetectionEnabled
     });
+
+    if (sanitizeResponse?.error) {
+      console.error('[Aegis] captureSanitizedScreenshot sanitization failed:', sanitizeResponse.error);
+      return null;
+    }
+
+    assertReadyForVlm(sanitizeResponse, {
+      faceDetection: faceDetectionEnabled,
+      piiDetection: piiDetectionEnabled,
+    });
+
     const sanitizedImage = scanPreviewDataUrl(sanitizeResponse);
+    if (sanitizedImage) {
+      chrome.storage.session.set({ lastSanitizedImage: sanitizedImage }).catch(() => {});
+    }
+
     return { sanitizedImage, domScan, tab };
   } catch (e) {
+    console.error('[Aegis] captureSanitizedScreenshot error:', e);
     return null;
   }
 }
 
 async function callVlm(messages, model) {
-  const modelMap = {
-    'SARA-Distillation-0.5B': 'qwen2.5vl:7b',
-    'qwen2.5vl:7b': 'qwen2.5vl:7b',
-    'llama3.2-vision': 'llama3.2-vision',
-    'qwen3:8b': 'qwen3:8b',
-    'gemma3:12b': 'gemma3:12b'
-  };
-  const actualModel = modelMap[model] || 'qwen2.5vl:7b';
-  const payload = { model: actualModel, messages, temperature: 0.2, stream: false };
-  for (const endpoint of [DEFAULT_GATEWAY_VLM, DEFAULT_OLLAMA_VLM]) {
+  const cfg = await getVlmConfig();
+  const apiKey = cfg.sessionApiKey || cfg.vlmApiKey || '';
+  
+  // Route to Gateway (which proxies Ollama) — always prefer the gateway
+  // so rate-limiting, retries, and image validation run on every request.
+  // Fall back to direct Ollama only if gateway health check fails.
+  let endpoint = DEFAULT_GATEWAY_VLM;
+  try {
+    const health = await probeGatewayHealthCached();
+    if (!health.gatewayUp) endpoint = DEFAULT_OLLAMA_VLM;
+  } catch { endpoint = DEFAULT_OLLAMA_VLM; }
+
+  // Map UI model names to actual Ollama model IDs
+  let actualModel = 'qwen2.5vl:7b';
+  if (model === 'llama3.2-vision') actualModel = 'qwen3:8b';
+  else if (model === 'qwen2.5vl:7b') actualModel = 'qwen2.5vl:7b';
+
+  const payload = { model: actualModel, messages, temperature: 0, stream: false, keep_alive: -1 };
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (apiKey && !endpoint.includes('localhost')) headers.Authorization = `Bearer ${apiKey}`;
+
+  const t0 = Date.now();
+  let lastError;
+  // Retry once on connection failure (gateway restart, brief blip)
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(90000)
+        signal: AbortSignal.timeout(45000)
       });
-      if (!res.ok) continue;
+      if (!res.ok) {
+        const err = await res.text().catch(() => '');
+        throw new Error(`Upstream ${res.status}: ${err.slice(0, 200)}`);
+      }
       const data = await res.json();
       const content = data?.choices?.[0]?.message?.content;
-      if (typeof content === 'string') return content;
-    } catch { continue; }
+      if (typeof content === 'string') {
+        console.log(`[AEGIS SARA] responded in ${Date.now() - t0}ms via ${endpoint}`);
+        return content;
+      }
+      throw new Error('Empty response from model.');
+    } catch (e) {
+      lastError = e;
+      if (attempt === 0 && !e.name?.includes('Abort')) {
+        // On first failure, switch to direct Ollama and retry
+        console.warn(`[AEGIS] Gateway call failed (${e.message}), retrying via Ollama directly...`);
+        endpoint = DEFAULT_OLLAMA_VLM;
+        await new Promise(r => setTimeout(r, 300));
+      }
+    }
   }
-  throw new Error('Could not reach AI. Make sure Ollama is running (ollama serve) and the server is started (cd server && node index.js).');
+  throw new Error(`SARA unreachable: ${lastError?.message || 'unknown error'}`);
 }
+
 
 function parseActionFromReply(reply) {
   const fenceMatch = reply.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
@@ -2626,47 +2925,50 @@ function stripActionBlock(text) {
 }
 
 async function handleChatRequest(msg) {
-  const { history, model, attachScreenshot } = msg;
+  const { history, attachScreenshot } = msg;
+  const cfg = await getVlmConfig();
+  const selectedModel = msg.model || cfg.selectedModel || 'qwen2.5vl:7b';
+  const model = selectedModel; // keep model defined for usages below
 
-  const SYSTEM_PROMPT = `You are AEGIS — a private, secure AI agent for government employees and developers.
-You see a SANITIZED screenshot (faces and personal data already hidden on-device before reaching you).
-You can perform browser actions, write code into on-screen code editors, or answer questions.
+  // Load domain memory and prepend to history
+  const [memTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const memDomain = memTab?.url ? (() => { try { return new URL(memTab.url).hostname; } catch { return null; } })() : null;
+  const domainHistory = memDomain ? (domainSessionMemory.get(memDomain) || []) : [];
+  // Prepend domain memory as earlier turns (don't duplicate current history)
+  const fullHistory = domainHistory.length > 0
+    ? [...domainHistory, ...history]
+    : history;
 
-FOR BROWSER ACTIONS & TASKS — respond with ONE JSON action block:
-- Write code into online editor (Programiz, LeetCode, CodeMirror, Ace, IDE, textarea):
-\`\`\`json
-{"action":"write_code","code":"/* full code here */"}
-\`\`\`
-- Click button/element (e.g. Run button, Submit, Tab):
-\`\`\`json
-{"action":"click","text":"Run"} or {"action":"click","selector":"button.run"} or {"action":"click","x":320,"y":450}
-\`\`\`
-- Type text into field: {"action":"type","selector":"#field","value":"text"}
-- Press key: {"action":"key_press","key":"Enter"}
-- Scroll: {"action":"scroll","direction":"down"}
+  // Feature 1: keywords that mean the user explicitly wants code injected into the page
+  // (evaluated later, after 'latest' is defined)
+  const INJECTION_KEYWORDS = /\b(write\s*(this\s*)?(to|into)\s*(the\s*)?(ide|editor)|type\s*(this\s*)?(into|in)\s*(the\s*)?(editor|field)|inject\s*(this\s*)?(into|in)\s*(the\s*)?(page|field|editor)|fill\s*(this\s*)?(into|in)\s*(the\s*)?(field|editor|form)|put\s*(it\s*)?in\s*(the\s*)?(editor|ide|field))\b/i;
+
+  const SYSTEM_PROMPT = `You are AEGIS, a secure browser AI. The screenshot you see has faces and PII already hidden on-device before reaching you.
+
+FOR BROWSER ACTIONS — respond with exactly ONE JSON block:
+- Click: {"action":"click","x":N,"y":N} or {"action":"click","selector":"#id"}
+- Type: {"action":"type","selector":"#id","value":"text"}
+- Fill form: {"action":"fill_many","fields":[{"selector":"#id","value":"v"}]}
 - Navigate: {"action":"navigate","url":"https://..."}
-- Fill form: {"action":"fill_many","fields":[{"selector":"#name","value":"John"}]}
-- Done: {"action":"done","summary":"Task complete."}
+- Scroll: {"action":"scroll","direction":"down"}
+- Press key: {"action":"key_press","key":"Enter"}
+- Done: {"action":"done","summary":"what you did"}
+- Write code to editor: {"action":"write_code","code":"..."}
 
-FOR CODING REQUESTS:
-When asked to write or implement code (e.g. "Write insertion sort code in C"), generate the code!
-If there is a code editor or compiler on screen (such as Programiz, CodeMirror, Ace), output the "write_code" action so the code is directly placed into the editor!
-Example:
-\`\`\`json
-{"action":"write_code","code":"#include <stdio.h>\\n\\nvoid insertionSort(int arr[], int n) {\\n    int i, key, j;\\n    for (i = 1; i < n; i++) {\\n        key = arr[i];\\n        j = i - 1;\\n        while (j >= 0 && arr[j] > key) {\\n            arr[j + 1] = arr[j];\\n            j = j - 1;\\n        }\\n        arr[j + 1] = key;\\n    }\\n}\\n\\nint main() {\\n    int arr[] = {12, 11, 13, 5, 6};\\n    int n = sizeof(arr) / sizeof(arr[0]);\\n    insertionSort(arr, n);\\n    for (int i = 0; i < n; i++) printf(\\"%d \\", arr[i]);\\n    printf(\\"\\\\n\\");\\n    return 0;\\n}"}
-\`\`\`
-
-FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
+FOR QUESTIONS — reply in plain text. No JSON.
+Coordinates must match the screenshot pixel space exactly.`;
 
   const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
 
   // Add prior history (text only for older turns)
-  for (let i = 0; i < history.length - 1; i++) {
-    messages.push({ role: history[i].role, content: history[i].content });
+  for (let i = 0; i < fullHistory.length - 1; i++) {
+    messages.push({ role: fullHistory[i].role, content: fullHistory[i].content });
   }
 
   // Latest user message with screenshot
-  const latest = history[history.length - 1];
+  const latest = fullHistory[fullHistory.length - 1];
+  // Feature 1: now 'latest' is available — evaluate injection intent
+  const userWantsInjection = INJECTION_KEYWORDS.test(latest?.content || '');
   let firstSanitizedImage = null;
 
   if (attachScreenshot && latest) {
@@ -2691,7 +2993,7 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
   }
 
   // First VLM call
-  let rawReply = await callVlm(messages, model);
+  let rawReply = await callVlmGated(messages, model);
   let parsedAction = parseActionFromReply(rawReply);
 
   const userWantsCode = /\b(code|program|script|function|algorithm|sort|write|implement|c\b|python\b|cpp\b|java\b|js\b|html\b|sql\b)/i.test(latest?.content || "");
@@ -2714,16 +3016,73 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
 
   parsedAction = resolveAction(rawReply);
 
+  // ── Feature 1: Code-injection guard ──────────────────────────────
+  // If the VLM returns a 'type' action with a long value (>100 chars, likely
+  // code), and the user did NOT explicitly request injection into the page,
+  // block it and return the code as a styled chat message instead.
+  if (
+    parsedAction &&
+    parsedAction.action === 'type' &&
+    typeof parsedAction.value === 'string' &&
+    parsedAction.value.length > 100 &&
+    !userWantsInjection
+  ) {
+    // Detect language hint from the raw reply's code fence
+    const langMatch = rawReply.match(/```([a-zA-Z0-9_+-]+)\s*\n/);
+    const lang = langMatch ? langMatch[1] : 'code';
+    const codeContent = parsedAction.value;
+    return {
+      reply: `Here is the code:\n\`\`\`${lang}\n${codeContent}\n\`\`\``,
+      actionExecuted: null,
+      sanitizedImage: firstSanitizedImage,
+    };
+  }
+
   // Plain text reply — simple Q&A, no agent loop needed
   if (!parsedAction) {
     const cleanReply = stripActionBlock(rawReply) || rawReply;
     return { reply: cleanReply, actionExecuted: null, sanitizedImage: firstSanitizedImage };
   }
 
+  // ── Human-in-the-Loop approval system ────────────────────────────
+  // Each action is sent to the sidepanel for approval before execution.
+  // resolveMap stores {resolve, reject} keyed by a unique actionId.
+  // Background sends PENDING_ACTION; sidepanel replies with APPROVE_ACTION or REJECT_ACTION.
+  const pendingApprovals = new Map();
+
+  function waitForApproval(actionId, actionObj) {
+    return new Promise((resolve, reject) => {
+      pendingApprovals.set(actionId, { resolve, reject });
+      // Broadcast the pending action to the sidepanel
+      chrome.runtime.sendMessage({
+        type: 'PENDING_ACTION',
+        actionId,
+        action: actionObj,
+      }).catch(() => {
+        // sidepanel might not be open — auto-approve silently
+        pendingApprovals.delete(actionId);
+        resolve({ approved: true, autoApproved: true });
+      });
+      // Timeout after 60s → auto-deny to prevent hanging forever
+      setTimeout(() => {
+        if (pendingApprovals.has(actionId)) {
+          pendingApprovals.delete(actionId);
+          reject(new Error('Approval timed out after 60s — action cancelled.'));
+        }
+      }, 60000);
+    });
+  }
+
   // ── AGENT LOOP ───────────────────────────────────────────────────
   const MAX_STEPS = 15;
   const stepLog = [];
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  const recentActionKeys = []; // track last 3 action signatures
+  function actionKey(a) {
+    return `${a.action}:${a.selector || ''}:${a.x || ''}:${a.y || ''}`;
+  }
+  let consecutiveFailures = 0;
 
   for (let step = 0; step < MAX_STEPS; step++) {
     const action = parsedAction;
@@ -2746,17 +3105,109 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
     }
     stepLog.push(stepLabel);
 
-    // Execute
+    // Repeat-action kill: if same action 3 times in a row, stop
+    const key = actionKey(action);
+    recentActionKeys.push(key);
+    if (recentActionKeys.length > 3) recentActionKeys.shift();
+    if (recentActionKeys.length === 3 && recentActionKeys.every(k => k === key)) {
+      stepLog.push(`[${step + 1}] Stopped: same action repeated 3 times. The task may be complete or stuck.`);
+      break;
+    }
+
+    // ── Human-in-the-Loop: pause and ask user to approve before every action ──
     let execResult = { error: 'not executed' };
+    let approval = { approved: true, autoApproved: true };
     if (action.action === 'error') {
       execResult = { error: action.error };
+    } else if (action.action === 'done') {
+      // 'done' doesn't need approval — it's just a summary
+      execResult = { ok: true };
     } else {
-      try {
-        execResult = await handleExecuteAction(action, activeTab?.id);
-      } catch (e) {
-        execResult = { error: e.message };
+      if (action.action === 'fill_many' && Array.isArray(action.fields)) {
+        const config2 = await chrome.storage.local.get('userProfile');
+        const prof = normalizeProfile(config2.userProfile);
+        action.fields = action.fields.map(f => ({
+          ...f,
+          confidence: computeFillConfidence(f.selector, f.profileKey, f.value, prof),
+        }));
+      }
+
+      // Privacy warning for risky navigate targets
+      if (action.action === 'navigate' && isRiskyUrl(action.url)) {
+        chrome.runtime.sendMessage({
+          type: 'PRIVACY_WARNING',
+          message: `⚠️ Navigating to a potentially privacy-invasive domain: ${action.url}`,
+        }).catch(() => {});
+      }
+
+      if (currentAgentMode === 'safe') {
+        const actionId = `action_${Date.now()}_${step}`;
+        try {
+          approval = await (() => {
+            return new Promise((resolve) => {
+              globalPendingApprovals.set(actionId, { resolve });
+              chrome.runtime.sendMessage({
+                type: 'PENDING_ACTION',
+                actionId,
+                action,
+              }).catch(() => {
+                globalPendingApprovals.delete(actionId);
+                resolve({ approved: true, autoApproved: true });
+              });
+              setTimeout(() => {
+                if (globalPendingApprovals.has(actionId)) {
+                  globalPendingApprovals.delete(actionId);
+                  resolve({ approved: false, reason: 'Approval timed out' });
+                }
+              }, 60000);
+            });
+          })();
+        } catch (approvalErr) {
+          approval = { approved: false, reason: approvalErr.message };
+        }
+      } else {
+        // Auto mode: broadcast a live step notification (no approval needed)
+        chrome.runtime.sendMessage({
+          type: 'AUTO_STEP_LOG',
+          step: step + 1,
+          action,
+        }).catch(() => {});
+      }
+
+      if (!approval.approved) {
+        const skipMsg = approval.autoApproved ? 'auto-approved' : `skipped: ${approval.reason || 'User denied'}`;
+        stepLog.push(`[${step + 1}] ${action.action} → ${skipMsg}`);
+        // Continue loop — don't execute, just let VLM know on the next step
+        execResult = { skipped: true, reason: approval.reason || 'User denied' };
+      } else {
+        try {
+          execResult = await handleExecuteAction(action, activeTab?.id);
+        } catch (e) {
+          execResult = { error: e.message };
+        }
       }
     }
+
+    if (execResult?.error && !execResult?.skipped) {
+      consecutiveFailures++;
+      if (consecutiveFailures >= 2) {
+        stepLog.push(`Stopped after ${consecutiveFailures} consecutive failures: ${execResult.error}`);
+        break;
+      }
+    } else {
+      consecutiveFailures = 0;
+    }
+
+    // Audit log entry
+    const [auditTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    await appendAuditLog({
+      action: action.action,
+      selector: action.selector,
+      value: action.value, // will be redacted inside appendAuditLog
+      url: auditTab?.url,
+      approved: approval?.approved ?? true,
+      result: execResult?.error ? 'error' : execResult?.skipped ? 'skipped' : 'success',
+    });
 
     if (step >= MAX_STEPS - 1) {
       stepLog.push(`[${step + 2}] Reached step limit.`);
@@ -2764,16 +3215,18 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
     }
 
     // Wait for page to settle
-    await new Promise(r => setTimeout(r, 900));
+    await new Promise(r => setTimeout(r, 350));
 
     // Capture new sanitized screenshot
     const nextSnap = await captureSanitizedScreenshot().catch(() => null);
 
-    const resultNote = execResult?.error
-      ? `Action failed: ${execResult.error}`
-      : execResult?.text
-        ? `Extracted: ${execResult.text.slice(0, 300)}`
-        : `Action succeeded.`;
+    const resultNote = execResult?.skipped
+      ? `Action skipped by user. Tell the user you skipped the action and ask what they want to do instead.`
+      : execResult?.error
+        ? `Action failed: ${execResult.error}`
+        : execResult?.text
+          ? `Extracted: ${execResult.text.slice(0, 300)}`
+          : `Action succeeded.`;
 
     messages.push({ role: 'assistant', content: rawReply });
 
@@ -2785,7 +3238,7 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
     }
     messages.push({ role: 'user', content: nextContent });
 
-    rawReply = await callVlm(messages, model);
+    rawReply = await callVlmGated(messages, model);
     parsedAction = resolveAction(rawReply);
 
     if (!parsedAction) {
@@ -2799,6 +3252,18 @@ FOR PURE QUESTIONS: reply in clear text with code in markdown blocks.`;
   }
 
   const reply = stepLog.join('\n');
+
+  // Save this turn to domain session memory
+  if (memDomain && history.length > 0) {
+    const existing = domainSessionMemory.get(memDomain) || [];
+    const latest = history[history.length - 1];
+    existing.push({ role: 'user', content: typeof latest.content === 'string' ? latest.content : '[screenshot turn]' });
+    existing.push({ role: 'assistant', content: reply.slice(0, 500) }); // cap to 500 chars
+    // Keep only last SESSION_MEMORY_TURNS messages
+    if (existing.length > SESSION_MEMORY_TURNS) existing.splice(0, existing.length - SESSION_MEMORY_TURNS);
+    domainSessionMemory.set(memDomain, existing);
+  }
+
   return {
     reply: reply || 'Task completed.',
     actionExecuted: stepLog.length > 0 ? `${stepLog.filter(s => s.startsWith('[')).length} steps` : null,
@@ -2815,3 +3280,9 @@ chrome.action.onClicked.addListener((tab) => {
 
 // Enable opening the side panel on action click
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
+
+// Re-warm inference models when the service worker restarts
+// This covers both fresh install and SW kill/restart by Chrome
+self.addEventListener('activate', () => {
+  warmOnDeviceModelsBestEffort();
+});

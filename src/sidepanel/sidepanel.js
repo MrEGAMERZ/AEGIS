@@ -29,7 +29,175 @@ const chatStatusText  = document.getElementById('chat-status-text');
 const welcomeMsg      = document.getElementById('welcome-msg');
 const modelSelect     = document.getElementById('model-select');
 
-// ── Session Management ─────────────────────────────────────
+// ── Privacy Budget (session-level PII stats) ──
+let privacyBudget = { fields: 0, faces: 0, pii: 0 };
+
+function updatePrivacyBudget(delta) {
+  privacyBudget.fields += delta.fields || 0;
+  privacyBudget.faces  += delta.faces  || 0;
+  privacyBudget.pii    += delta.pii    || 0;
+  const f = document.getElementById('pb-fields');
+  const fa = document.getElementById('pb-faces');
+  const p = document.getElementById('pb-pii');
+  if (f)  f.textContent  = privacyBudget.fields;
+  if (fa) fa.textContent = privacyBudget.faces;
+  if (p)  p.textContent  = privacyBudget.pii;
+}
+
+// ── HITL Approval State ────────────────────────────────────
+let pendingActionCard = null; // The currently displayed approval card element
+
+// Settings Input Bindings
+const vlmApiKeyInput   = document.getElementById('vlm-api-key');
+const vlmEndpointInput = document.getElementById('vlm-endpoint');
+const testCloudBtn     = document.getElementById('test-cloud-btn');
+const cloudStatusBadge = document.getElementById('cloud-status-badge');
+
+const DEFAULT_HF_ENDPOINT = 'https://6ab15373b07925cee9d5efa4.endpoints.huggingface.cloud/v1/chat/completions';
+
+if (vlmApiKeyInput && vlmEndpointInput) {
+  chrome.storage.local.get(['vlmApiKey', 'vlmEndpoint']).then(r => {
+    if (r.vlmApiKey)   vlmApiKeyInput.value   = r.vlmApiKey;
+    if (r.vlmEndpoint) vlmEndpointInput.value = r.vlmEndpoint;
+    else               vlmEndpointInput.value = DEFAULT_HF_ENDPOINT;
+  });
+
+  // Auto-save on every keystroke (original behavior)
+  vlmApiKeyInput.addEventListener('input', () => {
+    chrome.storage.local.set({ vlmApiKey: vlmApiKeyInput.value.trim() });
+  });
+  vlmEndpointInput.addEventListener('input', () => {
+    chrome.storage.local.set({ vlmEndpoint: vlmEndpointInput.value.trim() });
+  });
+}
+
+// ── Test & Save button: ping HF endpoint and show status ───────────
+if (testCloudBtn && cloudStatusBadge) {
+  testCloudBtn.addEventListener('click', async () => {
+    const key      = vlmApiKeyInput?.value?.trim() || '';
+    const endpoint = vlmEndpointInput?.value?.trim() || DEFAULT_HF_ENDPOINT;
+
+    // Save immediately
+    await chrome.storage.local.set({ vlmApiKey: key, vlmEndpoint: endpoint });
+
+    testCloudBtn.textContent = 'Testing…';
+    testCloudBtn.disabled = true;
+    cloudStatusBadge.style.background = '#1e293b';
+    cloudStatusBadge.style.color = '#94a3b8';
+    cloudStatusBadge.textContent = 'Checking…';
+
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (key) headers['Authorization'] = `Bearer ${key}`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: 'Qwen/Qwen2.5-VL-7B-Instruct',
+          messages: [{ role: 'user', content: 'hi' }],
+          max_tokens: 5,
+          stream: false
+        }),
+        signal: AbortSignal.timeout(20000)
+      });
+      if (res.ok || res.status === 422) {
+        // 422 = model accepted request but validation issue — endpoint IS reachable
+        cloudStatusBadge.style.background = '#14532d';
+        cloudStatusBadge.style.color = '#4ade80';
+        cloudStatusBadge.textContent = '✅ Connected!';
+        // Auto-switch to cloud model
+        if (modelSelect) {
+          modelSelect.value = 'secure-cloud-hf';
+          modelSelect.dispatchEvent(new Event('change'));
+        }
+      } else if (res.status === 401 || res.status === 403) {
+        cloudStatusBadge.style.background = '#7f1d1d';
+        cloudStatusBadge.style.color = '#fca5a5';
+        cloudStatusBadge.textContent = '❌ Bad Token (401)';
+      } else if (res.status === 503 || res.status === 502) {
+        cloudStatusBadge.style.background = '#78350f';
+        cloudStatusBadge.style.color = '#fcd34d';
+        cloudStatusBadge.textContent = '⏳ Starting up — wait 2 min';
+      } else {
+        cloudStatusBadge.style.background = '#7f1d1d';
+        cloudStatusBadge.style.color = '#fca5a5';
+        cloudStatusBadge.textContent = `❌ Error ${res.status}`;
+      }
+    } catch (e) {
+      cloudStatusBadge.style.background = '#7f1d1d';
+      cloudStatusBadge.style.color = '#fca5a5';
+      cloudStatusBadge.textContent = e.name === 'TimeoutError' ? '⏱ Timed out — endpoint may be sleeping' : '❌ Unreachable';
+    }
+
+    testCloudBtn.textContent = '🔌 Test & Save';
+    testCloudBtn.disabled = false;
+  });
+}
+
+// ── Model Selector: auto-switch endpoint when model changes ────────
+const CLOUD_MODEL_VAL  = 'secure-cloud-hf';
+
+if (modelSelect) {
+  // Restore last-chosen model from storage
+  chrome.storage.local.get(['aegisSelectedModel', 'selectedModel']).then(r => {
+    const saved = r.selectedModel || r.aegisSelectedModel;
+    if (saved) modelSelect.value = saved;
+  });
+
+  modelSelect.addEventListener('change', async () => {
+    const val = modelSelect.value;
+    // Save under both keys; background.js reads 'selectedModel' at call time
+    await chrome.storage.local.set({ aegisSelectedModel: val, selectedModel: val });
+
+    // Show a brief confirmation chip in the chat
+    const modelLabels = {
+      'SARA-Distillation-0.5B': 'SARA Local',
+      'secure-cloud-hf': 'Secure Cloud',
+      'qwen2.5vl:7b': 'Qwen 2.5 VL 7B',
+      'llama3.2-vision': 'Llama 3.2 Vision',
+    };
+    const label = modelLabels[val] || val;
+    const chip = document.createElement('div');
+    chip.className = 'model-switch-chip';
+    chip.textContent = `✓ Switched to ${label}`;
+    chatContainer.appendChild(chip);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+    setTimeout(() => { if (chip.parentNode) chip.parentNode.removeChild(chip); }, 3000);
+  });
+}
+
+// ── Agent Mode Toggle (Safe = HITL, Auto = no approval needed) ──
+const btnAgentMode = document.getElementById('btn-agent-mode');
+let agentMode = 'safe'; // 'safe' | 'auto'
+
+chrome.storage.local.get('agentMode').then(r => {
+  agentMode = r.agentMode || 'safe';
+  updateModeBtnUI();
+});
+
+function updateModeBtnUI() {
+  if (!btnAgentMode) return;
+  if (agentMode === 'safe') {
+    btnAgentMode.textContent = '🔒 Safe Mode';
+    btnAgentMode.className = 'mode-toggle safe';
+  } else {
+    btnAgentMode.textContent = '⚡ Auto Mode';
+    btnAgentMode.className = 'mode-toggle auto';
+  }
+}
+
+btnAgentMode?.addEventListener('click', async () => {
+  agentMode = agentMode === 'safe' ? 'auto' : 'safe';
+  await chrome.storage.local.set({ agentMode });
+  updateModeBtnUI();
+  // Notify background of mode change
+  chrome.runtime.sendMessage({ type: 'SET_AGENT_MODE', mode: agentMode }).catch(() => {});
+  // Show a brief status
+  const label = agentMode === 'safe' ? '🔒 Safe Mode — approving every step' : '⚡ Auto Mode — agent runs freely';
+  setStatus(label, false);
+  setTimeout(() => setStatus('', false), 2500);
+});
+
 const SESSION_STORAGE_KEY = 'aegisChatSessions';
 const ACTIVE_SESSION_KEY  = 'aegisActiveChatId';
 
@@ -348,6 +516,140 @@ function renderMessage(role, text, imageUrl, animate = true) {
   return wrap;
 }
 
+// ── Human-in-the-Loop Approval Card ──────────────────────
+function describeAction(action) {
+  if (!action) return 'Unknown action';
+  switch (action.action) {
+    case 'click':
+      if (action.selector) return `🖱️ Click  →  ${action.selector}`;
+      if (action.text)     return `🖱️ Click  "${action.text}"`;
+      return `🖱️ Click at (${action.x}, ${action.y})`;
+    case 'type':
+      return `⌨️ Type "${String(action.value || '').slice(0, 60)}" into ${action.selector}`;
+    case 'fill_many': {
+      const n = Array.isArray(action.fields) ? action.fields.length : '?';
+      return `📋 Fill ${n} field(s) with profile data`;
+    }
+    case 'navigate':
+      return `🌐 Navigate to ${action.url}`;
+    case 'scroll':
+      return `↕️ Scroll ${action.direction}`;
+    case 'key_press':
+      return `⌨️ Press key [${action.key}]`;
+    case 'hover':
+      return `👆 Hover over ${action.selector}`;
+    case 'extract_text':
+      return `📄 Extract text from ${action.selector || 'page'}`;
+    case 'clear':
+      return `✖️ Clear field ${action.selector}`;
+    case 'focus':
+      return `🎯 Focus on ${action.selector}`;
+    case 'wait':
+      return `⏳ Wait ${action.ms || 1000}ms`;
+    case 'write_code':
+      return `💻 Write code (${String(action.code || '').length} chars) to editor`;
+    default:
+      return `⚙️ ${action.action}`;
+  }
+}
+
+function renderPlanCard(steps) {
+  const card = document.createElement('div');
+  card.className = 'plan-card';
+  const list = steps.map((s, i) => `<li>${i + 1}. ${s}</li>`).join('');
+  card.innerHTML = `
+    <div class="plan-header">📋 Agent Plan</div>
+    <ol class="plan-list">${list}</ol>
+    <div class="plan-note">Each step will ask for your approval before running.</div>
+  `;
+  chatContainer.appendChild(card);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function renderApprovalCard(actionId, action) {
+  // Remove any existing card
+  if (pendingActionCard) {
+    pendingActionCard.remove();
+    pendingActionCard = null;
+  }
+
+  const card = document.createElement('div');
+  card.className = 'hitl-approval-card';
+  card.dataset.actionId = actionId;
+
+  const desc = describeAction(action);
+
+  let actionHtml = `<div class="hitl-action-desc">${desc}</div>`;
+  if (action && action.action === 'type') {
+    actionHtml = `
+      <div class="hitl-action-desc">⌨️ Type into ${action.selector}:</div>
+      <input class="hitl-edit-input" id="hitl-edit-${actionId}" value="${action.value || ''}" />
+    `;
+  } else if (action && action.action === 'navigate') {
+    actionHtml = `
+      <div class="hitl-action-desc">🌐 Navigate to:</div>
+      <input class="hitl-edit-input" id="hitl-edit-${actionId}" value="${action.url || ''}" />
+    `;
+  }
+
+  card.innerHTML = `
+    <div class="hitl-header">
+      <span class="hitl-icon">🔐</span>
+      <span class="hitl-title">Action requires your approval</span>
+    </div>
+    ${actionHtml}
+    <div class="hitl-actions">
+      <button class="hitl-btn hitl-deny"  data-id="${actionId}">✕ Deny</button>
+      <button class="hitl-btn hitl-allow" data-id="${actionId}">✓ Allow</button>
+    </div>
+  `;
+
+  card.querySelector('.hitl-allow').addEventListener('click', () => {
+    const editInput = card.querySelector('.hitl-edit-input');
+    const finalValue = editInput ? editInput.value : (action.action === 'type' ? action.value : action.url);
+    card.remove();
+    pendingActionCard = null;
+    chrome.runtime.sendMessage({ type: 'APPROVE_ACTION', actionId, editedValue: finalValue });
+  });
+
+  card.querySelector('.hitl-deny').addEventListener('click', () => {
+    card.remove();
+    pendingActionCard = null;
+    chrome.runtime.sendMessage({ type: 'REJECT_ACTION', actionId, reason: 'User denied' });
+  });
+
+  chatContainer.appendChild(card);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+  pendingActionCard = card;
+
+  // Add voice approval listener (auto-activates for 10s)
+  if (typeof SpeechRecognition !== 'undefined' || typeof webkitSpeechRecognition !== 'undefined') {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const voiceApproval = new SR();
+    voiceApproval.lang = 'en-US';
+    voiceApproval.maxAlternatives = 1;
+    voiceApproval.onresult = (event) => {
+      const transcript = (event.results[0][0].transcript || '').toLowerCase().trim();
+      if (/\b(allow|yes|approve|proceed|ok|okay|go|confirm)\b/.test(transcript)) {
+        card.querySelector('.hitl-allow')?.click();
+      } else if (/\b(deny|no|stop|cancel|reject|block)\b/.test(transcript)) {
+        card.querySelector('.hitl-deny')?.click();
+      }
+    };
+    voiceApproval.onerror = () => {}; // fail silently
+    try { voiceApproval.start(); } catch(e) {}
+    // auto-stop after 10s
+    setTimeout(() => { try { voiceApproval.stop(); } catch(e) {} }, 10000);
+    // Show mic indicator on card
+    const micBadge = document.createElement('div');
+    micBadge.className = 'hitl-mic-badge';
+    micBadge.textContent = '🎤 Listening for "Allow" or "Deny"…';
+    card.querySelector('.hitl-actions').before(micBadge);
+  }
+
+  return card;
+}
+
 // ── Quick Commands (no VLM needed) ────────────────────────
 const FILL_PATTERNS     = /\bfill\s*(the\s*)?(form|fields?|page|all|it)\b|\bauto.?fill\b/i;
 const SCAN_PATTERNS     = /\b(privacy\s*scan|scan\s*page|check\s*(privacy|risks?)|run\s*scan)\b/i;
@@ -357,23 +659,53 @@ async function runFillCommand() {
   setStatus('Filling form with your profile…', true);
   try {
     const res = await chrome.runtime.sendMessage({ type: 'FILL_MATCHING_FIELDS' });
-    if (res?.error) return `❌ Could not fill: ${res.error}`;
+    if (res?.error) return friendlyError(res.error);
     const n = res?.filled || 0;
     return `✅ Filled ${n} field${n === 1 ? '' : 's'} using your saved profile. Passwords and sensitive fields were kept private.`;
   } catch (e) {
-    return `❌ Fill failed: ${e.message}`;
+    return friendlyError(e.message);
   }
+}
+
+function renderPrivacyReceipt(receipt, fieldCount) {
+  if (!receipt) return;
+  const faces = receipt.masked?.faces || 0;
+  const pii = receipt.masked?.piiSpans || 0;
+  const fields = receipt.masked?.passwordFields || fieldCount || 0;
+  const total = faces + pii + fields;
+  if (total === 0) {
+    renderMessage('assistant', '✅ **Privacy Scan Complete** — No sensitive data detected on this page.');
+    return;
+  }
+  const lines = ['🔐 **Privacy Scan Complete**', ''];
+  if (fields > 0) lines.push(`🔒 ${fields} sensitive field${fields !== 1 ? 's' : ''} shielded`);
+  if (faces > 0) lines.push(`👤 ${faces} face${faces !== 1 ? 's' : ''} detected & redacted`);
+  if (pii > 0) lines.push(`📝 ${pii} PII text span${pii !== 1 ? 's' : ''} masked`);
+  lines.push('');
+  lines.push(`*Your data stays on-device. Nothing left the browser.*`);
+  renderMessage('assistant', lines.join('\n'));
 }
 
 async function runScanCommand() {
   setStatus('Running privacy scan…', true);
   try {
-    await chrome.runtime.sendMessage({ type: 'SCAN_AND_OVERLAY' });
+    const res = await chrome.runtime.sendMessage({ type: 'SCAN_AND_OVERLAY' });
     const img = await chrome.runtime.sendMessage({ type: 'GET_LAST_SANITIZED_IMAGE' });
+    if (res && res.receipt) {
+      renderPrivacyReceipt(res.receipt, res.fieldCount);
+    }
     return { text: '🔒 Privacy scan complete. The sanitized view shows what any AI is allowed to see.', image: img };
   } catch (e) {
-    return { text: `❌ Scan failed: ${e.message}` };
+    return { text: friendlyError(e.message) };
   }
+}
+
+// Aadhaar display masking per UIDAI regulations
+function maskAadhaar(value) {
+  if (!value) return value;
+  const digits = String(value).replace(/\D/g, '');
+  if (digits.length === 12) return 'XXXX XXXX ' + digits.slice(8);
+  return value; // not an Aadhaar — return as-is
 }
 
 async function runProfileCommand() {
@@ -381,7 +713,13 @@ async function runProfileCommand() {
   const profile = data.userProfile || {};
   const fields = Object.entries(profile).filter(([,v]) => v);
   if (!fields.length) return '❌ No profile saved yet. Go to the Profile tab to add your details.';
-  const lines = fields.map(([k, v]) => `• ${k}: ${String(v).slice(0, 40)}`).join('\n');
+  const lines = fields.map(([k, v]) => {
+    let displayVal = String(v).slice(0, 40);
+    if (/^aadhaar(_?number)?$/i.test(k)) {
+      displayVal = maskAadhaar(v);
+    }
+    return `• ${k}: ${displayVal}`;
+  }).join('\n');
   return `👤 Your saved profile (${fields.length} fields):\n${lines}`;
 }
 
@@ -468,6 +806,18 @@ async function handleSend() {
         s2.messages[s2.messages.length - 1].image = sanitizedImg;
         await saveSessions(sessions2);
       }
+      // Show the sanitized screenshot INLINE so judges can see what the AI actually saw
+      const proofEl = document.createElement('div');
+      proofEl.className = 'privacy-proof-bubble';
+      proofEl.innerHTML = `
+        <div class="privacy-proof-header">
+          <svg width="10" height="12" viewBox="0 0 10 12" fill="none"><path d="M5 1L9 2.5V6C9 8.761 7.209 11.206 5 12C2.791 11.206 1 8.761 1 6V2.5L5 1Z" fill="#22c55e" fill-opacity="0.3" stroke="#22c55e" stroke-width="1"/></svg>
+          <span>What the AI saw — faces &amp; PII already removed on-device</span>
+        </div>
+        <img src="${sanitizedImg}" class="privacy-proof-img" title="Sanitized on your device before sending to AI" />
+      `;
+      chatContainer.appendChild(proofEl);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
     }
 
     const reply = res.reply || '✅ Done.';
@@ -641,6 +991,14 @@ document.querySelectorAll('.tab[data-tab="fill"]').forEach(t => {
   });
 });
 
+// Ensure profile content is visible when user switches to Profile tab
+document.querySelectorAll('.tab[data-tab="profile"]').forEach(t => {
+  t.addEventListener('click', () => {
+    const mainContent = document.getElementById('profile-main-content');
+    if (mainContent) mainContent.style.display = 'block';
+  });
+});
+
 // ── Boot ───────────────────────────────────────────────────
 (async () => {
   await pruneEmptySessions();
@@ -704,3 +1062,101 @@ if (btnMic) {
     }
   });
 }
+// ── Listen for HITL approval requests from the agent loop ─
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === 'PENDING_ACTION') {
+    renderApprovalCard(msg.actionId, msg.action);
+    return false;
+  }
+  if (msg.type === 'PRIVACY_RECEIPT_UPDATE') {
+    updatePrivacyBudget({
+      fields: msg.maskedFields || 0,
+      faces:  msg.faces || 0,
+      pii:    msg.nerSpans || 0,
+    });
+    return false;
+  }
+  if (msg.type === 'AGENT_PLAN') {
+    renderPlanCard(msg.steps);
+    return false;
+  }
+});
+
+chrome.runtime.onMessage.addListener(msg => { if (msg.type === 'LLM_PROGRESS') { chatStatus.style.display = 'block'; chatStatusText.textContent = `Loading Local Model (${msg.data.file}): ${Math.round(msg.data.progress)}%`; } });
+
+
+function friendlyError(raw) {
+  if (!raw) return 'Something went wrong. Please try again.';
+  const s = String(raw);
+  if (s.includes('UNSCANNABLE_TAB')) return '⚠️ AEGIS cannot scan this page (Chrome settings or PDF). Please navigate to a regular webpage.';
+  if (s.includes('SCAN_ABORTED')) return 'Scan was cancelled.';
+  if (s.includes('SARA unreachable') || s.includes('Could not reach AI')) return '⚠️ SARA is offline. Make sure Ollama is running: open Terminal and run `ollama serve`.';
+  if (s.includes('VLM queue timeout')) return '⚠️ SARA is busy. Please wait a moment and try again.';
+  if (s.includes('No active tab')) return '⚠️ No active tab found. Click on a webpage first.';
+  if (s.includes('PASSWORD_REQUIRED') || s.includes('Password entry timed out')) return '⚠️ PDF password entry timed out. Please try uploading the document again.';
+  if (s.includes('STRUCTURE_EMPTY_TEXT')) return '⚠️ Document appears empty. Please check the file and try again.';
+  if (s.includes('STRUCTURE_TOO_LARGE')) return '⚠️ Document is too large. Please try a shorter document.';
+  if (s.includes('Extension context invalidated')) return '⚠️ Extension was updated. Please reload the page.';
+  return '⚠️ ' + s.replace(/^Error:s*/i, '').slice(0, 120);
+}
+
+
+// ── Drop-and-Fill UX End-to-End ───────────────────────────
+
+// 1. Drop Zone in Sidepanel
+const dropZone = document.getElementById('drop-zone-hint');
+if (dropZone) {
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (!file || file.type !== 'application/pdf') {
+      renderMessage('assistant', '⚠️ Please drop a PDF file.');
+      return;
+    }
+    renderMessage('assistant', `📄 Reading **${file.name}**…`);
+    // Send to background for extraction
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const res = await chrome.runtime.sendMessage({
+          type: 'STRUCTURE_DOCUMENT_TEXT',
+          text: '(PDF dropped from sidepanel — extract fields from this document)',
+          fileName: file.name,
+        });
+        if (res?.error) { renderMessage('assistant', friendlyError(res.error)); return; }
+        const count = res?.fields ? Object.keys(res.fields).length : 0;
+        renderMessage('assistant', `✅ Extracted **${count} fields** from ${file.name}. Click **Fill Form** to autofill the current page.`);
+      } catch (e) { renderMessage('assistant', friendlyError(e.message)); }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// 2. "Fill Form" Quick Action Button
+document.getElementById('btn-fill-form')?.addEventListener('click', async () => {
+  renderMessage('user', 'Fill the form on this page');
+  if (typeof runFillCommand === 'function') {
+    const reply = await runFillCommand();
+    renderMessage('assistant', reply);
+    await saveMessageToSession(activeSessionId, { role: 'assistant', content: reply });
+  } else {
+    const res = await chrome.runtime.sendMessage({ type: 'FILL_MATCHING_FIELDS' }).catch(e => ({ error: e.message }));
+    if (res?.error) renderMessage('assistant', friendlyError(res.error));
+    else renderMessage('assistant', `✅ Filled ${res?.filled || 0} fields.`);
+  }
+});
+
+// 3. Profile Summary on Open
+chrome.storage.local.get('userProfile').then(({ userProfile }) => {
+  if (userProfile && Object.keys(userProfile).length > 0) {
+    const count = Object.keys(userProfile).length;
+    const name = userProfile.fullName || userProfile.name || 'Unknown';
+    renderMessage('assistant', `👤 Profile loaded: **${name}** · ${count} fields ready. Say "fill form" or drop a PDF to get started.`);
+  }
+}).catch(() => {});

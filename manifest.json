@@ -30,12 +30,14 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>", "file://*/*"],
+      "css": ["src/content/content.css"],
       "js": [
         "src/content/field-mapper.js",
         "src/content/autofill.js",
         "src/content/content.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
 
@@ -57,7 +59,7 @@
   },
 
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' http://localhost:8000 http://localhost:11434; object-src 'none'"
   },
 
   "commands": {
@@ -74,6 +76,7 @@
     {
       "resources": [
         "src/offscreen/offscreen.html",
+        "src/offscreen/llm-worker.js",
         "src/voice/voice.html",
         "src/dashboard/dashboard.html",
         "src/inference/inference.worker.js",

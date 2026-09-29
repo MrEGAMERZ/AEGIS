@@ -148,6 +148,53 @@
   const filledHistory = [];
   let floatingBadgeHost = null;
 
+  function setNativeValue(el, value) {
+    // React 16+ uses a custom getter/setter on the input prototype.
+    // We must call the ORIGINAL setter to trigger React's onChange.
+    const nativeInputProto = Object.getPrototypeOf(el);
+    const descriptor =
+      Object.getOwnPropertyDescriptor(nativeInputProto, 'value') ||
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value') ||
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+    if (descriptor && descriptor.set) {
+      descriptor.set.call(el, value);
+    } else {
+      el.value = value;
+    }
+  }
+
+  function fillFieldRobust(el, value) {
+    if (!el) return false;
+    el.focus();
+    el.scrollIntoView({ block: 'center', behavior: 'instant' });
+
+    // Clear existing value first
+    setNativeValue(el, '');
+
+    // Set new value via native setter (React/Vue/Angular compatible)
+    setNativeValue(el, value);
+
+    // Fire full synthetic event sequence for maximum framework compat
+    const events = [
+      new Event('focus', { bubbles: true }),
+      new KeyboardEvent('keydown', { bubbles: true, key: value.slice(-1) || 'a' }),
+      new InputEvent('input', { bubbles: true, cancelable: true, data: value, inputType: 'insertText' }),
+      new Event('change', { bubbles: true }),
+      new KeyboardEvent('keyup', { bubbles: true, key: value.slice(-1) || 'a' }),
+    ];
+    for (const ev of events) el.dispatchEvent(ev);
+
+    // Angular 2+ NgModel change detection
+    if (typeof window['ng'] !== 'undefined') {
+      try {
+        const ngEl = window['ng'].getComponent?.(el) || window['ng'].getContext?.(el);
+        if (ngEl && typeof ngEl.ngOnChanges === 'function') ngEl.ngOnChanges({});
+      } catch {}
+    }
+
+    return true;
+  }
+
   function fillElement(el, value) {
     value = String(value);
 
@@ -166,7 +213,7 @@
           target.includes(o.textContent.trim().toLowerCase())
       );
       if (!option) return false;
-      el.value = option.value;
+      value = option.value;
     } else {
       const type = (el.type || "text").toLowerCase();
       if (type === "radio") {
@@ -175,26 +222,34 @@
         const labelText = labelOf(el).toLowerCase();
         if (valMatch === target || labelText.includes(target) || target.includes(labelText)) {
           el.checked = true;
+          el.dataset[FILLED_FLAG] = "1";
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
         } else {
           return false;
         }
       } else if (type === "checkbox") {
         if (/^(true|yes|1|agree|check)$/i.test(value)) {
           el.checked = true;
+          el.dataset[FILLED_FLAG] = "1";
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
         } else {
           return false;
         }
       } else {
         if (type === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
         if (el.maxLength > 0 && value.length > el.maxLength) value = value.slice(0, el.maxLength);
-        el.value = value;
       }
     }
 
-    el.dataset[FILLED_FLAG] = "1";
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
+    const filled = fillFieldRobust(el, value);
+    if (filled) {
+      el.dataset[FILLED_FLAG] = "1";
+    }
+    return filled;
   }
 
   function undoAutofill() {

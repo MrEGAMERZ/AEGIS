@@ -36,10 +36,45 @@ export async function extractDocumentText(filePayload, options = {}) {
   if (bytes.length === 0) throw new Error("DOC_EXTRACT_EMPTY: the file is empty");
 
   let text;
+  let isScannedFallback = false;
   switch (format) {
     case "pdf": {
       const { extractPdfText } = await import("./pdf-extractor.js");
-      text = await extractPdfText(bytes, options);
+      
+      async function extractWithPasswordFallback(arrayBuffer) {
+        // First attempt — no password
+        try {
+          return await extractPdfText(arrayBuffer, null);
+        } catch (err) {
+          const isPasswordErr = err.name === 'PasswordException' ||
+            (err.message && err.message.toLowerCase().includes('password'));
+          if (!isPasswordErr) throw err;
+        }
+        
+        // Password required — ask user
+        chrome.runtime.sendMessage({ type: 'PDF_PASSWORD_REQUIRED' }).catch(() => {});
+        
+        // Wait for password response (30s timeout)
+        const password = await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('Password entry timed out')), 30000);
+          const handler = (msg) => {
+            if (msg.type === 'PDF_PASSWORD_RESPONSE') {
+              clearTimeout(timer);
+              chrome.runtime.onMessage.removeListener(handler);
+              resolve(msg.password);
+            }
+          };
+          chrome.runtime.onMessage.addListener(handler);
+        });
+        
+        // Retry with user password
+        return await extractPdfText(arrayBuffer, password);
+      }
+
+      text = await extractWithPasswordFallback(bytes);
+      if (text.replace(/\s/g, '').length < 50) {
+        isScannedFallback = true;
+      }
       break;
     }
     case "docx": {
@@ -53,7 +88,13 @@ export async function extractDocumentText(filePayload, options = {}) {
     }
   }
 
-  return { text: String(text || ""), format };
+  const result = { text: String(text || ""), format };
+  if (isScannedFallback) {
+    result.isScanned = true;
+    result.confidence = 0;
+    result.needsOcr = true;
+  }
+  return result;
 }
 
 export function detectFormat(fileName, mimeType) {

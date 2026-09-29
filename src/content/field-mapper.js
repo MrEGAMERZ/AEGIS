@@ -74,6 +74,10 @@
     /\bupi\s*(pin|id)\b/i,
     /\bssn\b|social\s*security/i,
     /tax\s*id|tin\b/i,
+  ,
+    /\b(diagnosis|medication|prescription|mrn|medical\.?record|insurance|blood\.?type|blood\.?group|patient\.?id|health|allerg|symptom|treatment)\b/i,
+    /\b(salary|income|compensation|wage|annual|revenue|bank\.?account|account\.?number|ifsc|routing|iban|swift|api\.?key|secret\.?key|access\.?token|private\.?key|auth\.?token)\b/i,
+    /\b(aadhaar|pan\.?number|pan\.?card|passport|voter|ration|driving\.?licen|dl\.?number)\b/i
   ];
 
   // ── Autocomplete attribute → canonical key ────────────────────────
@@ -127,6 +131,7 @@
     { key: "branch", patterns: [/branch/i, /department/i, /specialization|specialisation/i, /\bstream\b/i] },
     { key: "occupation", patterns: [/occupation/i, /profession/i, /designation/i, /job\s*title/i] },
     { key: "annualIncome", patterns: [/income/i, /salary/i] },
+    { key: "sensitiveCode", sensitive: true, patterns: [/\b(otp|one.?time.?pass(word|code)?|verification.?code|passcode|pin.?code|portal.?pin|confirm.?pin)\b/i] },
   ];
 
   // ── CSS selector builder (moved here so both mapper and consumers share it)
@@ -165,6 +170,49 @@
 
   // ── Classification ────────────────────────────────────────────────
 
+  
+// Luhn algorithm — returns true only for valid card numbers
+function luhnCheck(num) {
+  const digits = String(num).replace(/\D/g, '');
+  if (digits.length < 13 || digits.length > 19) return false;
+  let sum = 0;
+  let isEven = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = parseInt(digits[i], 10);
+    if (isEven) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+    isEven = !isEven;
+  }
+  return sum % 10 === 0;
+}
+
+function getLabelText(el) {
+  // Try explicit <label for="..."> association
+  const id = el.id;
+  if (id) {
+    const label = document.querySelector(`label[for="${CSS.escape(id)}"]`);
+    if (label) return label.textContent || '';
+  }
+  // Try aria-label
+  if (el.getAttribute('aria-label')) return el.getAttribute('aria-label');
+  // Try aria-labelledby
+  const lby = el.getAttribute('aria-labelledby');
+  if (lby) {
+    const lel = document.getElementById(lby);
+    if (lel) return lel.textContent || '';
+  }
+  // Try preceding sibling
+  const prev = el.previousElementSibling;
+  if (prev) return prev.textContent || '';
+  // Try parent label
+  const parentLabel = el.closest('label');
+  if (parentLabel) return parentLabel.textContent || '';
+  return '';
+}
+
   function fieldText(el, includePlaceholder = true) {
     return [
       el.labels
@@ -182,12 +230,71 @@
       .join(" ");
   }
 
+  // Fields that should NEVER be redacted (allowlist)
+  // These patterns match labels/names of non-PII business fields
+  const SAFE_PATTERNS = [
+    /\b(revenue|gross|net|profit|loss|margin|growth|rate|percent|%)\b/i,
+    /\b(q1|q2|q3|q4|quarter|annual|monthly|weekly|ytd|mtd)\b/i,
+    /\b(units|count|total|sum|avg|average|mean|median)\b/i,
+    /\b(chart|graph|metric|kpi|dashboard|analytics|report)\b/i,
+    /\b(date|time|timestamp|created|updated|modified)\b/i,
+    /\b(status|state|stage|category|type|label|tag)\b/i,
+    // Shipping/billing address fields are NOT sensitive standalone
+    // (they become sensitive only combined with a person's name, which NER handles)
+    /\b(ship(ping)?|billing|deliver(y|to))\b/i,
+    /\b(street|avenue|road|city|state|zip|postal)\b/i, // only if no PAN/Aadhaar context
+  ];
+
+  function isSafeField(text) {
+    if (!text) return false;
+    return SAFE_PATTERNS.some(p => p.test(text));
+  }
+
   function classifyField(el) {
-    // Worst-case net: the placeholder of a name field often reads
-    // "As per Aadhaar / PAN" — an instruction, not the field's identity.
-    // Never-store evidence must come from label/name/id/aria/title only.
-    const idText = fieldText(el, false);
-    const text = fieldText(el);
+    // Only classify actual input elements — skip labels, headers, divs, spans
+    const SCANNABLE_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON']);
+    if (!SCANNABLE_TAGS.has(el.tagName)) return null;
+
+    // Password fields — always sensitive, highest priority
+    if (el.type === 'password') {
+      return { key: 'password', sensitive: true, reason: 'password_type' };
+    }
+
+    const idText = fieldText(el, false) + " " + getLabelText(el);
+    const text = fieldText(el) + " " + getLabelText(el);
+    const val = el.value || "";
+    const placeholder = el.placeholder || "";
+    
+    // Allowlist check — these are never sensitive even if they match a pattern
+    const combinedText = [el.name, el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label')].filter(Boolean).join(' ');
+    if (isSafeField(combinedText)) return { key: null, reason: 'allowlist_safe' };
+
+    const acAttr = (el.getAttribute('autocomplete') || '').toLowerCase();
+    if (acAttr.startsWith('shipping-') || acAttr.startsWith('billing-')) {
+      // Shipping/billing address components are not PII in isolation
+      if (!acAttr.includes('cc-') && !acAttr.includes('bday')) return null;
+    }
+
+    // Read-only metric fields are never PII
+    if (el.readOnly && el.type === 'number') return { key: null, reason: 'readonly_number' };
+    // Small-range number inputs are quantity fields, not PII
+    if (el.type === 'number' && el.max && parseInt(el.max) < 10000) return { key: null, reason: 'small_number' };
+
+    // Card number luhn check for value/placeholder
+    const cardPattern = /(?:\d[ -]*?){13,19}/;
+    if (cardPattern.test(val) && luhnCheck(val)) {
+        return { key: "never_store", reason: "luhn_valid_card_value" };
+    }
+    if (cardPattern.test(placeholder) && luhnCheck(placeholder)) {
+        return { key: "never_store", reason: "luhn_valid_card_placeholder" };
+    }
+
+    if (/\b(card.?(holder|name|owner)|cc.?name|cardholder)\b/i.test(text)) {
+      return { key: 'cardholderName', sensitive: true, reason: 'cardholder_name_pattern' };
+    }
+    if (/\b(exp(iry|ir(ation|es)?|.?date)?|cc.?exp|card.*expir|valid.?thru|valid.?until)\b/i.test(text)) {
+      return { key: 'cardExpiry', sensitive: true, reason: 'card_expiry_pattern' };
+    }
 
     // 1. Never-store identifiers win over everything (compliance rule)
     for (const pattern of NEVER_STORE_PATTERNS) {
@@ -206,7 +313,9 @@
     for (const rule of KEYWORD_RULES) {
       for (const pattern of rule.patterns) {
         if (pattern.test(text)) {
-          return { key: rule.key, reason: `keyword: ${pattern}` };
+          const result = { key: rule.key, reason: `keyword: ${pattern}` };
+          if (rule.sensitive) result.sensitive = true;
+          return result;
         }
       }
     }

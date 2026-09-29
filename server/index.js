@@ -16,6 +16,7 @@ const CONFIG = {
   // Display name shown in /health, logs, and the extension popup.
   displayModel: "SARA-Distillation-0.5B",
   upstreamApiKey: process.env.UPSTREAM_API_KEY || "",
+  gatewayPassword: process.env.GATEWAY_PASSWORD || "",
   mock: process.env.MOCK === "1" || process.argv.includes("--mock"),
   requestTimeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || 120000),
 };
@@ -219,29 +220,33 @@ async function callUpstream(payload) {
   const headers = { "Content-Type": "application/json" };
   if (CONFIG.upstreamApiKey) headers.Authorization = `Bearer ${CONFIG.upstreamApiKey}`;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CONFIG.requestTimeoutMs);
-  const started = Date.now();
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => "");
-      throw new Error(`Upstream ${res.status}: ${errBody.slice(0, 500)}`);
+  let attempt = 0;
+  while (attempt < 2) {
+    attempt++;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CONFIG.requestTimeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => "");
+        throw new Error(`Upstream ${res.status}: ${errBody.slice(0, 500)}`);
+      }
+      return await res.json();
+    } catch (e) {
+      clearTimeout(timer);
+      if (attempt >= 2 || e.name === 'AbortError') throw e;
+      console.warn(`[WARN] Upstream call failed (${e.message}), retrying in 500ms...`);
+      await new Promise(r => setTimeout(r, 500));
     }
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-    log("INFO", "upstream call finished", { latencyMs: Date.now() - started });
   }
 }
 
-// ── Mock VLM (for testing the pipeline without a model installed) ───
 function mockCompletion(payload) {
   const lastMsg = payload.messages?.[payload.messages.length - 1];
   const textPart = Array.isArray(lastMsg?.content)
@@ -349,6 +354,7 @@ async function handleModels(res) {
 
 async function handleChatCompletions(req, res) {
   const started = Date.now();
+  const url = new URL(req.url, `http://${req.headers.host || `localhost:${CONFIG.port}`}`);
   let payload;
   try {
     payload = JSON.parse(await readBody(req));
@@ -374,7 +380,7 @@ async function handleChatCompletions(req, res) {
         });
       }
     }
-    if (!CONFIG.mock && payload && typeof payload === "object" && !payload.model) {
+    if (!CONFIG.mock && payload && typeof payload === "object") {
       payload.model = CONFIG.upstreamModel;
     }
     const data = CONFIG.mock ? mockCompletion(payload) : await callUpstream(payload);
@@ -386,8 +392,9 @@ async function handleChatCompletions(req, res) {
                        (payload?.messages?.length > 2) ||
                        (payload?.messages?.some?.(m => m.role === "system" && m.content?.includes("AEGIS")));
     
+    let action = null;
     if (!isChatMode) {
-      const action = extractAction(raw);
+      action = extractAction(raw);
       if (action) {
         data.choices[0].message.content = JSON.stringify(action);
       }
@@ -421,6 +428,15 @@ const server = http.createServer(async (req, res) => {
   }
 
   const url = new URL(req.url, `http://${req.headers.host || `localhost:${CONFIG.port}`}`);
+
+  if (CONFIG.gatewayPassword && req.method !== "OPTIONS" && url.pathname !== "/health") {
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (token !== CONFIG.gatewayPassword) {
+      log("WARN", "Unauthorized access attempt", { path: url.pathname });
+      return sendJson(res, 401, { error: { message: "Unauthorized. Invalid Gateway Password." } });
+    }
+  }
 
   try {
     if (req.method === "GET" && url.pathname === "/health") return await handleHealth(res);
