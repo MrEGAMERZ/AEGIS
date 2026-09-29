@@ -2853,21 +2853,9 @@ async function callVlm(messages, model) {
   } catch { endpoint = DEFAULT_OLLAMA_VLM; }
 
   // Map UI model names to actual Ollama model IDs
-  // 'SARA-Distillation-0.5B' → local Sara model (qwen2.5vl:7b via Ollama directly)
-  // 'secure-cloud-hf' → cloud mode (also uses qwen2.5vl:7b through gateway for demo)
   let actualModel = 'qwen2.5vl:7b';
-  if (model === 'SARA-Distillation-0.5B') {
-    actualModel = 'qwen2.5vl:7b';
-    // For local Sara, always hit Ollama directly for lowest latency
-    endpoint = DEFAULT_OLLAMA_VLM;
-  } else if (model === 'secure-cloud-hf') {
-    actualModel = 'qwen2.5vl:7b'; // gateway proxies to Ollama for demo
-    // endpoint stays as DEFAULT_GATEWAY_VLM (already set above)
-  } else if (model === 'llama3.2-vision') {
-    actualModel = 'qwen3:8b';
-  } else if (model === 'qwen2.5vl:7b') {
-    actualModel = 'qwen2.5vl:7b';
-  }
+  if (model === 'llama3.2-vision') actualModel = 'qwen3:8b';
+  else if (model === 'qwen2.5vl:7b') actualModel = 'qwen2.5vl:7b';
 
   const payload = { model: actualModel, messages, temperature: 0, stream: false, keep_alive: -1 };
 
