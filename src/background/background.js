@@ -46,6 +46,17 @@ const MAX_HISTORY = 5;
 // Cached config to avoid repeated chrome.storage.local reads on every VLM call.
 // Refreshed on storage change events.
 let _cachedVlmConfig = null;
+// Gateway health cache — probe at most once every 10s
+let _cachedGatewayHealth = null;
+let _gatewayHealthTs = 0;
+async function probeGatewayHealthCached() {
+  if (_cachedGatewayHealth && Date.now() - _gatewayHealthTs < 10000) {
+    return _cachedGatewayHealth;
+  }
+  _cachedGatewayHealth = await probeGatewayHealth();
+  _gatewayHealthTs = Date.now();
+  return _cachedGatewayHealth;
+}
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.vlmApiKey || changes.vlmEndpoint || changes.selectedModel || changes.agentMode) {
     _cachedVlmConfig = null; // invalidate cache
@@ -2831,41 +2842,71 @@ async function captureSanitizedScreenshot() {
 async function callVlm(messages, model) {
   const cfg = await getVlmConfig();
   const apiKey = cfg.sessionApiKey || cfg.vlmApiKey || '';
-  const endpoint = DEFAULT_OLLAMA_VLM;
+  
+  // Route to Gateway (which proxies Ollama) — always prefer the gateway
+  // so rate-limiting, retries, and image validation run on every request.
+  // Fall back to direct Ollama only if gateway health check fails.
+  let endpoint = DEFAULT_GATEWAY_VLM;
+  try {
+    const health = await probeGatewayHealthCached();
+    if (!health.gatewayUp) endpoint = DEFAULT_OLLAMA_VLM;
+  } catch { endpoint = DEFAULT_OLLAMA_VLM; }
 
+  // Map UI model names to actual Ollama model IDs
+  // 'SARA-Distillation-0.5B' → local Sara model (qwen2.5vl:7b via Ollama directly)
+  // 'secure-cloud-hf' → cloud mode (also uses qwen2.5vl:7b through gateway for demo)
   let actualModel = 'qwen2.5vl:7b';
-  if (model === 'llama3.2-vision' || model === 'qwen2.5vl:7b') actualModel = model;
+  if (model === 'SARA-Distillation-0.5B') {
+    actualModel = 'qwen2.5vl:7b';
+    // For local Sara, always hit Ollama directly for lowest latency
+    endpoint = DEFAULT_OLLAMA_VLM;
+  } else if (model === 'secure-cloud-hf') {
+    actualModel = 'qwen2.5vl:7b'; // gateway proxies to Ollama for demo
+    // endpoint stays as DEFAULT_GATEWAY_VLM (already set above)
+  } else if (model === 'llama3.2-vision') {
+    actualModel = 'qwen3:8b';
+  } else if (model === 'qwen2.5vl:7b') {
+    actualModel = 'qwen2.5vl:7b';
+  }
 
-  // temperature:0 = deterministic JSON actions = faster decode, no sampling overhead
-  // keep_alive:-1 tells Ollama to NEVER unload the model from VRAM,
-  // eliminating the 5-6s cold start on every first request.
   const payload = { model: actualModel, messages, temperature: 0, stream: false, keep_alive: -1 };
 
   const headers = { 'Content-Type': 'application/json' };
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  if (apiKey && !endpoint.includes('localhost')) headers.Authorization = `Bearer ${apiKey}`;
 
   const t0 = Date.now();
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(45000)
-    });
-    if (!res.ok) {
-      const err = await res.text().catch(() => '');
-      throw new Error(`Upstream ${res.status}: ${err}`);
+  let lastError;
+  // Retry once on connection failure (gateway restart, brief blip)
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(45000)
+      });
+      if (!res.ok) {
+        const err = await res.text().catch(() => '');
+        throw new Error(`Upstream ${res.status}: ${err.slice(0, 200)}`);
+      }
+      const data = await res.json();
+      const content = data?.choices?.[0]?.message?.content;
+      if (typeof content === 'string') {
+        console.log(`[AEGIS SARA] responded in ${Date.now() - t0}ms via ${endpoint}`);
+        return content;
+      }
+      throw new Error('Empty response from model.');
+    } catch (e) {
+      lastError = e;
+      if (attempt === 0 && !e.name?.includes('Abort')) {
+        // On first failure, switch to direct Ollama and retry
+        console.warn(`[AEGIS] Gateway call failed (${e.message}), retrying via Ollama directly...`);
+        endpoint = DEFAULT_OLLAMA_VLM;
+        await new Promise(r => setTimeout(r, 300));
+      }
     }
-    const data = await res.json();
-    const content = data?.choices?.[0]?.message?.content;
-    if (typeof content === 'string') {
-      console.log(`[AEGIS SARA] responded in ${Date.now() - t0}ms`);
-      return content;
-    }
-  } catch (e) {
-    throw new Error(`SARA unreachable: ${e.message}`);
   }
-  throw new Error('Empty response from SARA.');
+  throw new Error(`SARA unreachable: ${lastError?.message || 'unknown error'}`);
 }
 
 
@@ -2897,6 +2938,9 @@ function stripActionBlock(text) {
 
 async function handleChatRequest(msg) {
   const { history, attachScreenshot } = msg;
+  const cfg = await getVlmConfig();
+  const selectedModel = msg.model || cfg.selectedModel || 'qwen2.5vl:7b';
+  const model = selectedModel; // keep model defined for usages below
 
   // Load domain memory and prepend to history
   const [memTab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -2906,14 +2950,6 @@ async function handleChatRequest(msg) {
   const fullHistory = domainHistory.length > 0
     ? [...domainHistory, ...history]
     : history;
-
-  // Feature 2: Read model from storage at call time for instant switching.
-  // msg.model is still used as fallback for the current request.
-  let model = msg.model || 'SARA-Distillation-0.5B';
-  try {
-    const stored = await chrome.storage.local.get(['selectedModel', 'aegisSelectedModel']);
-    model = stored.selectedModel || stored.aegisSelectedModel || model;
-  } catch { /* use msg.model */ }
 
   // Feature 1: keywords that mean the user explicitly wants code injected into the page
   // (evaluated later, after 'latest' is defined)
